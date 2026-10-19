@@ -3,7 +3,7 @@ import { claimNextJob, completeJob, markJobRunning } from "@/lib/store";
 const INLINE_WORKER_ID = "inline-dev-worker";
 
 /**
- * When no P720 worker is connected, process queued jobs inside the
+ * When no live worker is connected, process queued jobs inside the
  * Next.js process with a deterministic coding-agent stub so the studio
  * UI is usable in local/demo mode.
  */

@@ -67,7 +67,7 @@ export function StudioClient() {
       if (!res.ok) throw new Error(data.error ?? "Failed to enqueue");
       setAccount(data.account);
       setSelectedId(data.job.id);
-      // Kick the inline demo worker so the UI completes without a P720 online.
+      // Kick the inline demo worker so the UI completes without a live worker.
       void fetch("/api/worker/inline", { method: "POST" });
       await refresh();
     } catch (err) {
