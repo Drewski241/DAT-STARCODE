@@ -1,7 +1,12 @@
 "use client";
 
 import { useState } from "react";
-import { CREDIT_PACKS, DAT_BURN_ADDRESS, DAT_SYMBOL } from "@/lib/config";
+import {
+  CREDIT_PACKS,
+  CREDITS_PER_DAT,
+  DAT_BURN_ADDRESS,
+  DAT_SYMBOL,
+} from "@/lib/config";
 import { formatDat } from "@/lib/utils";
 import { getSageConfig, shortAddress } from "@/lib/sage";
 
@@ -21,6 +26,16 @@ export function WalletPanel({
   const sage = getSageConfig();
   const [busy, setBusy] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
+
+  async function refreshAccount() {
+    const res = await fetch("/api/session");
+    const data = await res.json();
+    if (res.ok && data.account) {
+      onAccount(data.account);
+      return data.account as Account;
+    }
+    return null;
+  }
 
   async function connectSage() {
     setBusy("connect");
@@ -56,6 +71,9 @@ export function WalletPanel({
     setBusy(packId);
     setMessage(null);
     try {
+      // Ensure a session cookie exists before paying.
+      await refreshAccount();
+
       const intentRes = await fetch("/api/payments/intent", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -76,9 +94,13 @@ export function WalletPanel({
       });
       const confirmed = await confirmRes.json();
       if (!confirmRes.ok) throw new Error(confirmed.error ?? "Confirm failed");
-      onAccount(confirmed.account);
+
+      const synced = (await refreshAccount()) ?? confirmed.account;
+      onAccount(synced);
+
+      const added = confirmed.payment.credits as number;
       setMessage(
-        `Burned ${formatDat(confirmed.payment.datAmount)} ${DAT_SYMBOL} → credits ${confirmed.payment.credits}. Destination: ${shortAddress(DAT_BURN_ADDRESS)}. Memo: ${intent.payment.memo}`,
+        `Burned ${formatDat(confirmed.payment.datAmount)} ${DAT_SYMBOL} (+${added} credits). Balance: ${synced.credits}. Sent to ${shortAddress(DAT_BURN_ADDRESS)}.`,
       );
     } catch (err) {
       setMessage(err instanceof Error ? err.message : "Payment failed");
@@ -90,7 +112,7 @@ export function WalletPanel({
   return (
     <section
       id="pay"
-      className="relative z-10 mx-auto max-w-5xl scroll-mt-8 px-5 py-20 md:px-10"
+      className="relative z-20 mx-auto max-w-5xl scroll-mt-8 px-5 py-20 md:px-10"
     >
       <div className="mb-10 max-w-2xl">
         <p className="font-mono text-xs uppercase tracking-[0.28em] text-copper-400">
@@ -111,7 +133,7 @@ export function WalletPanel({
           type="button"
           onClick={() => void connectSage()}
           disabled={busy === "connect"}
-          className="inline-flex h-11 cursor-pointer items-center rounded-none bg-copper-500 px-5 font-mono text-xs uppercase tracking-widest text-ink-950 transition hover:bg-copper-400 disabled:cursor-wait disabled:opacity-60"
+          className="relative z-20 inline-flex h-12 cursor-pointer items-center rounded-none bg-copper-500 px-5 font-mono text-xs uppercase tracking-widest text-ink-950 transition hover:bg-copper-400 disabled:cursor-wait disabled:opacity-60"
         >
           {busy === "connect"
             ? "Connecting…"
@@ -131,7 +153,7 @@ export function WalletPanel({
             <span>Mode: {sage.mode}</span>
           )}
           <span className="mx-2 text-steel-600">·</span>
-          <span>{account?.credits ?? 0} credits</span>
+          <span className="text-copper-200">{account?.credits ?? 0} credits</span>
         </div>
       </div>
 
@@ -140,35 +162,44 @@ export function WalletPanel({
         <span className="break-all text-steel-400">{DAT_BURN_ADDRESS}</span>
       </p>
 
-      <div className="mt-10 grid gap-8 md:grid-cols-3">
-        {CREDIT_PACKS.map((pack) => (
-          <div key={pack.id} className="border-t border-copper-600/50 pt-5">
-            <h3 className="font-display text-2xl text-copper-100">{pack.label}</h3>
-            <p className="mt-1 font-mono text-sm text-copper-300">
-              {formatDat(pack.dat)} {DAT_SYMBOL} burned
-            </p>
-            <p className="mt-3 text-sm text-steel-400">{pack.blurb}</p>
-            <button
-              type="button"
-              data-pack={pack.id}
-              className="mt-6 inline-flex h-11 w-full cursor-pointer items-center justify-center rounded-none border border-copper-600/60 bg-ink-900/80 px-4 font-mono text-xs uppercase tracking-widest text-copper-100 transition hover:border-copper-400 hover:bg-copper-900/50 hover:text-copper-50 disabled:cursor-wait disabled:opacity-60 sm:w-auto"
-              disabled={!!busy}
-              onClick={() => void buyPack(pack.id)}
-            >
-              {busy === pack.id ? "Burning…" : "Burn DAT"}
-            </button>
-          </div>
-        ))}
-      </div>
-
       {message && (
         <p
           role="status"
-          className="mt-8 max-w-3xl border-l-2 border-copper-500 pl-4 font-mono text-xs leading-relaxed text-steel-300"
+          aria-live="polite"
+          className="mt-6 max-w-3xl border-l-2 border-copper-500 bg-ink-900/60 py-3 pl-4 font-mono text-xs leading-relaxed text-copper-100"
         >
           {message}
         </p>
       )}
+
+      <div className="relative z-20 mt-10 grid gap-8 md:grid-cols-3">
+        {CREDIT_PACKS.map((pack) => {
+          const creditGain = pack.dat * CREDITS_PER_DAT;
+          return (
+            <div
+              key={pack.id}
+              className="relative z-20 border-t border-copper-600/50 pt-5"
+            >
+              <h3 className="font-display text-2xl text-copper-100">
+                {pack.label}
+              </h3>
+              <p className="mt-1 font-mono text-sm text-copper-300">
+                {formatDat(pack.dat)} {DAT_SYMBOL} burned → {creditGain} credits
+              </p>
+              <p className="mt-3 text-sm text-steel-400">{pack.blurb}</p>
+              <button
+                type="button"
+                data-pack={pack.id}
+                className="relative z-20 mt-6 inline-flex h-12 w-full cursor-pointer items-center justify-center rounded-none border border-copper-600/60 bg-ink-900 px-4 font-mono text-xs uppercase tracking-widest text-copper-100 transition hover:border-copper-400 hover:bg-copper-900/50 hover:text-copper-50 disabled:cursor-wait disabled:opacity-60"
+                disabled={!!busy}
+                onClick={() => void buyPack(pack.id)}
+              >
+                {busy === pack.id ? "Burning…" : "Burn DAT"}
+              </button>
+            </div>
+          );
+        })}
+      </div>
     </section>
   );
 }
