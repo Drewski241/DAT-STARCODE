@@ -10,6 +10,17 @@ Every credit purchase sends DAT to the official Chia **burn address** (unspendab
 
 Override with `NEXT_PUBLIC_DAT_BURN_ADDRESS` only if you intentionally use another destination (e.g. testnet).
 
+### Slow-burn pricing (vs 150M supply)
+
+See `src/lib/economy.ts`. Defaults:
+
+- Allow at most **10% of supply** to be burned over **100 years** at continuous full load
+- Assume **2,000 credits/day** full load
+- That yields ≈ **4.87 credits per DAT** (≈ **0.205 DAT per credit**)
+- Packs are priced in credits first; DAT cost is derived so the token cannot be drained quickly
+
+At that pace, even nonstop max usage leaves ~90% of DAT unburned after a century.
+
 ## Architecture (operators)
 
 ```
