@@ -1,11 +1,40 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
+import { useEffect, useState } from "react";
 import { cn } from "@/lib/utils";
+
+type Account = {
+  id: string;
+  username: string | null;
+  credits: number;
+};
 
 export function SiteHeader({ credits }: { credits?: number | null }) {
   const pathname = usePathname();
+  const router = useRouter();
+  const [account, setAccount] = useState<Account | null>(null);
+
+  useEffect(() => {
+    void fetch("/api/auth/me", { credentials: "same-origin" })
+      .then((r) => r.json())
+      .then((d) => setAccount(d.account ?? null))
+      .catch(() => setAccount(null));
+  }, [pathname, credits]);
+
+  async function logout() {
+    await fetch("/api/auth/logout", {
+      method: "POST",
+      credentials: "same-origin",
+    });
+    setAccount(null);
+    router.push("/account");
+    router.refresh();
+  }
+
+  const shownCredits =
+    typeof credits === "number" ? credits : account?.credits;
 
   return (
     <header className="relative z-20 flex items-center justify-between px-5 py-5 md:px-10">
@@ -35,10 +64,36 @@ export function SiteHeader({ credits }: { credits?: number | null }) {
         >
           Buy DAT credits
         </Link>
-        {typeof credits === "number" && (
-          <span className="rounded-sm border border-copper-700/40 bg-ink-900/70 px-2.5 py-1 font-mono text-xs text-copper-200">
-            {credits} cr
-          </span>
+        {account?.username ? (
+          <>
+            <span className="hidden font-mono text-xs text-steel-400 sm:inline">
+              @{account.username}
+            </span>
+            {typeof shownCredits === "number" && (
+              <span className="rounded-sm border border-copper-700/40 bg-ink-900/70 px-2.5 py-1 font-mono text-xs text-copper-200">
+                {shownCredits} cr
+              </span>
+            )}
+            <button
+              type="button"
+              onClick={() => void logout()}
+              className="font-mono text-xs uppercase tracking-widest text-steel-400 hover:text-copper-100"
+            >
+              Sign out
+            </button>
+          </>
+        ) : (
+          <Link
+            href="/account"
+            className={cn(
+              "font-mono text-xs uppercase tracking-widest transition",
+              pathname?.startsWith("/account")
+                ? "text-copper-200"
+                : "text-steel-400 hover:text-copper-100",
+            )}
+          >
+            Sign in
+          </Link>
         )}
       </nav>
     </header>

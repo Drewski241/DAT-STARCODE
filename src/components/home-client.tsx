@@ -50,17 +50,17 @@ export function HomeClient() {
             </p>
             <div className="mt-8 flex flex-wrap gap-3">
               <Link
-                href="/studio"
+                href="/account"
                 className="inline-flex items-center rounded-none bg-copper-500 px-5 py-3 font-mono text-xs uppercase tracking-widest text-ink-950 transition hover:bg-copper-400"
+              >
+                Sign in / create account
+              </Link>
+              <Link
+                href="/studio"
+                className="inline-flex items-center rounded-none border border-copper-600/70 px-5 py-3 font-mono text-xs uppercase tracking-widest text-copper-100 transition hover:border-copper-400 hover:bg-copper-950/40"
               >
                 Open studio
               </Link>
-              <a
-                href="#pay"
-                className="inline-flex items-center rounded-none border border-copper-600/70 px-5 py-3 font-mono text-xs uppercase tracking-widest text-copper-100 transition hover:border-copper-400 hover:bg-copper-950/40"
-              >
-                Buy credits
-              </a>
             </div>
           </div>
         </section>

@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
@@ -12,6 +13,7 @@ import { cn } from "@/lib/utils";
 
 type Account = {
   id: string;
+  username?: string | null;
   walletAddress: string | null;
   credits: number;
 };
@@ -32,6 +34,7 @@ type Job = {
 };
 
 export function StudioClient() {
+  const router = useRouter();
   const [account, setAccount] = useState<Account | null>(null);
   const [jobs, setJobs] = useState<Job[]>([]);
   const [prompt, setPrompt] = useState(
@@ -42,16 +45,23 @@ export function StudioClient() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [authed, setAuthed] = useState<boolean | null>(null);
 
   const refresh = useCallback(async () => {
     const res = await fetch("/api/jobs", { credentials: "same-origin" });
     const data = await res.json();
+    if (res.status === 401) {
+      setAuthed(false);
+      router.replace("/account");
+      return;
+    }
     if (res.ok) {
+      setAuthed(true);
       setAccount(data.account);
       setJobs(data.jobs);
       if (!selectedId && data.jobs[0]) setSelectedId(data.jobs[0].id);
     }
-  }, [selectedId]);
+  }, [selectedId, router]);
 
   useEffect(() => {
     void refresh();
@@ -87,6 +97,14 @@ export function StudioClient() {
 
   const selected = jobs.find((j) => j.id === selectedId) ?? jobs[0] ?? null;
   const selectedModel = MODEL_OPTIONS.find((m) => m.id === modelId);
+
+  if (authed === false) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-ink-950 font-mono text-sm text-steel-400">
+        Redirecting to sign in…
+      </div>
+    );
+  }
 
   return (
     <div className="relative min-h-screen bg-ink-950 text-copper-50">

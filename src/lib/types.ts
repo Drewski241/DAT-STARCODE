@@ -8,13 +8,24 @@ export type JobStatus =
 
 export type PaymentStatus = "pending" | "confirmed" | "failed" | "demo";
 
+export type AccountSource = "local" | "spirit-poker";
+
 export interface Account {
   id: string;
+  username: string | null;
+  email: string | null;
+  /** scrypt hash; null when account was linked via Spirit Poker only this session */
+  passwordHash: string | null;
+  pokerPlayerId: string | null;
+  source: AccountSource;
   walletAddress: string | null;
   credits: number;
   createdAt: string;
   updatedAt: string;
 }
+
+/** Public account shape returned to the browser (no password hash). */
+export type PublicAccount = Omit<Account, "passwordHash">;
 
 export interface PaymentIntent {
   id: string;
@@ -34,9 +45,7 @@ export interface CodingJob {
   accountId: string;
   prompt: string;
   repoHint: string | null;
-  /** User-facing choice (may be "auto"). */
   modelRequested: string;
-  /** Concrete Ollama tag after Auto resolution. */
   modelResolved: string;
   modelReason: string;
   status: JobStatus;

@@ -1,11 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
-import { ACCOUNT_COOKIE, DAT_ASSET_ID, DAT_BURN_ADDRESS } from "@/lib/config";
+import { DAT_ASSET_ID, DAT_BURN_ADDRESS } from "@/lib/config";
 import { getPackById } from "@/lib/economy";
-import { createPaymentIntent, getOrCreateAccount } from "@/lib/store";
+import { requireRegisteredAccount } from "@/lib/require-auth";
+import { createPaymentIntent } from "@/lib/store";
 
 export async function POST(req: NextRequest) {
-  const accountId = req.cookies.get(ACCOUNT_COOKIE)?.value;
-  const account = await getOrCreateAccount(accountId);
+  const auth = await requireRegisteredAccount();
+  if ("error" in auth) return auth.error;
+
   const body = (await req.json()) as { packId?: string };
   const pack = body.packId ? getPackById(body.packId) : undefined;
   if (!pack) {
@@ -13,13 +15,13 @@ export async function POST(req: NextRequest) {
   }
 
   const payment = await createPaymentIntent({
-    accountId: account.id,
+    accountId: auth.account.id,
     packId: pack.id,
     datAmount: pack.dat,
     credits: pack.credits,
   });
 
-  const res = NextResponse.json({
+  return NextResponse.json({
     payment,
     settlement: {
       assetId: DAT_ASSET_ID,
@@ -29,11 +31,4 @@ export async function POST(req: NextRequest) {
       memo: payment.memo,
     },
   });
-  res.cookies.set(ACCOUNT_COOKIE, account.id, {
-    httpOnly: true,
-    sameSite: "lax",
-    path: "/",
-    maxAge: 60 * 60 * 24 * 365,
-  });
-  return res;
 }

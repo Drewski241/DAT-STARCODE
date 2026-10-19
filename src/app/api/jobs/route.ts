@@ -1,25 +1,23 @@
-import { ACCOUNT_COOKIE } from "@/lib/config";
-import { resolveModel } from "@/lib/models";
 import { NextRequest, NextResponse } from "next/server";
-import { enqueueJob, getOrCreateAccount, listJobs } from "@/lib/store";
+import { toPublicAccount } from "@/lib/account-public";
+import { resolveModel } from "@/lib/models";
+import { requireRegisteredAccount } from "@/lib/require-auth";
+import { enqueueJob, listJobs } from "@/lib/store";
 
-export async function GET(req: NextRequest) {
-  const accountId = req.cookies.get(ACCOUNT_COOKIE)?.value;
-  const account = await getOrCreateAccount(accountId);
-  const jobs = await listJobs(account.id);
-  const res = NextResponse.json({ account, jobs });
-  res.cookies.set(ACCOUNT_COOKIE, account.id, {
-    httpOnly: true,
-    sameSite: "lax",
-    path: "/",
-    maxAge: 60 * 60 * 24 * 365,
+export async function GET() {
+  const auth = await requireRegisteredAccount();
+  if ("error" in auth) return auth.error;
+  const jobs = await listJobs(auth.account.id);
+  return NextResponse.json({
+    account: toPublicAccount(auth.account),
+    jobs,
   });
-  return res;
 }
 
 export async function POST(req: NextRequest) {
-  const accountId = req.cookies.get(ACCOUNT_COOKIE)?.value;
-  const account = await getOrCreateAccount(accountId);
+  const auth = await requireRegisteredAccount();
+  if ("error" in auth) return auth.error;
+
   const body = (await req.json()) as {
     prompt?: string;
     repoHint?: string;
@@ -37,14 +35,17 @@ export async function POST(req: NextRequest) {
 
   try {
     const result = await enqueueJob({
-      accountId: account.id,
+      accountId: auth.account.id,
       prompt: body.prompt,
       repoHint: body.repoHint,
       modelRequested: resolved.requested,
       modelResolved: resolved.resolved,
       modelReason: resolved.reason,
     });
-    return NextResponse.json(result);
+    return NextResponse.json({
+      job: result.job,
+      account: toPublicAccount(result.account),
+    });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Enqueue failed";
     return NextResponse.json({ error: message }, { status: 402 });

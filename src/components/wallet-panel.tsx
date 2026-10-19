@@ -72,7 +72,12 @@ export function WalletPanel({
     setBusy(packId);
     setMessage("Starting burn…");
     try {
-      await refreshAccount();
+      const session = await refreshAccount();
+      if (!session) {
+        setMessage("Sign in required — open Account to create or sign in.");
+        window.location.href = "/account";
+        return;
+      }
 
       const intentRes = await fetch("/api/payments/intent", {
         method: "POST",

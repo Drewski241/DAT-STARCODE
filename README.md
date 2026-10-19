@@ -45,9 +45,10 @@ npm run dev
 
 Open [http://localhost:43127](http://localhost:43127).
 
-1. **Buy credits** — demo mode credits without broadcasting a burn.
-2. **Studio** — pick a model (**Auto**, Coder 7B/14B, Qwen 7B, Llama 3.1 8B) and enqueue a job.
-3. **Live worker** (GPU box):
+1. **Sign in** at `/account` — create a DAT STARCODER account, or sign in with your existing **datspiritpoker.com** username/password (Spirit Poker preference checkbox).
+2. **Buy credits** — demo mode credits without broadcasting a burn.
+3. **Studio** — pick a model (**Auto**, Coder 7B/14B, Qwen 7B, Llama 3.1 8B) and enqueue a job.
+4. **Live worker** (GPU box):
 
 ```bash
 DISABLE_INLINE_WORKER=1 npm run dev   # website terminal

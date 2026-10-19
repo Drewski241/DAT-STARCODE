@@ -1,18 +1,20 @@
-import { ACCOUNT_COOKIE } from "@/lib/config";
 import { NextRequest, NextResponse } from "next/server";
+import { requireRegisteredAccount } from "@/lib/require-auth";
 import { getJob } from "@/lib/store";
 
 export async function GET(
-  req: NextRequest,
+  _req: NextRequest,
   ctx: { params: Promise<{ id: string }> },
 ) {
+  const auth = await requireRegisteredAccount();
+  if ("error" in auth) return auth.error;
+
   const { id } = await ctx.params;
-  const accountId = req.cookies.get(ACCOUNT_COOKIE)?.value;
   const job = await getJob(id);
   if (!job) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
-  if (accountId && job.accountId !== accountId) {
+  if (job.accountId !== auth.account.id) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
   return NextResponse.json({ job });

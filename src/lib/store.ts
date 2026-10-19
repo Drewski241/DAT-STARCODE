@@ -3,12 +3,14 @@ import path from "path";
 import { randomUUID } from "crypto";
 import type {
   Account,
+  AccountSource,
   CodingJob,
   PaymentIntent,
   StoreSnapshot,
 } from "@/lib/types";
 import { CREDITS_PER_JOB, DAT_ASSET_ID } from "@/lib/config";
 import { creditsForDat } from "@/lib/economy";
+import { hashPassword, verifyPassword } from "@/lib/password";
 
 const DATA_DIR =
   process.env.DAT_STARCODER_DATA_DIR ??
@@ -58,22 +60,142 @@ function mutate<T>(fn: (store: StoreSnapshot) => T): Promise<T> {
   return run;
 }
 
+function normalizeAccount(raw: Account): Account {
+  return {
+    ...raw,
+    username: raw.username ?? null,
+    email: raw.email ?? null,
+    passwordHash: raw.passwordHash ?? null,
+    pokerPlayerId: raw.pokerPlayerId ?? null,
+    source: raw.source ?? (raw.username ? "local" : "local"),
+  };
+}
+
 export async function getOrCreateAccount(accountId?: string | null) {
   return mutate((store) => {
     if (accountId) {
       const existing = store.accounts.find((a) => a.id === accountId);
-      if (existing) return existing;
+      if (existing) return normalizeAccount(existing);
     }
     const now = new Date().toISOString();
     const account: Account = {
       id: randomUUID(),
+      username: null,
+      email: null,
+      passwordHash: null,
+      pokerPlayerId: null,
+      source: "local",
+      walletAddress: null,
+      credits: 0,
+      createdAt: now,
+      updatedAt: now,
+    };
+    store.accounts.push(account);
+    return account;
+  });
+}
+
+export async function findAccountByUsername(username: string) {
+  const store = await readStore();
+  const needle = username.trim().toLowerCase();
+  const found = store.accounts.find(
+    (a) => a.username && a.username.toLowerCase() === needle,
+  );
+  return found ? normalizeAccount(found) : null;
+}
+
+export async function registerLocalAccount(input: {
+  username: string;
+  password: string;
+  email?: string | null;
+}) {
+  const username = input.username.trim();
+  if (!/^[A-Za-z][A-Za-z0-9_]{2,19}$/.test(username)) {
+    throw new Error(
+      "Username must start with a letter and be 3–20 characters (letters, numbers, _)",
+    );
+  }
+  if (input.password.length < 8) {
+    throw new Error("Password must be at least 8 characters");
+  }
+
+  return mutate((store) => {
+    const taken = store.accounts.some(
+      (a) => a.username?.toLowerCase() === username.toLowerCase(),
+    );
+    if (taken) throw new Error("Username already taken");
+    const now = new Date().toISOString();
+    const account: Account = {
+      id: randomUUID(),
+      username,
+      email: input.email?.trim() || null,
+      passwordHash: hashPassword(input.password),
+      pokerPlayerId: null,
+      source: "local",
       walletAddress: null,
       credits: 20,
       createdAt: now,
       updatedAt: now,
     };
     store.accounts.push(account);
-    return account;
+    return normalizeAccount(account);
+  });
+}
+
+export async function loginLocalAccount(input: {
+  username: string;
+  password: string;
+}) {
+  const account = await findAccountByUsername(input.username);
+  if (!account?.passwordHash) {
+    throw new Error("Unknown username or password");
+  }
+  if (!verifyPassword(input.password, account.passwordHash)) {
+    throw new Error("Unknown username or password");
+  }
+  return account;
+}
+
+export async function upsertPokerLinkedAccount(input: {
+  username: string;
+  pokerPlayerId: string;
+  email?: string | null;
+  sageAddress?: string | null;
+}) {
+  return mutate((store) => {
+    const now = new Date().toISOString();
+    const byPoker = store.accounts.find(
+      (a) => a.pokerPlayerId === input.pokerPlayerId,
+    );
+    const byName = store.accounts.find(
+      (a) =>
+        a.username &&
+        a.username.toLowerCase() === input.username.toLowerCase(),
+    );
+    const existing = byPoker ?? byName;
+    if (existing) {
+      existing.username = input.username;
+      existing.pokerPlayerId = input.pokerPlayerId;
+      existing.source = "spirit-poker";
+      if (input.email) existing.email = input.email;
+      if (input.sageAddress) existing.walletAddress = input.sageAddress;
+      existing.updatedAt = now;
+      return normalizeAccount(existing);
+    }
+    const account: Account = {
+      id: randomUUID(),
+      username: input.username,
+      email: input.email ?? null,
+      passwordHash: null,
+      pokerPlayerId: input.pokerPlayerId,
+      source: "spirit-poker" satisfies AccountSource,
+      walletAddress: input.sageAddress ?? null,
+      credits: 20,
+      createdAt: now,
+      updatedAt: now,
+    };
+    store.accounts.push(account);
+    return normalizeAccount(account);
   });
 }
 
@@ -89,7 +211,12 @@ export async function linkWallet(accountId: string, walletAddress: string) {
 
 export async function getAccount(accountId: string) {
   const store = await readStore();
-  return store.accounts.find((a) => a.id === accountId) ?? null;
+  const found = store.accounts.find((a) => a.id === accountId) ?? null;
+  return found ? normalizeAccount(found) : null;
+}
+
+export function isRegisteredAccount(account: Account) {
+  return Boolean(account.username);
 }
 
 export async function createPaymentIntent(input: {
