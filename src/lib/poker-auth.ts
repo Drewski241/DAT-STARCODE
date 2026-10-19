@@ -94,3 +94,56 @@ export async function fetchPokerPlayRequirements() {
     turnstileSiteKey?: string;
   }>;
 }
+
+/** Shared DAT account password reset — same endpoints as the DAT ecosystem login. */
+export async function pokerForgotPassword(input: {
+  username: string;
+  email: string;
+}): Promise<{ message: string }> {
+  const res = await fetch(`${POKER_API_BASE}/v1/auth/password/forgot`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Accept: "application/json" },
+    body: JSON.stringify({
+      username: input.username.trim(),
+      email: input.email.trim(),
+    }),
+  });
+  const data = (await res.json().catch(() => ({}))) as {
+    error?: string;
+    message?: string;
+  };
+  if (!res.ok) {
+    throw new Error(data.error ?? `Password reset failed (${res.status})`);
+  }
+  return {
+    message:
+      data.message ??
+      "If that account exists, a reset code was sent to the email on file.",
+  };
+}
+
+export async function pokerResetPassword(input: {
+  username: string;
+  resetCode: string;
+  password: string;
+}): Promise<{ message: string }> {
+  const res = await fetch(`${POKER_API_BASE}/v1/auth/password/reset`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Accept: "application/json" },
+    body: JSON.stringify({
+      username: input.username.trim(),
+      resetCode: input.resetCode.trim(),
+      password: input.password,
+    }),
+  });
+  const data = (await res.json().catch(() => ({}))) as {
+    error?: string;
+    message?: string;
+  };
+  if (!res.ok) {
+    throw new Error(data.error ?? `Password reset failed (${res.status})`);
+  }
+  return {
+    message: data.message ?? "Password updated. You can sign in now.",
+  };
+}

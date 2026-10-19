@@ -76,7 +76,12 @@ export async function POST(req: NextRequest) {
       /fetch failed|ECONNREFUSED|ENOTFOUND|network/i.test(message)
     ) {
       message =
-        "Could not reach DAT Spirit Poker. Check your connection, or create a local DAT STARCODER account.";
+        "Could not reach the DAT sign-in service. Check your connection, or create a DAT STARCODER account.";
+    } else if (
+      /unknown|invalid|incorrect|password|unauthorized|failed/i.test(message)
+    ) {
+      message =
+        "Check your DAT username and DAT password. If you forgot it, use Reset password.";
     }
     return NextResponse.json({ error: message }, { status: 401 });
   }

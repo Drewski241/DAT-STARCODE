@@ -11,9 +11,12 @@ import {
 } from "@/lib/countries";
 import type { PublicAccount } from "@/lib/types";
 
-type Mode = "login" | "register";
+type Mode = "login" | "register" | "reset";
 
 const blocked = new Set<string>(SPIRIT_POKER_BLOCKED_COUNTRIES);
+
+const BAD_CREDENTIALS_HINT =
+  "Check your DAT username and DAT password. If you forgot it, use Reset password.";
 
 export function AuthForm({
   onAuthed,
@@ -28,13 +31,98 @@ export function AuthForm({
   const [password, setPassword] = useState("");
   const [email, setEmail] = useState("");
   const [countryCode, setCountryCode] = useState(DEFAULT_COUNTRY_CODE);
-  const [preferPoker, setPreferPoker] = useState(true);
+  const [resetCode, setResetCode] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [codeSent, setCodeSent] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
 
+  function switchMode(next: Mode) {
+    setMode(next);
+    setError(null);
+    setMessage(null);
+    if (next !== "reset") {
+      setCodeSent(false);
+      setResetCode("");
+      setConfirmPassword("");
+    }
+  }
+
+  async function sendResetCode() {
+    setBusy(true);
+    setError(null);
+    setMessage(null);
+    try {
+      if (!username.trim() || !email.trim()) {
+        throw new Error("Enter your DAT username and the email on the account.");
+      }
+      const res = await fetch("/api/auth/password/forgot", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username, email }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Could not send reset code");
+      setCodeSent(true);
+      setMessage(
+        data.message ??
+          "Check your inbox for the reset code (expires in 15 minutes).",
+      );
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not send reset code");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function setNewPassword() {
+    setBusy(true);
+    setError(null);
+    setMessage(null);
+    try {
+      if (password !== confirmPassword) {
+        throw new Error("New passwords do not match");
+      }
+      if (password.length < 8) {
+        throw new Error("Password must be at least 8 characters");
+      }
+      const res = await fetch("/api/auth/password/reset", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          username,
+          resetCode,
+          password,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Could not reset password");
+      setPassword("");
+      setConfirmPassword("");
+      setResetCode("");
+      setCodeSent(false);
+      setMessage(data.message ?? "Password updated. Sign in with your DAT password.");
+      switchMode("login");
+      setMessage(data.message ?? "Password updated. Sign in with your DAT password.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not reset password");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function submit(e: React.FormEvent) {
     e.preventDefault();
+    if (mode === "reset") {
+      if (codeSent && resetCode.trim()) {
+        await setNewPassword();
+      } else {
+        await sendResetCode();
+      }
+      return;
+    }
+
     setBusy(true);
     setError(null);
     setMessage(null);
@@ -43,7 +131,7 @@ export function AuthForm({
       const body =
         mode === "register"
           ? { username, password, email: email || undefined }
-          : { username, password, countryCode, preferPoker };
+          : { username, password, countryCode, preferPoker: true };
 
       const res = await fetch(path, {
         method: "POST",
@@ -52,18 +140,24 @@ export function AuthForm({
         body: JSON.stringify(body),
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error ?? "Auth failed");
+      if (!res.ok) {
+        const raw = (data.error as string | undefined) ?? "Auth failed";
+        if (
+          mode === "login" &&
+          /unknown|invalid|incorrect|password|failed|unauthorized|401/i.test(raw)
+        ) {
+          throw new Error(BAD_CREDENTIALS_HINT);
+        }
+        throw new Error(raw);
+      }
 
       onAuthed?.(data.account);
-      const via =
-        data.via === "spirit-poker"
-          ? "Signed in with your DAT Spirit Poker account."
-          : mode === "register"
-            ? "Account created with 20 starter credits. Opening studio…"
-            : "Signed in.";
-      setMessage(via);
+      setMessage(
+        mode === "register"
+          ? "Account created with 20 starter credits. Opening studio…"
+          : "Signed in.",
+      );
       router.refresh();
-      // Brief pause so the success line is readable before navigation.
       window.setTimeout(() => router.push("/studio"), 400);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Auth failed");
@@ -82,7 +176,7 @@ export function AuthForm({
               ? "border-copper-400 text-copper-100"
               : "border-copper-800 text-steel-500"
           }`}
-          onClick={() => setMode("login")}
+          onClick={() => switchMode("login")}
         >
           Sign in
         </button>
@@ -93,7 +187,7 @@ export function AuthForm({
               ? "border-copper-400 text-copper-100"
               : "border-copper-800 text-steel-500"
           }`}
-          onClick={() => setMode("register")}
+          onClick={() => switchMode("register")}
         >
           Create account
         </button>
@@ -101,12 +195,14 @@ export function AuthForm({
 
       <p className="font-mono text-[11px] leading-relaxed text-steel-500">
         {mode === "login"
-          ? "Use a DAT STARCODER account or your existing datspiritpoker.com username and password."
-          : "Create a DAT STARCODER account. Already on Spirit Poker? Sign in instead."}
+          ? "Sign in with your DAT username and DAT password."
+          : mode === "register"
+            ? "Create a DAT STARCODER account. New accounts start with 20 credits."
+            : "Reset your DAT password with the email on your account."}
       </p>
 
       <label className="block font-mono text-[11px] uppercase tracking-widest text-steel-400">
-        Username
+        DAT username
       </label>
       <Input
         value={username}
@@ -118,18 +214,22 @@ export function AuthForm({
         autoComplete="username"
       />
 
-      <label className="block font-mono text-[11px] uppercase tracking-widest text-steel-400">
-        Password
-      </label>
-      <Input
-        type="password"
-        value={password}
-        onChange={(e) => setPassword(e.target.value)}
-        required
-        minLength={8}
-        className="rounded-none border-copper-800/50 bg-ink-900/80 font-mono"
-        autoComplete={mode === "login" ? "current-password" : "new-password"}
-      />
+      {mode !== "reset" && (
+        <>
+          <label className="block font-mono text-[11px] uppercase tracking-widest text-steel-400">
+            DAT password
+          </label>
+          <Input
+            type="password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            required
+            minLength={8}
+            className="rounded-none border-copper-800/50 bg-ink-900/80 font-mono"
+            autoComplete={mode === "login" ? "current-password" : "new-password"}
+          />
+        </>
+      )}
 
       {mode === "register" && (
         <>
@@ -152,7 +252,7 @@ export function AuthForm({
             htmlFor="country-code"
             className="block font-mono text-[11px] uppercase tracking-widest text-steel-400"
           >
-            Country (for Spirit Poker sign-in)
+            Country
           </label>
           <select
             id="country-code"
@@ -171,14 +271,73 @@ export function AuthForm({
               </option>
             ))}
           </select>
-          <label className="flex items-center gap-2 font-mono text-[11px] text-steel-400">
-            <input
-              type="checkbox"
-              checked={preferPoker}
-              onChange={(e) => setPreferPoker(e.target.checked)}
-            />
-            Prefer DAT Spirit Poker account when available
+          <button
+            type="button"
+            className="font-mono text-[11px] text-copper-300 underline-offset-2 hover:underline"
+            onClick={() => switchMode("reset")}
+          >
+            Forgot password?
+          </button>
+        </>
+      )}
+
+      {mode === "reset" && (
+        <>
+          <label className="block font-mono text-[11px] uppercase tracking-widest text-steel-400">
+            Email on the account
           </label>
+          <Input
+            type="email"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            required
+            className="rounded-none border-copper-800/50 bg-ink-900/80 font-mono"
+            autoComplete="email"
+          />
+          <p className="font-mono text-[11px] text-steel-500">
+            Use the verified email on your DAT account. Reset codes are only sent
+            by email and expire in 15 minutes.
+          </p>
+
+          {codeSent && (
+            <>
+              <label className="block font-mono text-[11px] uppercase tracking-widest text-steel-400">
+                Reset code
+              </label>
+              <Input
+                value={resetCode}
+                onChange={(e) => setResetCode(e.target.value)}
+                required
+                className="rounded-none border-copper-800/50 bg-ink-900/80 font-mono"
+                autoComplete="one-time-code"
+                spellCheck={false}
+              />
+              <label className="block font-mono text-[11px] uppercase tracking-widest text-steel-400">
+                New DAT password
+              </label>
+              <Input
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                required
+                minLength={8}
+                className="rounded-none border-copper-800/50 bg-ink-900/80 font-mono"
+                autoComplete="new-password"
+              />
+              <label className="block font-mono text-[11px] uppercase tracking-widest text-steel-400">
+                Confirm new password
+              </label>
+              <Input
+                type="password"
+                value={confirmPassword}
+                onChange={(e) => setConfirmPassword(e.target.value)}
+                required
+                minLength={8}
+                className="rounded-none border-copper-800/50 bg-ink-900/80 font-mono"
+                autoComplete="new-password"
+              />
+            </>
+          )}
         </>
       )}
 
@@ -191,8 +350,22 @@ export function AuthForm({
           ? "Working…"
           : mode === "register"
             ? "Create account"
-            : "Sign in"}
+            : mode === "reset"
+              ? codeSent
+                ? "Set new password"
+                : "Email reset code"
+              : "Sign in"}
       </Button>
+
+      {mode === "reset" && (
+        <button
+          type="button"
+          className="w-full font-mono text-[11px] text-steel-400 underline-offset-2 hover:text-copper-200 hover:underline"
+          onClick={() => switchMode("login")}
+        >
+          Back to sign in
+        </button>
+      )}
 
       {error && (
         <p className="border-l-2 border-rose-500 pl-3 font-mono text-xs text-rose-300">
@@ -204,18 +377,6 @@ export function AuthForm({
           {message}
         </p>
       )}
-
-      <p className="font-mono text-[11px] text-steel-600">
-        Spirit Poker:{" "}
-        <a
-          href="https://datspiritpoker.com"
-          className="text-copper-300 underline-offset-2 hover:underline"
-          target="_blank"
-          rel="noreferrer"
-        >
-          datspiritpoker.com
-        </a>
-      </p>
     </form>
   );
 }

@@ -18,9 +18,9 @@ export default function AccountPage() {
             Sign in to DAT STARCODER
           </h1>
           <p className="mt-3 text-sm text-steel-300">
-            Create an account here, or sign in with the same username and
-            password you use on DAT Spirit Poker. New accounts start with 20
-            credits so you can try the studio.
+            Sign in with your DAT username and DAT password, or create a new
+            account. New accounts start with 20 credits so you can try the
+            studio.
           </p>
           <div className="mt-10">
             <AccountClient />

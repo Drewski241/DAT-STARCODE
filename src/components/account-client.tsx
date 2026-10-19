@@ -48,7 +48,6 @@ export function AccountClient() {
           </h2>
           <p className="mt-2 font-mono text-sm text-steel-300">
             {me.credits} credits
-            {me.source === "spirit-poker" ? " · Spirit Poker linked" : ""}
           </p>
         </div>
         <div className="flex flex-wrap gap-3">
