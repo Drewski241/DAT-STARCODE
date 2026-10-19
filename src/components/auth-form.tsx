@@ -297,7 +297,8 @@ export function AuthForm({
           />
           <p className="font-mono text-[11px] text-steel-500">
             Use the verified email on your DAT account. Reset codes are only sent
-            by email and expire in 15 minutes.
+            by email and expire in 15 minutes. If the email service times out,
+            wait a minute and request another code.
           </p>
 
           {codeSent && (

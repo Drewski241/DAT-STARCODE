@@ -113,13 +113,21 @@ export async function pokerForgotPassword(input: {
     message?: string;
   };
   if (!res.ok) {
-    throw new Error(data.error ?? `Password reset failed (${res.status})`);
+    throw new Error(friendlyEmailError(data.error, res.status));
   }
   return {
     message:
       data.message ??
       "If that account exists, a reset code was sent to the email on file.",
   };
+}
+
+function friendlyEmailError(raw: string | undefined, status: number) {
+  const text = raw ?? `Password reset failed (${status})`;
+  if (/421|timeout|closing connection|smtp|mail|econnreset|etimedout/i.test(text)) {
+    return "The DAT email service timed out sending the reset code. Wait about a minute, then press Email reset code again.";
+  }
+  return text;
 }
 
 export async function pokerResetPassword(input: {
@@ -141,7 +149,7 @@ export async function pokerResetPassword(input: {
     message?: string;
   };
   if (!res.ok) {
-    throw new Error(data.error ?? `Password reset failed (${res.status})`);
+    throw new Error(friendlyEmailError(data.error, res.status));
   }
   return {
     message: data.message ?? "Password updated. You can sign in now.",
