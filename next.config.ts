@@ -11,6 +11,8 @@ const nextConfig: NextConfig = {
     "drew-davis-ThinkStation-P720",
     "*.local",
   ],
+  // WalletConnect Sign Client is browser-only.
+  serverExternalPackages: ["@walletconnect/sign-client"],
 };
 
 export default nextConfig;

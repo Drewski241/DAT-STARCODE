@@ -49,16 +49,30 @@ export function shortAddress(address: string) {
  * Kept as pure data so we can plug @walletconnect/sign-client later
  * without rewriting the payment UI.
  */
+/** Methods we must have for connect + burn. */
 export function sageRequiredNamespaces() {
   return {
     chia: {
+      methods: ["chia_getAddress", "chia_send"],
+      chains: ["chia:mainnet"],
+      events: [],
+    },
+  };
+}
+
+/** Extra CHIP-0002 methods when Sage offers them (balance, etc.). */
+export function sageOptionalNamespaces() {
+  return {
+    chia: {
       methods: [
-        "chia_getAddress",
-        "chia_getPublicKeys",
         "chia_signMessageByAddress",
-        "chia_sendTransaction",
-        "chia_getAssetCoins",
-        "chia_signCoinSpends",
+        "chip0002_connect",
+        "chip0002_chainId",
+        "chip0002_getPublicKeys",
+        "chip0002_getAssetBalance",
+        "chip0002_getAssetCoins",
+        "chip0002_signCoinSpends",
+        "chip0002_sendTransaction",
       ],
       chains: ["chia:mainnet"],
       events: [],

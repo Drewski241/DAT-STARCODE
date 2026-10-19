@@ -1,13 +1,19 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { DAT_BURN_ADDRESS, DAT_SYMBOL } from "@/lib/config";
-import {
-  economyBlurb,
-  getCreditPacks,
-} from "@/lib/economy";
+import { economyBlurb, getCreditPacks } from "@/lib/economy";
+import { mojosToDat } from "@/lib/dat-units";
 import { formatDat } from "@/lib/utils";
 import { getSageConfig, shortAddress } from "@/lib/sage";
+import {
+  burnDatWithSage,
+  connectSageWallet,
+  disconnectSageWallet,
+  getDatBalanceMojos,
+  hasWalletConnectProjectId,
+  restoreSageSession,
+} from "@/lib/sage-wc";
 
 type Account = {
   id: string;
@@ -24,8 +30,44 @@ export function WalletPanel({
 }) {
   const sage = getSageConfig();
   const packs = getCreditPacks();
+  const live = hasWalletConnectProjectId();
   const [busy, setBusy] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
+  const [wcUri, setWcUri] = useState<string | null>(null);
+  const [qrDataUrl, setQrDataUrl] = useState<string | null>(null);
+  const [datBalance, setDatBalance] = useState<number | null>(null);
+
+  useEffect(() => {
+    if (!live) return;
+    void (async () => {
+      try {
+        const session = await restoreSageSession();
+        if (!session) return;
+        const bal = await getDatBalanceMojos();
+        setDatBalance(mojosToDat(bal));
+      } catch {
+        // no restored session
+      }
+    })();
+  }, [live]);
+
+  useEffect(() => {
+    if (!wcUri) {
+      setQrDataUrl(null);
+      return;
+    }
+    let cancelled = false;
+    void import("qrcode").then((QR) =>
+      QR.toDataURL(wcUri, { width: 280, margin: 1, color: { dark: "#1a1208", light: "#f5efe4" } }).then(
+        (url) => {
+          if (!cancelled) setQrDataUrl(url);
+        },
+      ),
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [wcUri]);
 
   async function refreshAccount() {
     const res = await fetch("/api/session", { credentials: "same-origin" });
@@ -37,32 +79,71 @@ export function WalletPanel({
     return null;
   }
 
+  async function linkAddress(walletAddress: string) {
+    const res = await fetch("/api/session", {
+      method: "PATCH",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ walletAddress }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error ?? "Could not link wallet");
+    onAccount(data.account);
+    return data.account as Account;
+  }
+
   async function connectSage() {
     setBusy("connect");
     setMessage(null);
+    setWcUri(null);
     try {
-      if (sage.mode === "demo") {
-        const demoAddress =
-          "xch1demo" + Math.random().toString(16).slice(2, 14).padEnd(50, "0");
-        const res = await fetch("/api/session", {
-          method: "PATCH",
-          credentials: "same-origin",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ walletAddress: demoAddress }),
-        });
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.error ?? "Connect failed");
-        onAccount(data.account);
-        setMessage(
-          "Demo Sage session linked. Set NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID for live WalletConnect.",
-        );
-      } else {
-        setMessage(
-          "WalletConnect project configured — wire Sign Client in production deploy.",
-        );
+      const session = await refreshAccount();
+      if (!session) {
+        setMessage("Sign in required — open Account to create or sign in.");
+        window.location.href = "/account";
+        return;
       }
+
+      if (!live) {
+        setMessage(
+          "Add NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID to .env (free project at cloud.walletconnect.com), restart npm run dev, then Connect Sage again.",
+        );
+        return;
+      }
+
+      setMessage("Opening WalletConnect — approve the connection in Sage…");
+      const { uri, approval } = await connectSageWallet();
+      setWcUri(uri);
+      setMessage(
+        "Scan this QR with Sage (WalletConnect), or paste the URI into Sage.",
+      );
+
+      const { address } = await approval;
+      setWcUri(null);
+      await linkAddress(address);
+      try {
+        const bal = await getDatBalanceMojos();
+        setDatBalance(mojosToDat(bal));
+      } catch {
+        setDatBalance(null);
+      }
+      setMessage(`Sage connected: ${shortAddress(address)}. Ready to burn DAT.`);
     } catch (err) {
+      setWcUri(null);
       setMessage(err instanceof Error ? err.message : "Connect failed");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function disconnect() {
+    setBusy("disconnect");
+    try {
+      if (live) await disconnectSageWallet();
+      setDatBalance(null);
+      setMessage("Sage disconnected.");
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "Disconnect failed");
     } finally {
       setBusy(null);
     }
@@ -88,13 +169,38 @@ export function WalletPanel({
       const intent = await intentRes.json();
       if (!intentRes.ok) throw new Error(intent.error ?? "Intent failed");
 
+      const pack = packs.find((p) => p.id === packId);
+      if (!pack) throw new Error("Unknown pack");
+
+      let txId: string | undefined;
+      let demo = false;
+
+      if (live && session.walletAddress) {
+        setMessage(
+          `Approve in Sage: burn ${formatDat(pack.dat)} ${DAT_SYMBOL} to the burn address…`,
+        );
+        const burn = await burnDatWithSage({
+          datAmount: pack.dat,
+          memo: intent.payment.memo as string,
+        });
+        txId = burn.txId;
+        setMessage("Burn submitted. Crediting your account…");
+      } else if (!live) {
+        throw new Error(
+          "Live Sage burns need NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID. Set it in .env and Connect Sage first.",
+        );
+      } else {
+        throw new Error("Connect Sage before burning DAT.");
+      }
+
       const confirmRes = await fetch("/api/payments/confirm", {
         method: "POST",
         credentials: "same-origin",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           paymentId: intent.payment.id,
-          demo: true,
+          txId,
+          demo,
         }),
       });
       const confirmed = await confirmRes.json();
@@ -102,6 +208,12 @@ export function WalletPanel({
 
       const synced = (await refreshAccount()) ?? confirmed.account;
       onAccount(synced);
+      try {
+        const bal = await getDatBalanceMojos();
+        setDatBalance(mojosToDat(bal));
+      } catch {
+        /* ignore */
+      }
 
       const added = confirmed.payment.credits as number;
       setMessage(
@@ -128,8 +240,7 @@ export function WalletPanel({
         </h2>
         <p className="mt-4 max-w-xl text-base leading-relaxed text-steel-300">
           Connect Sage and burn DAT for credits. Every payment goes to the Chia
-          burn address — permanently out of circulation. Demo mode credits
-          instantly so you can try the studio first.
+          burn address — permanently out of circulation.
         </p>
         <p className="mt-4 font-mono text-[11px] leading-relaxed text-steel-500">
           {economyBlurb()}
@@ -149,6 +260,16 @@ export function WalletPanel({
               ? "Reconnect Sage"
               : "Connect Sage"}
         </button>
+        {account?.walletAddress && live && (
+          <button
+            type="button"
+            onClick={() => void disconnect()}
+            disabled={!!busy}
+            className="font-mono text-xs uppercase tracking-widest text-steel-400 hover:text-copper-100"
+          >
+            Disconnect
+          </button>
+        )}
         <div className="font-mono text-xs text-steel-400">
           {account?.walletAddress ? (
             <span>
@@ -162,6 +283,14 @@ export function WalletPanel({
           )}
           <span className="mx-2 text-steel-600">·</span>
           <span className="text-copper-200">{account?.credits ?? 0} credits</span>
+          {datBalance != null && (
+            <>
+              <span className="mx-2 text-steel-600">·</span>
+              <span className="text-copper-200">
+                {formatDat(datBalance)} {DAT_SYMBOL} in Sage
+              </span>
+            </>
+          )}
         </div>
       </div>
 
@@ -169,6 +298,16 @@ export function WalletPanel({
         Burn address{" "}
         <span className="break-all text-steel-400">{DAT_BURN_ADDRESS}</span>
       </p>
+
+      {qrDataUrl && (
+        <div className="mt-6 max-w-sm border border-copper-800/50 bg-ink-900/50 p-4">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src={qrDataUrl} alt="WalletConnect QR for Sage" className="mx-auto" />
+          <p className="mt-3 font-mono text-[10px] leading-relaxed break-all text-steel-500">
+            {wcUri}
+          </p>
+        </div>
+      )}
 
       {message && (
         <p

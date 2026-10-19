@@ -46,7 +46,7 @@ npm run dev
 Open [http://localhost:43127](http://localhost:43127).
 
 1. **Sign in** at `/account` — DAT username / DAT password (shared DAT account), or create a new DAT STARCODER account. Password reset uses the shared DAT email reset flow.
-2. **Buy credits** — demo mode credits without broadcasting a burn.
+2. **Buy credits (live Sage burn)** — set `NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID`, Connect Sage, then Burn DAT. Sage sends DAT to the Chia burn address; credits are granted after you approve the send.
 3. **Studio** — pick a model (**Auto**, Coder 7B/14B, Qwen 7B, Llama 3.1 8B) and enqueue a job.
 4. **Live worker** (GPU box):
 
@@ -72,11 +72,22 @@ ollama pull llama3.1:8b
 
 **Auto** routing: coding-like prompts → `qwen2.5-coder:7b`; otherwise → `llama3.1:8b`.
 
-## DAT + Sage
+## DAT + Sage (live burns)
+
+1. Create a free project at [WalletConnect Cloud](https://cloud.walletconnect.com/) and copy the **Project ID**.
+2. Put it in `.env`:
+
+```bash
+NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID=your_project_id_here
+```
+
+3. Restart `npm run dev`, sign in, open **Buy DAT credits**, click **Connect Sage**, scan the QR in Sage.
+4. Choose a pack and **Burn DAT** — Sage prompts you to send DAT to the burn address. After you approve, credits are added.
 
 - Default DAT asset id: `d12fbf63bb015fa0e988509b971ad4c9da7cc5fc30f2499d3aab38c3fadc531c` (DAT Governance Token CAT2).
-- Settlement destination defaults to the Chia burn address above.
-- Set `NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID` from [WalletConnect Cloud](https://cloud.walletconnect.com/) for live Sage. Payment intents already include memo + asset id for CAT spends to the burn address.
+- Burn destination: `xch1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqm6ks6e8mvy`
+- Amounts use 3 DAT decimals (1 DAT = 1000 mojos). Optional XCH fee defaults to 0.0001 XCH.
+- Demo credits without a burn: set `ALLOW_DEMO_PAYMENTS=1` (off by default).
 
 ## Deploy to AWS
 
@@ -120,6 +131,6 @@ Local demo uses `.data/store.json`. Wire Amplify to DynamoDB when you leave demo
 
 ## Next upgrades
 
-- Live Sage CAT spend to the burn address + on-chain receipt verification
+- Verify burns via a Chia indexer (memo + burn address) before crediting
 - Persist to DynamoDB instead of `.data/store.json`
 - Stream token output over SSE while the worker generates
