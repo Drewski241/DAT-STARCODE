@@ -15,9 +15,9 @@ const plexMono = IBM_Plex_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Anvil — DAT-paid GPU coding agent",
+  title: "Anvil — coding agent paid in DAT",
   description:
-    "Host the storefront on AWS. Run the coding agent on your P720 with an RTX 3090. Pay with DAT through Sage.",
+    "An AI coding agent paid with DAT through Sage. Burn DAT for credits, then ship the change.",
 };
 
 export default function RootLayout({

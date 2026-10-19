@@ -1,7 +1,7 @@
 import {
   DAT_ASSET_ID,
+  DAT_BURN_ADDRESS,
   DAT_SYMBOL,
-  MERCHANT_XCH_ADDRESS,
   WALLETCONNECT_PROJECT_ID,
 } from "@/lib/config";
 
@@ -24,10 +24,10 @@ export function getSageConfig() {
     chain: "chia:mainnet",
     datAssetId: DAT_ASSET_ID,
     datSymbol: DAT_SYMBOL,
-    merchantAddress: MERCHANT_XCH_ADDRESS,
+    burnAddress: DAT_BURN_ADDRESS,
     metadata: {
       name: "Anvil",
-      description: "GPU coding agent paid with DAT via Sage",
+      description: "Coding agent paid with DAT via Sage — DAT is burned",
       url: typeof window !== "undefined" ? window.location.origin : "https://anvil.local",
       icons: [] as string[],
     },

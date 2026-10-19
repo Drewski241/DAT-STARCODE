@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { CREDIT_PACKS, DAT_SYMBOL } from "@/lib/config";
+import { CREDIT_PACKS, DAT_BURN_ADDRESS, DAT_SYMBOL } from "@/lib/config";
 import { formatDat } from "@/lib/utils";
 import { getSageConfig, shortAddress } from "@/lib/sage";
 
@@ -65,7 +65,7 @@ export function WalletPanel({
       if (!intentRes.ok) throw new Error(intent.error ?? "Intent failed");
 
       // Demo path: skip chain broadcast and credit immediately.
-      // Live path: open Sage WC, send DAT CAT to merchant, then confirm with tx id.
+      // Live path: open Sage WC, send DAT CAT to the burn address, then confirm with tx id.
       const confirmRes = await fetch("/api/payments/confirm", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -78,7 +78,7 @@ export function WalletPanel({
       if (!confirmRes.ok) throw new Error(confirmed.error ?? "Confirm failed");
       onAccount(confirmed.account);
       setMessage(
-        `Added ${confirmed.payment.credits} credits (${formatDat(confirmed.payment.datAmount)} ${DAT_SYMBOL}). Memo: ${intent.payment.memo}`,
+        `Burned ${formatDat(confirmed.payment.datAmount)} ${DAT_SYMBOL} → credits ${confirmed.payment.credits}. Destination: ${shortAddress(DAT_BURN_ADDRESS)}. Memo: ${intent.payment.memo}`,
       );
     } catch (err) {
       setMessage(err instanceof Error ? err.message : "Payment failed");
@@ -100,9 +100,9 @@ export function WalletPanel({
           Fuel the forge
         </h2>
         <p className="mt-4 max-w-xl text-base leading-relaxed text-steel-300">
-          Connect Sage, send DAT to the merchant address, and unlock credits for
-          GPU coding jobs on the P720 worker. Demo mode credits instantly so you
-          can try the studio before mainnet settlement.
+          Connect Sage and burn DAT for credits. Every payment goes to the Chia
+          burn address — permanently out of circulation. Demo mode credits
+          instantly so you can try the studio first.
         </p>
       </div>
 
@@ -135,12 +135,17 @@ export function WalletPanel({
         </div>
       </div>
 
+      <p className="mt-4 font-mono text-[11px] leading-relaxed text-steel-500">
+        Burn address{" "}
+        <span className="break-all text-steel-400">{DAT_BURN_ADDRESS}</span>
+      </p>
+
       <div className="mt-10 grid gap-8 md:grid-cols-3">
         {CREDIT_PACKS.map((pack) => (
           <div key={pack.id} className="border-t border-copper-600/50 pt-5">
             <h3 className="font-display text-2xl text-copper-100">{pack.label}</h3>
             <p className="mt-1 font-mono text-sm text-copper-300">
-              {formatDat(pack.dat)} {DAT_SYMBOL}
+              {formatDat(pack.dat)} {DAT_SYMBOL} burned
             </p>
             <p className="mt-3 text-sm text-steel-400">{pack.blurb}</p>
             <button
@@ -150,7 +155,7 @@ export function WalletPanel({
               disabled={!!busy}
               onClick={() => void buyPack(pack.id)}
             >
-              {busy === pack.id ? "Settling…" : "Pay with DAT"}
+              {busy === pack.id ? "Burning…" : "Burn DAT"}
             </button>
           </div>
         ))}

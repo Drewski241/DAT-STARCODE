@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { CREDIT_PACKS, DAT_ASSET_ID, MERCHANT_XCH_ADDRESS } from "@/lib/config";
+import { CREDIT_PACKS, DAT_ASSET_ID, DAT_BURN_ADDRESS } from "@/lib/config";
 import { createPaymentIntent, getOrCreateAccount } from "@/lib/store";
 
 export async function POST(req: NextRequest) {
@@ -22,7 +22,8 @@ export async function POST(req: NextRequest) {
     settlement: {
       assetId: DAT_ASSET_ID,
       amount: pack.dat,
-      to: MERCHANT_XCH_ADDRESS,
+      to: DAT_BURN_ADDRESS,
+      burn: true,
       memo: payment.memo,
     },
   });

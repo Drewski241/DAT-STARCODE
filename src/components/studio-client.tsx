@@ -31,7 +31,7 @@ export function StudioClient() {
   const [account, setAccount] = useState<Account | null>(null);
   const [jobs, setJobs] = useState<Job[]>([]);
   const [prompt, setPrompt] = useState(
-    "Add a typed CLI flag --dry-run to the worker that prints the planned Ollama call without executing it.",
+    "Add a typed CLI flag --dry-run that prints the planned agent steps without executing them.",
   );
   const [repoHint, setRepoHint] = useState("worker/");
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -95,8 +95,8 @@ export function StudioClient() {
             Dispatch a job
           </h1>
           <p className="mt-3 text-sm leading-relaxed text-steel-300">
-            Jobs queue on AWS, then your P720 worker claims them and runs
-            inference on the RTX 3090. Each job costs {CREDITS_PER_JOB} credits.
+            Describe the change you want. Each job costs {CREDITS_PER_JOB}{" "}
+            credits — buy more by burning DAT.
           </p>
 
           <label className="mt-8 block font-mono text-[11px] uppercase tracking-widest text-steel-400">

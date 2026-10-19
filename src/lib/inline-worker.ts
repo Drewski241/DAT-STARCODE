@@ -30,9 +30,8 @@ export async function processOneInlineJob() {
     "4. Summarize diffs and residual risks.",
     "",
     `## Notes`,
-    "This result was produced by the **inline demo worker**.",
-    "On your P720, replace this with Ollama / vLLM on the RTX 3090",
-    "via `worker/` so real GPU inference runs on-prem.",
+    "This result was produced by the **demo worker**.",
+    "Connect a live worker to run full model inference for production jobs.",
   ]
     .filter(Boolean)
     .join("\n");

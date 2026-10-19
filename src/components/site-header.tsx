@@ -14,7 +14,7 @@ export function SiteHeader({ credits }: { credits?: number | null }) {
           Anvil
         </span>
         <span className="hidden font-mono text-[10px] uppercase tracking-[0.22em] text-steel-400 transition group-hover:text-copper-300 sm:inline">
-          DAT · Sage · GPU
+          DAT · Sage · burn
         </span>
       </Link>
       <nav className="flex items-center gap-2 md:gap-4">
