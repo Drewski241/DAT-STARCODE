@@ -1,0 +1,60 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  Anvil hybrid stack — DynamoDB for credits/jobs plus SSM worker secret.
+  Host the Next.js app with Amplify Hosting (connect this repo in the Amplify console)
+  or any Node host. The P720 worker polls HTTPS; it does not need a VPC.
+
+Parameters:
+  ProjectName:
+    Type: String
+    Default: anvil
+  WorkerApiKey:
+    Type: String
+    NoEcho: true
+    MinLength: 16
+    Description: Shared secret the P720 sends as x-worker-key
+
+Resources:
+  AnvilTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub "${ProjectName}-store"
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: pk
+          AttributeType: S
+        - AttributeName: sk
+          AttributeType: S
+      KeySchema:
+        - AttributeName: pk
+          KeyType: HASH
+        - AttributeName: sk
+          KeyType: RANGE
+      SSESpecification:
+        SSEEnabled: true
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+
+  WorkerApiKeyParam:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: !Sub "/${ProjectName}/worker-api-key"
+      Type: String
+      Value: !Ref WorkerApiKey
+      Description: Worker auth key for Anvil P720 claim/complete routes
+
+Outputs:
+  TableName:
+    Value: !Ref AnvilTable
+  TableArn:
+    Value: !GetAtt AnvilTable.Arn
+  WorkerKeyParameter:
+    Value: !Ref WorkerApiKeyParam
+  EstimatedMonthlyCostNote:
+    Value: >
+      DynamoDB on-demand for light traffic is typically under $5/mo.
+      Amplify Hosting SSR for a small site is often $5–20/mo depending on
+      build minutes and data transfer. GPU cost stays on your electricity bill.
