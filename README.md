@@ -43,25 +43,33 @@ cp .env.example .env
 npm run dev
 ```
 
-Open [http://127.0.0.1:43127](http://127.0.0.1:43127).
+Open [http://localhost:43127](http://localhost:43127).
 
 1. **Buy credits** — demo mode credits without broadcasting a burn.
-2. **Studio** — enqueue a coding job; the inline demo worker answers immediately.
-3. **Live worker** (optional while developing):
+2. **Studio** — pick a model (**Auto**, Coder 7B/14B, Qwen 7B, Llama 3.1 8B) and enqueue a job.
+3. **Live worker** (GPU box):
 
 ```bash
-DAT_STARCODER_API_BASE=http://127.0.0.1:43127 \
+DISABLE_INLINE_WORKER=1 npm run dev   # website terminal
+
+DAT_STARCODER_API_BASE=http://localhost:43127 \
 WORKER_API_KEY=dev-worker-key-change-me \
-DISABLE_INLINE_WORKER=1 \
+WORKER_ID=p720 \
+OLLAMA_URL=http://127.0.0.1:11434 \
 npm run worker
 ```
 
-With Ollama on the box:
+Pull the models you want users to select (Auto needs both a coder and a general model):
 
 ```bash
-ollama pull qwen2.5-coder:14b
-OLLAMA_MODEL=qwen2.5-coder:14b npm run worker
+ollama pull qwen2.5-coder:7b
+ollama pull llama3.1:8b
+# optional:
+# ollama pull qwen2.5-coder:14b
+# ollama pull qwen2.5:7b
 ```
+
+**Auto** routing: coding-like prompts → `qwen2.5-coder:7b`; otherwise → `llama3.1:8b`.
 
 ## DAT + Sage
 

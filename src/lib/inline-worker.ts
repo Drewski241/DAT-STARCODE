@@ -16,6 +16,10 @@ export async function processOneInlineJob() {
 
   await new Promise((r) => setTimeout(r, 900));
 
+  const modelLine = job.modelResolved
+    ? `Model: ${job.modelRequested} → ${job.modelResolved} (${job.modelReason})`
+    : "Model: (unset)";
+
   const result = [
     `# DAT STARCODER draft for job ${job.id.slice(0, 8)}`,
     "",
@@ -23,6 +27,8 @@ export async function processOneInlineJob() {
     job.prompt,
     "",
     job.repoHint ? `## Repo hint\n${job.repoHint}\n` : "",
+    `## ${modelLine}`,
+    "",
     `## Plan`,
     "1. Clarify acceptance criteria from the prompt.",
     "2. Locate the smallest set of files to change.",

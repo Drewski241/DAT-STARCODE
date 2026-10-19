@@ -6,8 +6,8 @@
  *   DAT_STARCODER_API_BASE   (or ANVIL_API_BASE)  https://your-app.example.com
  *   WORKER_API_KEY           must match server WORKER_API_KEY
  *   WORKER_ID                unique name for this box (default: forge-1)
- *   OLLAMA_URL               http://127.0.0.1:11434 (optional)
- *   OLLAMA_MODEL             e.g. qwen2.5-coder:14b
+ *   OLLAMA_URL               http://127.0.0.1:11434
+ *   OLLAMA_MODEL             fallback if a job has no modelResolved
  *   POLL_MS                  default 4000
  */
 
@@ -58,47 +58,70 @@ async function complete(jobId, { result, error }) {
   return res.json();
 }
 
-async function runWithOllama(job) {
-  const prompt = [
-    "You are DAT STARCODER, a careful coding agent.",
-    "Return a concrete implementation plan and code patches in markdown.",
-    job.repoHint ? `Repo/path hint: ${job.repoHint}` : "",
+function systemPromptFor(job, model) {
+  const coding = /coder/i.test(model);
+  if (coding) {
+    return [
+      "You are DAT STARCODER, a careful coding agent.",
+      "Return a concrete implementation plan and code patches in markdown.",
+      job.repoHint ? `Repo/path hint: ${job.repoHint}` : "",
+      "",
+      "User request:",
+      job.prompt,
+    ]
+      .filter(Boolean)
+      .join("\n");
+  }
+  return [
+    "You are DAT STARCODER, a helpful assistant.",
+    "Answer clearly and accurately. Use markdown when useful.",
     "",
     "User request:",
     job.prompt,
-  ]
-    .filter(Boolean)
-    .join("\n");
+  ].join("\n");
+}
+
+async function runWithOllama(job) {
+  const model = job.modelResolved || OLLAMA_MODEL;
+  const prompt = systemPromptFor(job, model);
 
   try {
     const res = await fetch(`${OLLAMA_URL}/api/generate`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        model: OLLAMA_MODEL,
+        model,
         prompt,
         stream: false,
       }),
     });
     if (!res.ok) {
-      throw new Error(`Ollama ${res.status}`);
+      const body = await res.text();
+      throw new Error(`Ollama ${res.status}: ${body.slice(0, 200)}`);
     }
     const data = await res.json();
-    return data.response || "(empty Ollama response)";
+    const header = [
+      `Model: ${job.modelRequested || "auto"} → ${model}`,
+      job.modelReason ? `Reason: ${job.modelReason}` : "",
+      "",
+    ]
+      .filter(Boolean)
+      .join("\n");
+    return `${header}${data.response || "(empty Ollama response)"}`;
   } catch (err) {
     const reason = err instanceof Error ? err.message : String(err);
     return [
       `# Offline fallback (Ollama unreachable: ${reason})`,
       "",
-      `Model target: ${OLLAMA_MODEL}`,
+      `Model target: ${model}`,
       "",
       "## Request",
       job.prompt,
       "",
       "## Suggested next step",
-      "1. Install Ollama and pull a coder model that fits your GPU.",
-      `2. ` + "`ollama pull " + OLLAMA_MODEL + "`",
-      "3. Restart this worker with OLLAMA_URL pointing at the local daemon.",
+      `1. ollama pull ${model}`,
+      "2. Confirm Ollama is running on OLLAMA_URL.",
+      "3. Restart this worker.",
     ].join("\n");
   }
 }
@@ -112,7 +135,10 @@ async function loop() {
         await sleep(POLL_MS);
         continue;
       }
-      console.log(`[dat-starcoder-worker] claimed ${job.id}`);
+      const model = job.modelResolved || OLLAMA_MODEL;
+      console.log(
+        `[dat-starcoder-worker] claimed ${job.id} model=${model}`,
+      );
       const result = await runWithOllama(job);
       await complete(job.id, { result });
       console.log(`[dat-starcoder-worker] completed ${job.id}`);

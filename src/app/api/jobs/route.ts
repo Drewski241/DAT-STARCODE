@@ -1,4 +1,5 @@
 import { ACCOUNT_COOKIE } from "@/lib/config";
+import { resolveModel } from "@/lib/models";
 import { NextRequest, NextResponse } from "next/server";
 import { enqueueJob, getOrCreateAccount, listJobs } from "@/lib/store";
 
@@ -19,7 +20,11 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   const accountId = req.cookies.get(ACCOUNT_COOKIE)?.value;
   const account = await getOrCreateAccount(accountId);
-  const body = (await req.json()) as { prompt?: string; repoHint?: string };
+  const body = (await req.json()) as {
+    prompt?: string;
+    repoHint?: string;
+    model?: string;
+  };
 
   if (!body.prompt || body.prompt.trim().length < 8) {
     return NextResponse.json(
@@ -28,11 +33,16 @@ export async function POST(req: NextRequest) {
     );
   }
 
+  const resolved = resolveModel(body.model, body.prompt);
+
   try {
     const result = await enqueueJob({
       accountId: account.id,
       prompt: body.prompt,
       repoHint: body.repoHint,
+      modelRequested: resolved.requested,
+      modelResolved: resolved.resolved,
+      modelReason: resolved.reason,
     });
     return NextResponse.json(result);
   } catch (err) {

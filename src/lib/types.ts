@@ -34,6 +34,11 @@ export interface CodingJob {
   accountId: string;
   prompt: string;
   repoHint: string | null;
+  /** User-facing choice (may be "auto"). */
+  modelRequested: string;
+  /** Concrete Ollama tag after Auto resolution. */
+  modelResolved: string;
+  modelReason: string;
   status: JobStatus;
   creditsCharged: number;
   result: string | null;

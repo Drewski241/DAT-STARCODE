@@ -159,6 +159,9 @@ export async function enqueueJob(input: {
   accountId: string;
   prompt: string;
   repoHint?: string | null;
+  modelRequested?: string | null;
+  modelResolved: string;
+  modelReason: string;
 }) {
   return mutate((store) => {
     const account = store.accounts.find((a) => a.id === input.accountId);
@@ -176,6 +179,9 @@ export async function enqueueJob(input: {
       accountId: input.accountId,
       prompt: input.prompt.trim(),
       repoHint: input.repoHint?.trim() || null,
+      modelRequested: input.modelRequested?.trim() || "auto",
+      modelResolved: input.modelResolved,
+      modelReason: input.modelReason,
       status: "queued",
       creditsCharged: CREDITS_PER_JOB,
       result: null,
