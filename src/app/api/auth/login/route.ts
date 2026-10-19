@@ -70,7 +70,14 @@ export async function POST(req: NextRequest) {
       throw pokerErr;
     }
   } catch (err) {
-    const message = err instanceof Error ? err.message : "Login failed";
+    let message = err instanceof Error ? err.message : "Login failed";
+    if (
+      err instanceof TypeError ||
+      /fetch failed|ECONNREFUSED|ENOTFOUND|network/i.test(message)
+    ) {
+      message =
+        "Could not reach DAT Spirit Poker. Check your connection, or create a local DAT STARCODER account.";
+    }
     return NextResponse.json({ error: message }, { status: 401 });
   }
 }

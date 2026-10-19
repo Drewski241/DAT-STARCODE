@@ -15,11 +15,13 @@ export function HomeClient() {
   const [account, setAccount] = useState<Account | null>(null);
 
   useEffect(() => {
-    void fetch("/api/session")
+    void fetch("/api/session", { credentials: "same-origin" })
       .then((r) => r.json())
       .then((d) => setAccount(d.account))
       .catch(() => undefined);
   }, []);
+
+  const signedIn = Boolean(account);
 
   return (
     <div className="relative min-h-screen bg-ink-950 text-copper-50">
@@ -49,18 +51,37 @@ export function HomeClient() {
               unlock credits, ship the change.
             </p>
             <div className="mt-8 flex flex-wrap gap-3">
-              <Link
-                href="/account"
-                className="inline-flex items-center rounded-none bg-copper-500 px-5 py-3 font-mono text-xs uppercase tracking-widest text-ink-950 transition hover:bg-copper-400"
-              >
-                Sign in / create account
-              </Link>
-              <Link
-                href="/studio"
-                className="inline-flex items-center rounded-none border border-copper-600/70 px-5 py-3 font-mono text-xs uppercase tracking-widest text-copper-100 transition hover:border-copper-400 hover:bg-copper-950/40"
-              >
-                Open studio
-              </Link>
+              {signedIn ? (
+                <>
+                  <Link
+                    href="/studio"
+                    className="inline-flex items-center rounded-none bg-copper-500 px-5 py-3 font-mono text-xs uppercase tracking-widest text-ink-950 transition hover:bg-copper-400"
+                  >
+                    Open studio
+                  </Link>
+                  <Link
+                    href="/account"
+                    className="inline-flex items-center rounded-none border border-copper-600/70 px-5 py-3 font-mono text-xs uppercase tracking-widest text-copper-100 transition hover:border-copper-400 hover:bg-copper-950/40"
+                  >
+                    Account
+                  </Link>
+                </>
+              ) : (
+                <>
+                  <Link
+                    href="/account"
+                    className="inline-flex items-center rounded-none bg-copper-500 px-5 py-3 font-mono text-xs uppercase tracking-widest text-ink-950 transition hover:bg-copper-400"
+                  >
+                    Sign in / create account
+                  </Link>
+                  <Link
+                    href="/studio"
+                    className="inline-flex items-center rounded-none border border-copper-600/70 px-5 py-3 font-mono text-xs uppercase tracking-widest text-copper-100 transition hover:border-copper-400 hover:bg-copper-950/40"
+                  >
+                    Open studio
+                  </Link>
+                </>
+              )}
             </div>
           </div>
         </section>

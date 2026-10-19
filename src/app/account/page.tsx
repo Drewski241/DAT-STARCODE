@@ -1,4 +1,4 @@
-import { AuthForm } from "@/components/auth-form";
+import { AccountClient } from "@/components/account-client";
 import { SiteHeader } from "@/components/site-header";
 
 export default function AccountPage() {
@@ -19,10 +19,11 @@ export default function AccountPage() {
           </h1>
           <p className="mt-3 text-sm text-steel-300">
             Create an account here, or sign in with the same username and
-            password you use on DAT Spirit Poker.
+            password you use on DAT Spirit Poker. New accounts start with 20
+            credits so you can try the studio.
           </p>
           <div className="mt-10">
-            <AuthForm />
+            <AccountClient />
           </div>
         </main>
       </div>

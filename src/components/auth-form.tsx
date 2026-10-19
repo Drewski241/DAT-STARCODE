@@ -52,11 +52,12 @@ export function AuthForm({
         data.via === "spirit-poker"
           ? "Signed in with your DAT Spirit Poker account."
           : mode === "register"
-            ? "Account created. Welcome to DAT STARCODER."
+            ? "Account created with 20 starter credits. Opening studio…"
             : "Signed in.";
       setMessage(via);
       router.refresh();
-      router.push("/studio");
+      // Brief pause so the success line is readable before navigation.
+      window.setTimeout(() => router.push("/studio"), 400);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Auth failed");
     } finally {

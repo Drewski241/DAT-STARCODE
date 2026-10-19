@@ -24,10 +24,7 @@ export async function createSessionToken(accountId: string) {
 export async function readSessionAccountId(): Promise<string | null> {
   const jar = await cookies();
   const token = jar.get(SESSION_COOKIE)?.value;
-  if (!token) {
-    // Legacy anonymous cookie — treat as unsigned until they log in.
-    return jar.get(ACCOUNT_COOKIE)?.value ?? null;
-  }
+  if (!token) return null;
   try {
     const { payload } = await jwtVerify(token, secretKey());
     return typeof payload.sub === "string" ? payload.sub : null;
