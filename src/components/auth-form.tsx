@@ -4,9 +4,16 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import {
+  COUNTRIES,
+  DEFAULT_COUNTRY_CODE,
+  SPIRIT_POKER_BLOCKED_COUNTRIES,
+} from "@/lib/countries";
 import type { PublicAccount } from "@/lib/types";
 
 type Mode = "login" | "register";
+
+const blocked = new Set<string>(SPIRIT_POKER_BLOCKED_COUNTRIES);
 
 export function AuthForm({
   onAuthed,
@@ -20,7 +27,7 @@ export function AuthForm({
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [email, setEmail] = useState("");
-  const [countryCode, setCountryCode] = useState("US");
+  const [countryCode, setCountryCode] = useState(DEFAULT_COUNTRY_CODE);
   const [preferPoker, setPreferPoker] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -141,15 +148,29 @@ export function AuthForm({
 
       {mode === "login" && (
         <>
-          <label className="block font-mono text-[11px] uppercase tracking-widest text-steel-400">
+          <label
+            htmlFor="country-code"
+            className="block font-mono text-[11px] uppercase tracking-widest text-steel-400"
+          >
             Country (for Spirit Poker sign-in)
           </label>
-          <Input
+          <select
+            id="country-code"
             value={countryCode}
-            onChange={(e) => setCountryCode(e.target.value.toUpperCase())}
-            maxLength={2}
-            className="rounded-none border-copper-800/50 bg-ink-900/80 font-mono uppercase"
-          />
+            onChange={(e) => setCountryCode(e.target.value)}
+            className="flex h-9 w-full rounded-none border border-copper-800/50 bg-ink-900/80 px-3 py-1 font-mono text-sm text-copper-50 outline-none focus-visible:border-copper-500"
+          >
+            {COUNTRIES.map((c) => (
+              <option
+                key={c.code}
+                value={c.code}
+                disabled={blocked.has(c.code)}
+              >
+                {c.name} ({c.code})
+                {blocked.has(c.code) ? " — unavailable" : ""}
+              </option>
+            ))}
+          </select>
           <label className="flex items-center gap-2 font-mono text-[11px] text-steel-400">
             <input
               type="checkbox"
