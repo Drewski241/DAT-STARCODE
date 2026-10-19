@@ -16,7 +16,7 @@ type Mode = "login" | "register" | "reset";
 const blocked = new Set<string>(SPIRIT_POKER_BLOCKED_COUNTRIES);
 
 const BAD_CREDENTIALS_HINT =
-  "Check your DAT username and DAT password. If you forgot it, use Reset password.";
+  "Check your DAT username and DAT password.";
 
 export function AuthForm({
   onAuthed,
@@ -37,11 +37,13 @@ export function AuthForm({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
+  const [offerReset, setOfferReset] = useState(false);
 
   function switchMode(next: Mode) {
     setMode(next);
     setError(null);
     setMessage(null);
+    setOfferReset(false);
     if (next !== "reset") {
       setCodeSent(false);
       setResetCode("");
@@ -128,6 +130,7 @@ export function AuthForm({
     setBusy(true);
     setError(null);
     setMessage(null);
+    setOfferReset(false);
     try {
       const path = mode === "register" ? "/api/auth/register" : "/api/auth/login";
       const body =
@@ -146,8 +149,11 @@ export function AuthForm({
         const raw = (data.error as string | undefined) ?? "Auth failed";
         if (
           mode === "login" &&
-          /unknown|invalid|incorrect|password|failed|unauthorized|401/i.test(raw)
+          /unknown|invalid|incorrect|password|failed|unauthorized|401|check your dat/i.test(
+            raw,
+          )
         ) {
+          setOfferReset(true);
           throw new Error(BAD_CREDENTIALS_HINT);
         }
         throw new Error(raw);
@@ -273,13 +279,6 @@ export function AuthForm({
               </option>
             ))}
           </select>
-          <button
-            type="button"
-            className="font-mono text-[11px] text-copper-300 underline-offset-2 hover:underline"
-            onClick={() => switchMode("reset")}
-          >
-            Forgot password?
-          </button>
         </>
       )}
 
@@ -370,14 +369,33 @@ export function AuthForm({
       )}
 
       {error && (
-        <p className="border-l-2 border-rose-500 pl-3 font-mono text-xs text-rose-300">
-          {error}
-        </p>
+        <div className="space-y-3 border-l-2 border-rose-500 pl-3">
+          <p className="font-mono text-xs text-rose-300">{error}</p>
+          {offerReset && mode === "login" && (
+            <button
+              type="button"
+              onClick={() => switchMode("reset")}
+              className="inline-flex w-full items-center justify-center border border-copper-500 bg-copper-900/40 px-4 py-2.5 font-mono text-xs uppercase tracking-widest text-copper-100 transition hover:border-copper-300 hover:bg-copper-800/50"
+            >
+              Reset password
+            </button>
+          )}
+        </div>
       )}
       {message && (
         <p className="border-l-2 border-copper-500 pl-3 font-mono text-xs text-copper-200">
           {message}
         </p>
+      )}
+
+      {mode === "login" && !offerReset && (
+        <button
+          type="button"
+          className="w-full font-mono text-[11px] text-steel-500 underline-offset-2 hover:text-copper-200 hover:underline"
+          onClick={() => switchMode("reset")}
+        >
+          Reset password
+        </button>
       )}
     </form>
   );

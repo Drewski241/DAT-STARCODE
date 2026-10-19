@@ -80,8 +80,7 @@ export async function POST(req: NextRequest) {
     } else if (
       /unknown|invalid|incorrect|password|unauthorized|failed/i.test(message)
     ) {
-      message =
-        "Check your DAT username and DAT password. If you forgot it, use Reset password.";
+      message = "Check your DAT username and DAT password.";
     }
     return NextResponse.json({ error: message }, { status: 401 });
   }
