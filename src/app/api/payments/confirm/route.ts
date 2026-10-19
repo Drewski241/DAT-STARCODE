@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { confirmPayment } from "@/lib/store";
 
 export async function POST(req: NextRequest) {
-  const accountId = req.cookies.get("anvil_account")?.value;
+  const accountId = req.cookies.get("dat_starcoder_account")?.value;
   if (!accountId) {
     return NextResponse.json({ error: "No session" }, { status: 401 });
   }

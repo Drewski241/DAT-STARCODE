@@ -10,8 +10,8 @@ export function SiteHeader({ credits }: { credits?: number | null }) {
   return (
     <header className="relative z-20 flex items-center justify-between px-5 py-5 md:px-10">
       <Link href="/" className="group flex items-baseline gap-2">
-        <span className="font-display text-2xl tracking-tight text-copper-100 md:text-3xl">
-          Anvil
+        <span className="font-display text-xl tracking-tight text-copper-100 md:text-2xl">
+          DAT STARCODER
         </span>
         <span className="hidden font-mono text-[10px] uppercase tracking-[0.22em] text-steel-400 transition group-hover:text-copper-300 sm:inline">
           DAT · Sage · burn

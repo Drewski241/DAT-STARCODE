@@ -13,7 +13,10 @@ import {
   DAT_ASSET_ID,
 } from "@/lib/config";
 
-const DATA_DIR = process.env.ANVIL_DATA_DIR ?? path.join(process.cwd(), ".data");
+const DATA_DIR =
+  process.env.DAT_STARCODER_DATA_DIR ??
+  process.env.ANVIL_DATA_DIR ??
+  path.join(process.cwd(), ".data");
 const STORE_PATH = path.join(DATA_DIR, "store.json");
 
 const emptyStore = (): StoreSnapshot => ({
@@ -109,7 +112,7 @@ export async function createPaymentIntent(input: {
       datAmount: input.datAmount,
       credits: input.datAmount * CREDITS_PER_DAT,
       status: "pending",
-      memo: `anvil:${id}:${DAT_ASSET_ID.slice(0, 8)}`,
+      memo: `starcoder:${id}:${DAT_ASSET_ID.slice(0, 8)}`,
       txId: null,
       createdAt: now,
       confirmedAt: null,

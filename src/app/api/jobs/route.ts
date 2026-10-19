@@ -2,11 +2,11 @@ import { NextRequest, NextResponse } from "next/server";
 import { enqueueJob, getOrCreateAccount, listJobs } from "@/lib/store";
 
 export async function GET(req: NextRequest) {
-  const accountId = req.cookies.get("anvil_account")?.value;
+  const accountId = req.cookies.get("dat_starcoder_account")?.value;
   const account = await getOrCreateAccount(accountId);
   const jobs = await listJobs(account.id);
   const res = NextResponse.json({ account, jobs });
-  res.cookies.set("anvil_account", account.id, {
+  res.cookies.set("dat_starcoder_account", account.id, {
     httpOnly: true,
     sameSite: "lax",
     path: "/",
@@ -16,7 +16,7 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
-  const accountId = req.cookies.get("anvil_account")?.value;
+  const accountId = req.cookies.get("dat_starcoder_account")?.value;
   const account = await getOrCreateAccount(accountId);
   const body = (await req.json()) as { prompt?: string; repoHint?: string };
 

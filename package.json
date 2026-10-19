@@ -1,8 +1,8 @@
 {
-  "name": "anvil-dat-agent",
+  "name": "dat-starcoder",
   "version": "0.1.0",
   "private": true,
-  "description": "DAT-paid AI coding agent — AWS storefront, P720 GPU worker, Sage wallet",
+  "description": "DAT STARCODER — coding agent paid with DAT via Sage (burn for credits)",
   "scripts": {
     "dev": "next dev -H 0.0.0.0 -p 43127",
     "build": "next build",

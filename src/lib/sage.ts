@@ -1,4 +1,5 @@
 import {
+  APP_NAME,
   DAT_ASSET_ID,
   DAT_BURN_ADDRESS,
   DAT_SYMBOL,
@@ -26,9 +27,12 @@ export function getSageConfig() {
     datSymbol: DAT_SYMBOL,
     burnAddress: DAT_BURN_ADDRESS,
     metadata: {
-      name: "Anvil",
+      name: APP_NAME,
       description: "Coding agent paid with DAT via Sage — DAT is burned",
-      url: typeof window !== "undefined" ? window.location.origin : "https://anvil.local",
+      url:
+        typeof window !== "undefined"
+          ? window.location.origin
+          : "https://dat-starcoder.local",
       icons: [] as string[],
     },
   };

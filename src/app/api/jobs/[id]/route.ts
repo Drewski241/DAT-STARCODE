@@ -6,7 +6,7 @@ export async function GET(
   ctx: { params: Promise<{ id: string }> },
 ) {
   const { id } = await ctx.params;
-  const accountId = req.cookies.get("anvil_account")?.value;
+  const accountId = req.cookies.get("dat_starcoder_account")?.value;
   const job = await getJob(id);
   if (!job) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });

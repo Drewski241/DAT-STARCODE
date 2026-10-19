@@ -41,11 +41,11 @@ export function HomeClient() {
 
         <section className="flex min-h-[calc(100vh-5.5rem)] flex-col justify-end px-5 pb-16 pt-10 md:px-10 md:pb-24">
           <div className="max-w-3xl animate-rise">
-            <h1 className="font-display text-[clamp(3.4rem,12vw,7.5rem)] leading-[0.88] tracking-tight text-copper-50">
-              Anvil
+            <h1 className="font-display text-[clamp(2.6rem,9vw,5.5rem)] leading-[0.92] tracking-tight text-copper-50">
+              DAT STARCODER
             </h1>
             <p className="mt-5 max-w-lg text-lg leading-relaxed text-steel-200 md:text-xl">
-              An AI coding agent you pay for with DAT through Sage. Spend DAT,
+              An AI coding agent you pay for with DAT through Sage. Burn DAT,
               unlock credits, ship the change.
             </p>
             <div className="mt-8 flex flex-wrap gap-3">
@@ -107,7 +107,7 @@ export function HomeClient() {
 
         <footer className="border-t border-copper-900/60 px-5 py-8 md:px-10">
           <p className="font-mono text-[11px] uppercase tracking-widest text-steel-600">
-            Anvil · DAT burned for credits · Sage wallet
+            DAT STARCODER · DAT burned for credits · Sage wallet
           </p>
         </footer>
       </div>

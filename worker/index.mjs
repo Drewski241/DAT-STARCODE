@@ -1,22 +1,23 @@
 #!/usr/bin/env node
 /**
- * Anvil P720 worker — run on the ThinkStation next to the RTX 3090.
+ * DAT STARCODER worker — run on the machine that hosts the coding GPU.
  *
  * Env:
- *   ANVIL_API_BASE   https://your-amplify-app.amplifyapp.com
- *   WORKER_API_KEY   must match AWS / .env WORKER_API_KEY
- *   WORKER_ID        unique name for this box (default: p720)
- *   OLLAMA_URL       http://127.0.0.1:11434 (optional)
- *   OLLAMA_MODEL     e.g. qwen2.5-coder:14b
- *   POLL_MS          default 4000
+ *   DAT_STARCODER_API_BASE   (or ANVIL_API_BASE)  https://your-app.example.com
+ *   WORKER_API_KEY           must match server WORKER_API_KEY
+ *   WORKER_ID                unique name for this box (default: forge-1)
+ *   OLLAMA_URL               http://127.0.0.1:11434 (optional)
+ *   OLLAMA_MODEL             e.g. qwen2.5-coder:14b
+ *   POLL_MS                  default 4000
  */
 
-const API_BASE = (process.env.ANVIL_API_BASE || "http://127.0.0.1:43127").replace(
-  /\/$/,
-  "",
-);
+const API_BASE = (
+  process.env.DAT_STARCODER_API_BASE ||
+  process.env.ANVIL_API_BASE ||
+  "http://127.0.0.1:43127"
+).replace(/\/$/, "");
 const WORKER_KEY = process.env.WORKER_API_KEY || "dev-worker-key-change-me";
-const WORKER_ID = process.env.WORKER_ID || "p720";
+const WORKER_ID = process.env.WORKER_ID || "forge-1";
 const OLLAMA_URL = (process.env.OLLAMA_URL || "http://127.0.0.1:11434").replace(
   /\/$/,
   "",
@@ -59,7 +60,7 @@ async function complete(jobId, { result, error }) {
 
 async function runWithOllama(job) {
   const prompt = [
-    "You are Anvil, a careful coding agent running on a local RTX GPU.",
+    "You are DAT STARCODER, a careful coding agent.",
     "Return a concrete implementation plan and code patches in markdown.",
     job.repoHint ? `Repo/path hint: ${job.repoHint}` : "",
     "",
@@ -94,8 +95,8 @@ async function runWithOllama(job) {
       "## Request",
       job.prompt,
       "",
-      "## Suggested next step on the P720",
-      "1. Install Ollama and pull a coder model that fits 24GB VRAM (or quantized for tighter budgets).",
+      "## Suggested next step",
+      "1. Install Ollama and pull a coder model that fits your GPU.",
       `2. ` + "`ollama pull " + OLLAMA_MODEL + "`",
       "3. Restart this worker with OLLAMA_URL pointing at the local daemon.",
     ].join("\n");
@@ -103,7 +104,7 @@ async function runWithOllama(job) {
 }
 
 async function loop() {
-  console.log(`[anvil-worker] ${WORKER_ID} → ${API_BASE}`);
+  console.log(`[dat-starcoder-worker] ${WORKER_ID} → ${API_BASE}`);
   for (;;) {
     try {
       const job = await claim();
@@ -111,12 +112,12 @@ async function loop() {
         await sleep(POLL_MS);
         continue;
       }
-      console.log(`[anvil-worker] claimed ${job.id}`);
+      console.log(`[dat-starcoder-worker] claimed ${job.id}`);
       const result = await runWithOllama(job);
       await complete(job.id, { result });
-      console.log(`[anvil-worker] completed ${job.id}`);
+      console.log(`[dat-starcoder-worker] completed ${job.id}`);
     } catch (err) {
-      console.error("[anvil-worker]", err);
+      console.error("[dat-starcoder-worker]", err);
       await sleep(POLL_MS);
     }
   }

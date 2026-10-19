@@ -1,18 +1,18 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Description: >
-  Anvil hybrid stack — DynamoDB for credits/jobs plus SSM worker secret.
+  DAT STARCODER stack — DynamoDB for credits/jobs plus SSM worker secret.
   Host the Next.js app with Amplify Hosting (connect this repo in the Amplify console)
-  or any Node host. The P720 worker polls HTTPS; it does not need a VPC.
+  or any Node host. The on-prem worker polls HTTPS; it does not need a VPC.
 
 Parameters:
   ProjectName:
     Type: String
-    Default: anvil
+    Default: dat-starcoder
   WorkerApiKey:
     Type: String
     NoEcho: true
     MinLength: 16
-    Description: Shared secret the P720 sends as x-worker-key
+    Description: Shared secret the worker sends as x-worker-key
 
 Resources:
   AnvilTable:
@@ -44,7 +44,7 @@ Resources:
       Name: !Sub "/${ProjectName}/worker-api-key"
       Type: String
       Value: !Ref WorkerApiKey
-      Description: Worker auth key for Anvil P720 claim/complete routes
+      Description: Worker auth key for DAT STARCODER claim/complete routes
 
 Outputs:
   TableName:

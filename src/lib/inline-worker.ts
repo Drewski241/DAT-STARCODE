@@ -17,7 +17,7 @@ export async function processOneInlineJob() {
   await new Promise((r) => setTimeout(r, 900));
 
   const result = [
-    `# Anvil draft for job ${job.id.slice(0, 8)}`,
+    `# DAT STARCODER draft for job ${job.id.slice(0, 8)}`,
     "",
     `## Request`,
     job.prompt,

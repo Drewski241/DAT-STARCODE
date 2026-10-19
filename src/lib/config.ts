@@ -29,8 +29,11 @@ export const WORKER_API_KEY =
 export const WALLETCONNECT_PROJECT_ID =
   process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID ?? "";
 
-export const APP_NAME = "Anvil";
+export const APP_NAME = "DAT STARCODER";
 export const APP_TAGLINE = "Coding agent, paid in DAT";
+
+/** Session cookie name for credit accounts. */
+export const ACCOUNT_COOKIE = "dat_starcoder_account";
 
 export const CREDIT_PACKS = [
   { id: "spark", dat: 10, label: "Spark", blurb: "A few short tasks" },

@@ -1,4 +1,4 @@
-# Anvil
+# DAT STARCODER
 
 **DAT-paid AI coding agent.** Customers connect **Sage**, burn **DAT** for credits, and use the studio. The public site stays product-focused; this README is for operators.
 
@@ -39,7 +39,7 @@ Open [http://127.0.0.1:43127](http://127.0.0.1:43127).
 3. **Live worker** (optional while developing):
 
 ```bash
-ANVIL_API_BASE=http://127.0.0.1:43127 \
+DAT_STARCODER_API_BASE=http://127.0.0.1:43127 \
 WORKER_API_KEY=dev-worker-key-change-me \
 DISABLE_INLINE_WORKER=1 \
 npm run worker
@@ -71,7 +71,7 @@ OLLAMA_MODEL=qwen2.5-coder:14b npm run worker
 ```bash
 aws cloudformation deploy \
   --template-file infra/cloudformation.yml \
-  --stack-name anvil \
+  --stack-name dat-starcoder \
   --parameter-overrides WorkerApiKey='replace-with-long-secret' \
   --capabilities CAPABILITY_NAMED_IAM
 ```
