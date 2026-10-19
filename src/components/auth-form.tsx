@@ -102,9 +102,11 @@ export function AuthForm({
       setConfirmPassword("");
       setResetCode("");
       setCodeSent(false);
-      setMessage(data.message ?? "Password updated. Sign in with your DAT password.");
-      switchMode("login");
-      setMessage(data.message ?? "Password updated. Sign in with your DAT password.");
+      setMode("login");
+      setError(null);
+      setMessage(
+        data.message ?? "Password updated. Sign in with your DAT password.",
+      );
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not reset password");
     } finally {

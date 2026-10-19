@@ -41,10 +41,10 @@ export async function pokerLogin(input: {
     sageAddress?: string | null;
   };
   if (!res.ok) {
-    throw new Error(data.error ?? `Poker login failed (${res.status})`);
+    throw new Error(data.error ?? `DAT sign-in failed (${res.status})`);
   }
   if (!data.token || !data.playerId || !data.username) {
-    throw new Error("Poker login returned an incomplete session");
+    throw new Error("DAT sign-in returned an incomplete session");
   }
   return {
     token: data.token,
