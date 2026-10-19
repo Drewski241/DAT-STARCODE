@@ -1,7 +1,16 @@
 import type { NextConfig } from "next";
 
+/**
+ * Dev often mixes localhost vs 127.0.0.1 (and the P720 hostname).
+ * Without these, Next blocks HMR/dev assets and client clicks can appear dead.
+ */
 const nextConfig: NextConfig = {
-  /* config options here */
+  allowedDevOrigins: [
+    "127.0.0.1",
+    "localhost",
+    "drew-davis-ThinkStation-P720",
+    "*.local",
+  ],
 };
 
 export default nextConfig;

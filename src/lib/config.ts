@@ -1,3 +1,5 @@
+import { CREDITS_PER_DAT as DERIVED_CREDITS_PER_DAT } from "@/lib/economy";
+
 /**
  * DAT (DAT Governance Token) on Chia — CAT2 asset id from Spacescan.
  * Override via env if you settle on a different DAT CAT later.
@@ -8,10 +10,15 @@ export const DAT_ASSET_ID =
 
 export const DAT_SYMBOL = "DAT";
 
-/** How many agent credits one DAT buys (tune for your cost of GPU time). */
-export const CREDITS_PER_DAT = Number(process.env.NEXT_PUBLIC_CREDITS_PER_DAT ?? 10);
+/**
+ * Credits per DAT — derived from supply + century burn budget unless overridden.
+ * @see src/lib/economy.ts
+ */
+export const CREDITS_PER_DAT = Number(
+  process.env.NEXT_PUBLIC_CREDITS_PER_DAT ?? DERIVED_CREDITS_PER_DAT,
+);
 
-/** Credits burned per coding job. */
+/** Credits spent per coding job. */
 export const CREDITS_PER_JOB = Number(process.env.CREDITS_PER_JOB ?? 5);
 
 /**
@@ -35,8 +42,3 @@ export const APP_TAGLINE = "Coding agent, paid in DAT";
 /** Session cookie name for credit accounts. */
 export const ACCOUNT_COOKIE = "dat_starcoder_account";
 
-export const CREDIT_PACKS = [
-  { id: "spark", dat: 10, label: "Spark", blurb: "A few short tasks" },
-  { id: "forge", dat: 50, label: "Forge", blurb: "A solid work session" },
-  { id: "foundry", dat: 200, label: "Foundry", blurb: "Heavy multi-file jobs" },
-] as const;

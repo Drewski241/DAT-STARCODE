@@ -1,12 +1,11 @@
 "use client";
 
 import { useState } from "react";
+import { DAT_BURN_ADDRESS, DAT_SYMBOL } from "@/lib/config";
 import {
-  CREDIT_PACKS,
-  CREDITS_PER_DAT,
-  DAT_BURN_ADDRESS,
-  DAT_SYMBOL,
-} from "@/lib/config";
+  economyBlurb,
+  getCreditPacks,
+} from "@/lib/economy";
 import { formatDat } from "@/lib/utils";
 import { getSageConfig, shortAddress } from "@/lib/sage";
 
@@ -24,11 +23,12 @@ export function WalletPanel({
   onAccount: (a: Account) => void;
 }) {
   const sage = getSageConfig();
+  const packs = getCreditPacks();
   const [busy, setBusy] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
 
   async function refreshAccount() {
-    const res = await fetch("/api/session");
+    const res = await fetch("/api/session", { credentials: "same-origin" });
     const data = await res.json();
     if (res.ok && data.account) {
       onAccount(data.account);
@@ -46,6 +46,7 @@ export function WalletPanel({
           "xch1demo" + Math.random().toString(16).slice(2, 14).padEnd(50, "0");
         const res = await fetch("/api/session", {
           method: "PATCH",
+          credentials: "same-origin",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ walletAddress: demoAddress }),
         });
@@ -69,23 +70,22 @@ export function WalletPanel({
 
   async function buyPack(packId: string) {
     setBusy(packId);
-    setMessage(null);
+    setMessage("Starting burn…");
     try {
-      // Ensure a session cookie exists before paying.
       await refreshAccount();
 
       const intentRes = await fetch("/api/payments/intent", {
         method: "POST",
+        credentials: "same-origin",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ packId }),
       });
       const intent = await intentRes.json();
       if (!intentRes.ok) throw new Error(intent.error ?? "Intent failed");
 
-      // Demo path: skip chain broadcast and credit immediately.
-      // Live path: open Sage WC, send DAT CAT to the burn address, then confirm with tx id.
       const confirmRes = await fetch("/api/payments/confirm", {
         method: "POST",
+        credentials: "same-origin",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           paymentId: intent.payment.id,
@@ -125,6 +125,9 @@ export function WalletPanel({
           Connect Sage and burn DAT for credits. Every payment goes to the Chia
           burn address — permanently out of circulation. Demo mode credits
           instantly so you can try the studio first.
+        </p>
+        <p className="mt-4 font-mono text-[11px] leading-relaxed text-steel-500">
+          {economyBlurb()}
         </p>
       </div>
 
@@ -173,32 +176,27 @@ export function WalletPanel({
       )}
 
       <div className="relative z-20 mt-10 grid gap-8 md:grid-cols-3">
-        {CREDIT_PACKS.map((pack) => {
-          const creditGain = pack.dat * CREDITS_PER_DAT;
-          return (
-            <div
-              key={pack.id}
-              className="relative z-20 border-t border-copper-600/50 pt-5"
+        {packs.map((pack) => (
+          <div
+            key={pack.id}
+            className="relative z-20 border-t border-copper-600/50 pt-5"
+          >
+            <h3 className="font-display text-2xl text-copper-100">{pack.label}</h3>
+            <p className="mt-1 font-mono text-sm text-copper-300">
+              {formatDat(pack.dat)} {DAT_SYMBOL} burned → {pack.credits} credits
+            </p>
+            <p className="mt-3 text-sm text-steel-400">{pack.blurb}</p>
+            <button
+              type="button"
+              data-pack={pack.id}
+              className="relative z-20 mt-6 inline-flex h-12 w-full cursor-pointer items-center justify-center rounded-none border border-copper-600/60 bg-ink-900 px-4 font-mono text-xs uppercase tracking-widest text-copper-100 transition hover:border-copper-400 hover:bg-copper-900/50 hover:text-copper-50 disabled:cursor-wait disabled:opacity-60"
+              disabled={!!busy}
+              onClick={() => void buyPack(pack.id)}
             >
-              <h3 className="font-display text-2xl text-copper-100">
-                {pack.label}
-              </h3>
-              <p className="mt-1 font-mono text-sm text-copper-300">
-                {formatDat(pack.dat)} {DAT_SYMBOL} burned → {creditGain} credits
-              </p>
-              <p className="mt-3 text-sm text-steel-400">{pack.blurb}</p>
-              <button
-                type="button"
-                data-pack={pack.id}
-                className="relative z-20 mt-6 inline-flex h-12 w-full cursor-pointer items-center justify-center rounded-none border border-copper-600/60 bg-ink-900 px-4 font-mono text-xs uppercase tracking-widest text-copper-100 transition hover:border-copper-400 hover:bg-copper-900/50 hover:text-copper-50 disabled:cursor-wait disabled:opacity-60"
-                disabled={!!busy}
-                onClick={() => void buyPack(pack.id)}
-              >
-                {busy === pack.id ? "Burning…" : "Burn DAT"}
-              </button>
-            </div>
-          );
-        })}
+              {busy === pack.id ? "Burning…" : "Burn DAT"}
+            </button>
+          </div>
+        ))}
       </div>
     </section>
   );

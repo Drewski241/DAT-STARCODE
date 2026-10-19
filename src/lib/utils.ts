@@ -11,6 +11,7 @@ export function shortId(id: string) {
 
 export function formatDat(amount: number) {
   return new Intl.NumberFormat("en-US", {
-    maximumFractionDigits: 2,
+    maximumFractionDigits: 4,
+    minimumFractionDigits: 0,
   }).format(amount);
 }

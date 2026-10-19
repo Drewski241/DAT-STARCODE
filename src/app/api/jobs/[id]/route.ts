@@ -1,3 +1,4 @@
+import { ACCOUNT_COOKIE } from "@/lib/config";
 import { NextRequest, NextResponse } from "next/server";
 import { getJob } from "@/lib/store";
 
@@ -6,7 +7,7 @@ export async function GET(
   ctx: { params: Promise<{ id: string }> },
 ) {
   const { id } = await ctx.params;
-  const accountId = req.cookies.get("dat_starcoder_account")?.value;
+  const accountId = req.cookies.get(ACCOUNT_COOKIE)?.value;
   const job = await getJob(id);
   if (!job) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });

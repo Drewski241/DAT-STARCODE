@@ -1,12 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
-import { CREDIT_PACKS, DAT_ASSET_ID, DAT_BURN_ADDRESS } from "@/lib/config";
+import { ACCOUNT_COOKIE, DAT_ASSET_ID, DAT_BURN_ADDRESS } from "@/lib/config";
+import { getPackById } from "@/lib/economy";
 import { createPaymentIntent, getOrCreateAccount } from "@/lib/store";
 
 export async function POST(req: NextRequest) {
-  const accountId = req.cookies.get("dat_starcoder_account")?.value;
+  const accountId = req.cookies.get(ACCOUNT_COOKIE)?.value;
   const account = await getOrCreateAccount(accountId);
   const body = (await req.json()) as { packId?: string };
-  const pack = CREDIT_PACKS.find((p) => p.id === body.packId);
+  const pack = body.packId ? getPackById(body.packId) : undefined;
   if (!pack) {
     return NextResponse.json({ error: "Unknown pack" }, { status: 400 });
   }
@@ -15,6 +16,7 @@ export async function POST(req: NextRequest) {
     accountId: account.id,
     packId: pack.id,
     datAmount: pack.dat,
+    credits: pack.credits,
   });
 
   const res = NextResponse.json({
@@ -27,7 +29,7 @@ export async function POST(req: NextRequest) {
       memo: payment.memo,
     },
   });
-  res.cookies.set("dat_starcoder_account", account.id, {
+  res.cookies.set(ACCOUNT_COOKIE, account.id, {
     httpOnly: true,
     sameSite: "lax",
     path: "/",

@@ -7,11 +7,8 @@ import type {
   PaymentIntent,
   StoreSnapshot,
 } from "@/lib/types";
-import {
-  CREDITS_PER_DAT,
-  CREDITS_PER_JOB,
-  DAT_ASSET_ID,
-} from "@/lib/config";
+import { CREDITS_PER_JOB, DAT_ASSET_ID } from "@/lib/config";
+import { creditsForDat } from "@/lib/economy";
 
 const DATA_DIR =
   process.env.DAT_STARCODER_DATA_DIR ??
@@ -99,6 +96,7 @@ export async function createPaymentIntent(input: {
   accountId: string;
   packId: string;
   datAmount: number;
+  credits?: number;
 }) {
   return mutate((store) => {
     const account = store.accounts.find((a) => a.id === input.accountId);
@@ -110,7 +108,7 @@ export async function createPaymentIntent(input: {
       accountId: input.accountId,
       packId: input.packId,
       datAmount: input.datAmount,
-      credits: input.datAmount * CREDITS_PER_DAT,
+      credits: input.credits ?? creditsForDat(input.datAmount),
       status: "pending",
       memo: `starcoder:${id}:${DAT_ASSET_ID.slice(0, 8)}`,
       txId: null,
