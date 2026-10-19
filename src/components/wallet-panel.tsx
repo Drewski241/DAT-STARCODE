@@ -1,7 +1,6 @@
 "use client";
 
 import { useState } from "react";
-import { Button } from "@/components/ui/button";
 import { CREDIT_PACKS, DAT_SYMBOL } from "@/lib/config";
 import { formatDat } from "@/lib/utils";
 import { getSageConfig, shortAddress } from "@/lib/sage";
@@ -89,7 +88,10 @@ export function WalletPanel({
   }
 
   return (
-    <section id="pay" className="relative mx-auto max-w-5xl px-5 py-20 md:px-10">
+    <section
+      id="pay"
+      className="relative z-10 mx-auto max-w-5xl scroll-mt-8 px-5 py-20 md:px-10"
+    >
       <div className="mb-10 max-w-2xl">
         <p className="font-mono text-xs uppercase tracking-[0.28em] text-copper-400">
           Pay with DAT · Sage wallet
@@ -105,18 +107,18 @@ export function WalletPanel({
       </div>
 
       <div className="flex flex-wrap items-center gap-4 border-y border-copper-800/40 py-4">
-        <Button
+        <button
           type="button"
-          onClick={connectSage}
+          onClick={() => void connectSage()}
           disabled={busy === "connect"}
-          className="rounded-none bg-copper-500 font-mono text-xs uppercase tracking-widest text-ink-950 hover:bg-copper-400"
+          className="inline-flex h-11 cursor-pointer items-center rounded-none bg-copper-500 px-5 font-mono text-xs uppercase tracking-widest text-ink-950 transition hover:bg-copper-400 disabled:cursor-wait disabled:opacity-60"
         >
           {busy === "connect"
             ? "Connecting…"
             : account?.walletAddress
               ? "Reconnect Sage"
               : "Connect Sage"}
-        </Button>
+        </button>
         <div className="font-mono text-xs text-steel-400">
           {account?.walletAddress ? (
             <span>
@@ -141,21 +143,24 @@ export function WalletPanel({
               {formatDat(pack.dat)} {DAT_SYMBOL}
             </p>
             <p className="mt-3 text-sm text-steel-400">{pack.blurb}</p>
-            <Button
+            <button
               type="button"
-              variant="outline"
-              className="mt-6 rounded-none border-copper-600/60 bg-transparent font-mono text-xs uppercase tracking-widest text-copper-200 hover:bg-copper-900/40 hover:text-copper-50"
+              data-pack={pack.id}
+              className="mt-6 inline-flex h-11 w-full cursor-pointer items-center justify-center rounded-none border border-copper-600/60 bg-ink-900/80 px-4 font-mono text-xs uppercase tracking-widest text-copper-100 transition hover:border-copper-400 hover:bg-copper-900/50 hover:text-copper-50 disabled:cursor-wait disabled:opacity-60 sm:w-auto"
               disabled={!!busy}
-              onClick={() => buyPack(pack.id)}
+              onClick={() => void buyPack(pack.id)}
             >
               {busy === pack.id ? "Settling…" : "Pay with DAT"}
-            </Button>
+            </button>
           </div>
         ))}
       </div>
 
       {message && (
-        <p className="mt-8 max-w-3xl border-l-2 border-copper-500 pl-4 font-mono text-xs leading-relaxed text-steel-300">
+        <p
+          role="status"
+          className="mt-8 max-w-3xl border-l-2 border-copper-500 pl-4 font-mono text-xs leading-relaxed text-steel-300"
+        >
           {message}
         </p>
       )}

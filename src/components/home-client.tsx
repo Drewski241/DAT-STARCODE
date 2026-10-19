@@ -22,14 +22,24 @@ export function HomeClient() {
   }, []);
 
   return (
-    <div className="min-h-screen bg-ink-950 text-copper-50">
-      <div className="pointer-events-none fixed inset-0 bg-grid opacity-50" />
-      <div className="pointer-events-none fixed inset-0 bg-radial-forge" />
-      <div className="pointer-events-none fixed -right-24 top-10 h-[70vh] w-[55vw] bg-hero-metal opacity-80 mix-blend-screen" />
+    <div className="relative min-h-screen bg-ink-950 text-copper-50">
+      <div
+        aria-hidden
+        className="pointer-events-none fixed inset-0 z-0 bg-grid opacity-50"
+      />
+      <div
+        aria-hidden
+        className="pointer-events-none fixed inset-0 z-0 bg-radial-forge"
+      />
+      <div
+        aria-hidden
+        className="pointer-events-none fixed -right-24 top-10 z-0 h-[70vh] w-[55vw] bg-hero-metal opacity-80 mix-blend-screen"
+      />
 
+      <div className="relative z-10">
       <SiteHeader credits={account?.credits} />
 
-      <section className="relative z-10 flex min-h-[calc(100vh-5.5rem)] flex-col justify-end px-5 pb-16 pt-10 md:px-10 md:pb-24">
+      <section className="flex min-h-[calc(100vh-5.5rem)] flex-col justify-end px-5 pb-16 pt-10 md:px-10 md:pb-24">
         <div className="max-w-3xl animate-rise">
           <h1 className="font-display text-[clamp(3.4rem,12vw,7.5rem)] leading-[0.88] tracking-tight text-copper-50">
             Anvil
@@ -56,7 +66,7 @@ export function HomeClient() {
         </div>
       </section>
 
-      <section className="relative z-10 border-t border-copper-800/40 bg-ink-950/80 px-5 py-16 md:px-10">
+      <section className="border-t border-copper-800/40 bg-ink-950/80 px-5 py-16 md:px-10">
         <div className="mx-auto grid max-w-5xl gap-12 md:grid-cols-2">
           <div>
             <p className="font-mono text-xs uppercase tracking-[0.28em] text-copper-400">
@@ -69,8 +79,8 @@ export function HomeClient() {
               Amplify serves the website. DynamoDB (or the local JSON store in
               demo) tracks credits and jobs. Your P720 worker polls over HTTPS
               with a worker key, claims work, and runs Ollama or vLLM on the
-              3090 — 16 GB VRAM today, room to grow when you add RAM and more
-              NVMe headroom for models.
+              3090 — start with what fits today, then grow into more system RAM
+              and NVMe headroom for larger models.
             </p>
           </div>
           <dl className="space-y-5 font-mono text-sm">
@@ -99,11 +109,12 @@ export function HomeClient() {
 
       <WalletPanel account={account} onAccount={setAccount} />
 
-      <footer className="relative z-10 border-t border-copper-900/60 px-5 py-8 md:px-10">
+      <footer className="border-t border-copper-900/60 px-5 py-8 md:px-10">
         <p className="font-mono text-[11px] uppercase tracking-widest text-steel-600">
           Anvil · DAT governance token asset configured · see docs/architecture
         </p>
       </footer>
+      </div>
     </div>
   );
 }

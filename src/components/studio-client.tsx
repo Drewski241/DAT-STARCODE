@@ -80,12 +80,13 @@ export function StudioClient() {
   const selected = jobs.find((j) => j.id === selectedId) ?? jobs[0] ?? null;
 
   return (
-    <div className="min-h-screen bg-ink-950 text-copper-50">
-      <div className="pointer-events-none fixed inset-0 bg-grid opacity-40" />
-      <div className="pointer-events-none fixed inset-0 bg-radial-forge" />
+    <div className="relative min-h-screen bg-ink-950 text-copper-50">
+      <div aria-hidden className="pointer-events-none fixed inset-0 z-0 bg-grid opacity-40" />
+      <div aria-hidden className="pointer-events-none fixed inset-0 z-0 bg-radial-forge" />
+      <div className="relative z-10">
       <SiteHeader credits={account?.credits} />
 
-      <main className="relative z-10 mx-auto grid max-w-6xl gap-8 px-5 pb-16 pt-4 md:grid-cols-[1fr_1.2fr] md:px-10">
+      <main className="mx-auto grid max-w-6xl gap-8 px-5 pb-16 pt-4 md:grid-cols-[1fr_1.2fr] md:px-10">
         <section>
           <p className="font-mono text-xs uppercase tracking-[0.28em] text-copper-400">
             Coding studio
@@ -204,6 +205,7 @@ export function StudioClient() {
           )}
         </section>
       </main>
+      </div>
     </div>
   );
 }
