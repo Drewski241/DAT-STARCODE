@@ -156,6 +156,13 @@ export type BurnDatParams = {
   feeMojos?: number;
 };
 
+/** Sage expects memo strings as hex (even-length), not raw UTF-8 text. */
+function utf8ToHex(value: string): string {
+  return Array.from(new TextEncoder().encode(value))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+}
+
 /**
  * Ask Sage to send DAT to the official burn address (auto-submitted on-chain).
  * User must approve the send in Sage.
@@ -170,7 +177,8 @@ export async function burnDatWithSage(input: BurnDatParams): Promise<{
   if (!session) throw new Error("Connect Sage first");
 
   const amountMojos = datToMojos(input.datAmount);
-  const fee = input.feeMojos ?? DEFAULT_XCH_FEE_MOJOS;
+  const fee = String(input.feeMojos ?? DEFAULT_XCH_FEE_MOJOS);
+  const memoHex = utf8ToHex(input.memo);
 
   await client.request({
     topic: topicFromSession(session),
@@ -182,7 +190,7 @@ export async function burnDatWithSage(input: BurnDatParams): Promise<{
         amount: amountMojos,
         fee,
         address: DAT_BURN_ADDRESS,
-        memos: [input.memo],
+        memos: [memoHex],
       },
     },
   });
