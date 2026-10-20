@@ -149,6 +149,37 @@ export function WalletPanel({
     }
   }
 
+  async function confirmBurnWithRetry(paymentId: string) {
+    const maxAttempts = 40;
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      setMessage(
+        `Checking burn on-chain… (${attempt}/${maxAttempts})`,
+      );
+      const confirmRes = await fetch("/api/payments/confirm", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ paymentId, demo: false }),
+      });
+      const confirmed = await confirmRes.json();
+      if (confirmRes.ok && confirmed.verified) {
+        return confirmed as {
+          payment: { credits: number; datAmount: number };
+          account: Account;
+          verification?: { explorerUrl?: string };
+        };
+      }
+      if (confirmRes.status === 202 || confirmed.pending) {
+        await new Promise((r) => setTimeout(r, 3000));
+        continue;
+      }
+      throw new Error(confirmed.error ?? "Confirm failed");
+    }
+    throw new Error(
+      "Burn submitted but not confirmed on-chain yet. Wait a minute and press Burn again only if credits did not arrive — do not approve a second Sage send.",
+    );
+  }
+
   async function buyPack(packId: string) {
     setBusy(packId);
     setMessage("Starting burn…");
@@ -172,19 +203,17 @@ export function WalletPanel({
       const pack = packs.find((p) => p.id === packId);
       if (!pack) throw new Error("Unknown pack");
 
-      let txId: string | undefined;
-      let demo = false;
-
       if (live && session.walletAddress) {
         setMessage(
           `Approve in Sage: burn ${formatDat(pack.dat)} ${DAT_SYMBOL} to the burn address…`,
         );
-        const burn = await burnDatWithSage({
+        await burnDatWithSage({
           datAmount: pack.dat,
           memo: intent.payment.memo as string,
         });
-        txId = burn.txId;
-        setMessage("Burn submitted. Crediting your account…");
+        setMessage(
+          "Burn submitted from Sage. Waiting for on-chain confirmation…",
+        );
       } else if (!live) {
         throw new Error(
           "Live Sage burns need NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID. Set it in .env and Connect Sage first.",
@@ -193,19 +222,7 @@ export function WalletPanel({
         throw new Error("Connect Sage before burning DAT.");
       }
 
-      const confirmRes = await fetch("/api/payments/confirm", {
-        method: "POST",
-        credentials: "same-origin",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          paymentId: intent.payment.id,
-          txId,
-          demo,
-        }),
-      });
-      const confirmed = await confirmRes.json();
-      if (!confirmRes.ok) throw new Error(confirmed.error ?? "Confirm failed");
-
+      const confirmed = await confirmBurnWithRetry(intent.payment.id as string);
       const synced = (await refreshAccount()) ?? confirmed.account;
       onAccount(synced);
       try {
@@ -216,8 +233,9 @@ export function WalletPanel({
       }
 
       const added = confirmed.payment.credits as number;
+      const explorer = confirmed.verification?.explorerUrl as string | undefined;
       setMessage(
-        `Burned ${formatDat(confirmed.payment.datAmount)} ${DAT_SYMBOL} (+${added} credits). Balance: ${synced.credits}. Sent to ${shortAddress(DAT_BURN_ADDRESS)}.`,
+        `On-chain burn verified. ${formatDat(confirmed.payment.datAmount)} ${DAT_SYMBOL} (+${added} credits). Balance: ${synced.credits}. Sent to ${shortAddress(DAT_BURN_ADDRESS)}.${explorer ? ` ${explorer}` : ""}`,
       );
     } catch (err) {
       setMessage(err instanceof Error ? err.message : "Payment failed");

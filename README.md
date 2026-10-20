@@ -87,6 +87,7 @@ NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID=your_project_id_here
 - Default DAT asset id: `d12fbf63bb015fa0e988509b971ad4c9da7cc5fc30f2499d3aab38c3fadc531c` (DAT Governance Token CAT2).
 - Burn destination: `xch1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqm6ks6e8mvy`
 - Amounts use 3 DAT decimals (1 DAT = 1000 mojos). Optional XCH fee defaults to 0.0001 XCH.
+- After Sage submits the burn, the API verifies the DAT coin on-chain (coinset.org) — matching burn CAT puzzle hash, amount, and payment memo — before credits are granted.
 - Demo credits without a burn: set `ALLOW_DEMO_PAYMENTS=1` (off by default).
 
 ## Deploy to AWS
@@ -131,6 +132,5 @@ Local demo uses `.data/store.json`. Wire Amplify to DynamoDB when you leave demo
 
 ## Next upgrades
 
-- Verify burns via a Chia indexer (memo + burn address) before crediting
 - Persist to DynamoDB instead of `.data/store.json`
 - Stream token output over SSE while the worker generates

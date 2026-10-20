@@ -247,6 +247,28 @@ export async function createPaymentIntent(input: {
   });
 }
 
+export async function getPayment(paymentId: string) {
+  const store = await readStore();
+  return store.payments.find((p) => p.id === paymentId) ?? null;
+}
+
+/** Coin ids / tx refs already used for confirmed burns (prevents double credit). */
+export async function listUsedBurnTxIds(): Promise<Set<string>> {
+  const store = await readStore();
+  const used = new Set<string>();
+  for (const p of store.payments) {
+    if (
+      (p.status === "confirmed" || p.status === "demo") &&
+      p.txId
+    ) {
+      used.add(p.txId);
+      used.add(p.txId.replace(/^0x/, ""));
+      used.add(`0x${p.txId.replace(/^0x/, "")}`);
+    }
+  }
+  return used;
+}
+
 export async function confirmPayment(input: {
   paymentId: string;
   txId?: string | null;
@@ -260,6 +282,19 @@ export async function confirmPayment(input: {
     }
     const account = store.accounts.find((a) => a.id === payment.accountId);
     if (!account) throw new Error("Account not found");
+
+    if (input.txId) {
+      const normalized = input.txId.toLowerCase();
+      const clash = store.payments.some(
+        (p) =>
+          p.id !== payment.id &&
+          p.txId &&
+          p.txId.toLowerCase() === normalized &&
+          (p.status === "confirmed" || p.status === "demo"),
+      );
+      if (clash) throw new Error("This on-chain burn was already credited");
+    }
+
     const now = new Date().toISOString();
     payment.status = input.demo ? "demo" : "confirmed";
     payment.txId = input.txId ?? (input.demo ? `demo-${payment.id}` : null);
