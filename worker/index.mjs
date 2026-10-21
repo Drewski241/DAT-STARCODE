@@ -72,6 +72,16 @@ async function complete(job, { result, error }) {
 
 function systemPromptFor(job, model) {
   const coding = /coder/i.test(model);
+  const prior = job.context
+    ? [
+        "",
+        "The user is continuing from a prior job. Use this context — they are",
+        "referring to that project/game/code unless they clearly change topics.",
+        "",
+        job.context,
+        "",
+      ]
+    : [];
   if (coding) {
     return [
       "You are DAT STARCODER, a careful coding agent.",
@@ -85,7 +95,7 @@ function systemPromptFor(job, model) {
       "",
       "Prefer real relative paths (src/..., lib/..., tests/...). Do not use placeholders.",
       job.repoHint ? `Repo/path hint: ${job.repoHint}` : "",
-      "",
+      ...prior,
       "User request:",
       job.prompt,
     ]
@@ -98,7 +108,7 @@ function systemPromptFor(job, model) {
     "If you produce code the user should keep, emit each file as:",
     "### File: path/to/file.ext",
     "followed by a fenced code block with the full contents.",
-    "",
+    ...prior,
     "User request:",
     job.prompt,
   ].join("\n");

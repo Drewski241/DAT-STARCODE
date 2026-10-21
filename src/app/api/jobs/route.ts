@@ -1,9 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import { toPublicAccount } from "@/lib/account-public";
+import { buildContinueContext } from "@/lib/job-context";
 import { resolveModel } from "@/lib/models";
 import { requireRegisteredAccount } from "@/lib/require-auth";
 import { enqueueJob, listJobs, setJobWorkspaceFileCount } from "@/lib/store";
-import { initWorkspace, listWorkspaceFiles } from "@/lib/workspace";
+import {
+  copyWorkspaceFromJob,
+  initWorkspace,
+  listWorkspaceFiles,
+} from "@/lib/workspace";
 
 export async function GET() {
   const auth = await requireRegisteredAccount();
@@ -23,6 +28,7 @@ export async function POST(req: NextRequest) {
     prompt?: string;
     repoHint?: string;
     model?: string;
+    continueFromJobId?: string | null;
   };
 
   if (!body.prompt || body.prompt.trim().length < 8) {
@@ -34,19 +40,39 @@ export async function POST(req: NextRequest) {
 
   const resolved = resolveModel(body.model, body.prompt);
 
+  let parentJobId: string | null = null;
+  let context: string | null = null;
+  if (body.continueFromJobId?.trim()) {
+    const built = await buildContinueContext(
+      body.continueFromJobId.trim(),
+      auth.account.id,
+    );
+    if (built) {
+      parentJobId = built.parent.id;
+      context = built.context;
+    }
+  }
+
   try {
     const result = await enqueueJob({
       accountId: auth.account.id,
       prompt: body.prompt,
       repoHint: body.repoHint,
+      parentJobId,
+      context,
       modelRequested: resolved.requested,
       modelResolved: resolved.resolved,
       modelReason: resolved.reason,
       accountSeed: auth.account,
     });
 
-    // Create the customer's working directory as soon as the job is queued.
     await initWorkspace(result.job);
+    if (parentJobId) {
+      const parent = await buildContinueContext(parentJobId, auth.account.id);
+      if (parent) {
+        await copyWorkspaceFromJob(parent.parent, result.job);
+      }
+    }
     const seeded = await listWorkspaceFiles(result.job);
     const job =
       seeded.length > 0

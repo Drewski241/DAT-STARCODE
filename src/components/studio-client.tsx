@@ -45,6 +45,7 @@ export function StudioClient() {
     "Add a typed CLI flag --dry-run that prints the planned agent steps without executing them.",
   );
   const [repoHint, setRepoHint] = useState("");
+  const [continueFromSelected, setContinueFromSelected] = useState(true);
   const [modelId, setModelId] = useState(DEFAULT_MODEL_ID);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -143,7 +144,16 @@ export function StudioClient() {
         method: "POST",
         credentials: "same-origin",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ prompt, repoHint, model: modelId }),
+        body: JSON.stringify({
+          prompt,
+          repoHint,
+          model: modelId,
+          continueFromJobId: (() => {
+            if (!continueFromSelected || !selectedId) return null;
+            const parent = jobs.find((j) => j.id === selectedId);
+            return parent?.status === "completed" ? parent.id : null;
+          })(),
+        }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "Failed to enqueue");
@@ -250,6 +260,19 @@ export function StudioClient() {
               placeholder="e.g. worker/"
               className="mt-2 rounded-none border-copper-800/50 bg-ink-900/80 font-mono text-sm"
             />
+
+            <label className="mt-5 flex cursor-pointer items-start gap-2 font-mono text-[11px] text-steel-400">
+              <input
+                type="checkbox"
+                className="mt-0.5"
+                checked={continueFromSelected}
+                onChange={(e) => setContinueFromSelected(e.target.checked)}
+              />
+              <span>
+                Continue from selected job (pass prior prompt, result, and files
+                so follow-ups like “how do I play?” know the game you just built)
+              </span>
+            </label>
 
             <div className="mt-6 flex flex-wrap items-center gap-3">
               <Button

@@ -481,6 +481,8 @@ export async function confirmPayment(input: {
 function normalizeJob(job: CodingJob): CodingJob {
   return {
     ...job,
+    parentJobId: job.parentJobId ?? null,
+    context: job.context ?? null,
     workspaceId: job.workspaceId ?? `${job.accountId}/${job.id}`,
     workspaceFileCount:
       typeof job.workspaceFileCount === "number" ? job.workspaceFileCount : 0,
@@ -531,6 +533,8 @@ export async function enqueueJob(input: {
   accountId: string;
   prompt: string;
   repoHint?: string | null;
+  parentJobId?: string | null;
+  context?: string | null;
   modelRequested?: string | null;
   modelResolved: string;
   modelReason: string;
@@ -557,6 +561,8 @@ export async function enqueueJob(input: {
       accountId: input.accountId,
       prompt: input.prompt.trim(),
       repoHint: input.repoHint?.trim() || null,
+      parentJobId: input.parentJobId?.trim() || null,
+      context: input.context?.trim() || null,
       modelRequested: input.modelRequested?.trim() || "auto",
       modelResolved: input.modelResolved,
       modelReason: input.modelReason,

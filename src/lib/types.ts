@@ -45,6 +45,10 @@ export interface CodingJob {
   accountId: string;
   prompt: string;
   repoHint: string | null;
+  /** Prior job this continues from (follow-up prompts). */
+  parentJobId: string | null;
+  /** Extra context injected for the worker (prior result / files). */
+  context: string | null;
   modelRequested: string;
   modelResolved: string;
   modelReason: string;

@@ -113,6 +113,24 @@ export async function initWorkspace(job: CodingJob): Promise<void> {
   ]);
 }
 
+/** Copy prior job files into a new job workspace (follow-ups). */
+export async function copyWorkspaceFromJob(
+  from: Pick<CodingJob, "accountId" | "id">,
+  to: Pick<CodingJob, "accountId" | "id">,
+): Promise<number> {
+  const listed = await listWorkspaceFiles(from);
+  const files: ExtractedFile[] = [];
+  for (const info of listed) {
+    if (info.path === "job.json") continue;
+    const content = await readWorkspaceFile(from, info.path);
+    if (content == null) continue;
+    files.push({ path: info.path, content });
+  }
+  if (files.length === 0) return 0;
+  await writeWorkspaceFiles(to, files);
+  return files.length;
+}
+
 export async function writeWorkspaceFiles(
   job: Pick<CodingJob, "accountId" | "id">,
   files: ExtractedFile[],
