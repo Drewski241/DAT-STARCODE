@@ -163,12 +163,16 @@ export function AuthForm({
           ? "Account created with 20 starter credits. Opening studio…"
           : "Signed in.",
       );
-      // Full navigation so the browser commits Set-Cookie before /studio
-      // auth checks. Soft router.push can race and bounce back to /account
-      // (especially on the custom domain behind CloudFront).
-      window.setTimeout(() => {
-        window.location.assign("/studio");
-      }, 150);
+      // Wait until the session cookie is actually readable, then hard-navigate.
+      // Soft routing (and even an immediate assign) can race Set-Cookie on the
+      // custom domain behind CloudFront and bounce back to /account once.
+      for (let i = 0; i < 10; i++) {
+        const me = await fetch("/api/auth/me", { credentials: "same-origin" });
+        const body = await me.json();
+        if (body.account?.username) break;
+        await new Promise((r) => window.setTimeout(r, 100));
+      }
+      window.location.assign("/studio");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Auth failed");
     } finally {
