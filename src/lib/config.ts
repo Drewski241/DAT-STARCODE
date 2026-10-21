@@ -30,8 +30,16 @@ export const DAT_BURN_ADDRESS =
   process.env.NEXT_PUBLIC_DAT_BURN_ADDRESS ??
   "xch1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqm6ks6e8mvy";
 
-export const WORKER_API_KEY =
-  process.env.WORKER_API_KEY ?? "dev-worker-key-change-me";
+/** Read at call time so Amplify runtime env is honored (not build-time inlined). */
+export function getWorkerApiKey() {
+  return (
+    process.env.WORKER_API_KEY?.trim() ||
+    "dev-worker-key-change-me"
+  );
+}
+
+/** @deprecated Prefer getWorkerApiKey() — kept for older imports. */
+export const WORKER_API_KEY = getWorkerApiKey();
 
 /** S3 bucket for customer job workspaces (Amplify / multi-instance). Empty = local `.data/workspaces`. */
 export const WORKSPACE_S3_BUCKET =

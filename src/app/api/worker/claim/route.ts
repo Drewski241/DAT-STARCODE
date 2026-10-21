@@ -1,10 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
-import { WORKER_API_KEY } from "@/lib/config";
+import { getWorkerApiKey } from "@/lib/config";
 import { claimNextJob, markJobRunning } from "@/lib/store";
 
 function authorize(req: NextRequest) {
-  const key = req.headers.get("x-worker-key");
-  return key && key === WORKER_API_KEY;
+  const key = req.headers.get("x-worker-key")?.trim();
+  return Boolean(key && key === getWorkerApiKey());
 }
 
 export async function POST(req: NextRequest) {

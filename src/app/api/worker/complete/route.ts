@@ -1,12 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
-import { WORKER_API_KEY } from "@/lib/config";
+import { getWorkerApiKey } from "@/lib/config";
 import { completeJob, getJob } from "@/lib/store";
 import { materializeWorkspaceFromResult } from "@/lib/workspace";
 import type { ExtractedFile } from "@/lib/extract-files";
 
 export async function POST(req: NextRequest) {
-  const key = req.headers.get("x-worker-key");
-  if (!key || key !== WORKER_API_KEY) {
+  const key = req.headers.get("x-worker-key")?.trim();
+  if (!key || key !== getWorkerApiKey()) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
