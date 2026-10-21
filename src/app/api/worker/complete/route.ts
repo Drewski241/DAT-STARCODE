@@ -3,6 +3,7 @@ import { getWorkerApiKey } from "@/lib/config";
 import { completeJob, getJob } from "@/lib/store";
 import { materializeWorkspaceFromResult } from "@/lib/workspace";
 import type { ExtractedFile } from "@/lib/extract-files";
+import type { CodingJob } from "@/lib/types";
 
 export async function POST(req: NextRequest) {
   const key = req.headers.get("x-worker-key")?.trim();
@@ -16,6 +17,7 @@ export async function POST(req: NextRequest) {
     result?: string;
     error?: string;
     files?: ExtractedFile[];
+    snapshot?: CodingJob | null;
   };
 
   if (!body.jobId || !body.workerId) {
@@ -28,7 +30,9 @@ export async function POST(req: NextRequest) {
   try {
     let workspaceFileCount: number | undefined;
     if (!body.error && body.result) {
-      const existing = await getJob(body.jobId);
+      const existing =
+        (await getJob(body.jobId)) ??
+        (body.snapshot ? body.snapshot : null);
       if (existing) {
         const materialized = await materializeWorkspaceFromResult(
           existing,
@@ -45,6 +49,7 @@ export async function POST(req: NextRequest) {
       result: body.result,
       error: body.error,
       workspaceFileCount,
+      snapshot: body.snapshot,
     });
     return NextResponse.json({ job });
   } catch (err) {

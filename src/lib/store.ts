@@ -133,36 +133,17 @@ async function writeStore(store: StoreSnapshot, etag?: string) {
   const body = JSON.stringify(store, null, 2);
 
   if (s3 && STORE_S3_BUCKET) {
-    const conditional = etag
-      ? { IfMatch: etag } // keep quotes from GetObject ETag
-      : { IfNoneMatch: "*" };
-    try {
-      await s3.send(
-        new PutObjectCommand({
-          Bucket: STORE_S3_BUCKET,
-          Key: STORE_S3_KEY,
-          Body: body,
-          ContentType: "application/json",
-          ...conditional,
-        }),
-      );
-    } catch (err) {
-      // Some accounts/regions reject conditional headers — retry once plain.
-      const status = (err as { $metadata?: { httpStatusCode?: number } })
-        .$metadata?.httpStatusCode;
-      if (status === 400 || status === 501) {
-        await s3.send(
-          new PutObjectCommand({
-            Bucket: STORE_S3_BUCKET,
-            Key: STORE_S3_KEY,
-            Body: body,
-            ContentType: "application/json",
-          }),
-        );
-        return;
-      }
-      throw err;
-    }
+    // Always use conditional writes — plain overwrites cause "Job not found"
+    // when claim and complete race with other store mutations.
+    await s3.send(
+      new PutObjectCommand({
+        Bucket: STORE_S3_BUCKET,
+        Key: STORE_S3_KEY,
+        Body: body,
+        ContentType: "application/json",
+        ...(etag ? { IfMatch: etag } : { IfNoneMatch: "*" }),
+      }),
+    );
     return;
   }
 
@@ -170,6 +151,59 @@ async function writeStore(store: StoreSnapshot, etag?: string) {
   const tmp = `${STORE_PATH}.${process.pid}.tmp`;
   await fs.writeFile(tmp, body, "utf8");
   await fs.rename(tmp, STORE_PATH);
+}
+
+function jobRecordKey(jobId: string) {
+  return `store/jobs/${jobId}.json`;
+}
+
+function jobRecordPath(jobId: string) {
+  return path.join(DATA_DIR, "jobs", `${jobId}.json`);
+}
+
+/** Per-job sidecar so claim/complete survive main store.json races. */
+async function saveJobRecord(job: CodingJob) {
+  const normalized = normalizeJob(job);
+  const body = JSON.stringify(normalized, null, 2);
+  if (s3 && STORE_S3_BUCKET) {
+    await s3.send(
+      new PutObjectCommand({
+        Bucket: STORE_S3_BUCKET,
+        Key: jobRecordKey(job.id),
+        Body: body,
+        ContentType: "application/json",
+      }),
+    );
+    return;
+  }
+  const full = jobRecordPath(job.id);
+  await fs.mkdir(path.dirname(full), { recursive: true });
+  await fs.writeFile(full, body, "utf8");
+}
+
+async function loadJobRecord(jobId: string): Promise<CodingJob | null> {
+  if (s3 && STORE_S3_BUCKET) {
+    try {
+      const res = await s3.send(
+        new GetObjectCommand({
+          Bucket: STORE_S3_BUCKET,
+          Key: jobRecordKey(jobId),
+        }),
+      );
+      const raw = await res.Body?.transformToString();
+      if (!raw) return null;
+      return normalizeJob(JSON.parse(raw) as CodingJob);
+    } catch (err) {
+      if (isMissingS3Object(err)) return null;
+      throw err;
+    }
+  }
+  try {
+    const raw = await fs.readFile(jobRecordPath(jobId), "utf8");
+    return normalizeJob(JSON.parse(raw) as CodingJob);
+  } catch {
+    return null;
+  }
 }
 
 function mutate<T>(fn: (store: StoreSnapshot) => T): Promise<T> {
@@ -455,13 +489,24 @@ function normalizeJob(job: CodingJob): CodingJob {
 
 export async function listJobs(accountId: string) {
   const store = await readStore();
-  return store.jobs
-    .filter((j) => j.accountId === accountId)
-    .map(normalizeJob)
-    .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  const byId = new Map<string, CodingJob>();
+  for (const j of store.jobs) {
+    if (j.accountId === accountId) byId.set(j.id, normalizeJob(j));
+  }
+  // Sidecars win when the main store lost a concurrent update.
+  for (const j of store.jobs) {
+    if (j.accountId !== accountId) continue;
+    const side = await loadJobRecord(j.id);
+    if (side && side.accountId === accountId) byId.set(side.id, side);
+  }
+  return [...byId.values()].sort((a, b) =>
+    b.createdAt.localeCompare(a.createdAt),
+  );
 }
 
 export async function getJob(jobId: string) {
+  const side = await loadJobRecord(jobId);
+  if (side) return side;
   const store = await readStore();
   const found = store.jobs.find((j) => j.id === jobId) ?? null;
   return found ? normalizeJob(found) : null;
@@ -475,7 +520,7 @@ export async function enqueueJob(input: {
   modelResolved: string;
   modelReason: string;
 }) {
-  return mutate((store) => {
+  const result = await mutate((store) => {
     const account = store.accounts.find((a) => a.id === input.accountId);
     if (!account) throw new Error("Account not found");
     if (account.credits < CREDITS_PER_JOB) {
@@ -509,29 +554,40 @@ export async function enqueueJob(input: {
     store.jobs.push(job);
     return { job, account };
   });
+  await saveJobRecord(result.job);
+  return result;
 }
 
 export async function claimNextJob(workerId: string) {
-  return mutate((store) => {
-    const job = store.jobs.find((j) => j.status === "queued");
-    if (!job) return null;
+  const job = await mutate((store) => {
+    const next = store.jobs.find((j) => j.status === "queued");
+    if (!next) return null;
     const now = new Date().toISOString();
-    job.status = "claimed";
-    job.workerId = workerId;
-    job.updatedAt = now;
-    return job;
+    next.status = "claimed";
+    next.workerId = workerId;
+    next.updatedAt = now;
+    return next;
   });
+  if (job) await saveJobRecord(job);
+  return job;
 }
 
 export async function markJobRunning(jobId: string, workerId: string) {
-  return mutate((store) => {
-    const job = store.jobs.find((j) => j.id === jobId);
-    if (!job) throw new Error("Job not found");
-    if (job.workerId !== workerId) throw new Error("Worker mismatch");
-    job.status = "running";
-    job.updatedAt = new Date().toISOString();
-    return job;
+  const side = await loadJobRecord(jobId);
+  const job = await mutate((store) => {
+    let current = store.jobs.find((j) => j.id === jobId);
+    if (!current && side) {
+      store.jobs.push({ ...side });
+      current = store.jobs.find((j) => j.id === jobId);
+    }
+    if (!current) throw new Error("Job not found");
+    if (current.workerId !== workerId) throw new Error("Worker mismatch");
+    current.status = "running";
+    current.updatedAt = new Date().toISOString();
+    return current;
   });
+  await saveJobRecord(job);
+  return job;
 }
 
 export async function completeJob(input: {
@@ -540,53 +596,77 @@ export async function completeJob(input: {
   result?: string | null;
   error?: string | null;
   workspaceFileCount?: number;
+  /** Claimed job snapshot from the worker — used if store.json lost the row. */
+  snapshot?: CodingJob | null;
 }) {
-  return mutate((store) => {
-    const job = store.jobs.find((j) => j.id === input.jobId);
-    if (!job) throw new Error("Job not found");
-    if (job.workerId !== input.workerId) throw new Error("Worker mismatch");
-    const now = new Date().toISOString();
-    // Backfill for jobs created before workspaces existed.
-    if (!job.workspaceId) {
-      job.workspaceId = `${job.accountId}/${job.id}`;
+  const side = await loadJobRecord(input.jobId);
+  const job = await mutate((store) => {
+    let current = store.jobs.find((j) => j.id === input.jobId);
+    if (!current && side) {
+      store.jobs.push({ ...side });
+      current = store.jobs.find((j) => j.id === input.jobId);
     }
-    if (typeof job.workspaceFileCount !== "number") {
-      job.workspaceFileCount = 0;
+    if (!current && input.snapshot && input.snapshot.id === input.jobId) {
+      store.jobs.push(normalizeJob(input.snapshot));
+      current = store.jobs.find((j) => j.id === input.jobId);
+    }
+    if (!current) throw new Error("Job not found");
+    if (current.workerId && current.workerId !== input.workerId) {
+      throw new Error("Worker mismatch");
+    }
+    current.workerId = input.workerId;
+    const now = new Date().toISOString();
+    if (!current.workspaceId) {
+      current.workspaceId = `${current.accountId}/${current.id}`;
+    }
+    if (typeof current.workspaceFileCount !== "number") {
+      current.workspaceFileCount = 0;
     }
     if (input.error) {
-      job.status = "failed";
-      job.error = input.error;
-      const account = store.accounts.find((a) => a.id === job.accountId);
+      current.status = "failed";
+      current.error = input.error;
+      const account = store.accounts.find((a) => a.id === current!.accountId);
       if (account) {
-        account.credits += job.creditsCharged;
+        account.credits += current.creditsCharged;
         account.updatedAt = now;
       }
     } else {
-      job.status = "completed";
-      job.result = input.result ?? "";
-      job.error = null;
+      current.status = "completed";
+      current.result = input.result ?? "";
+      current.error = null;
       if (typeof input.workspaceFileCount === "number") {
-        job.workspaceFileCount = input.workspaceFileCount;
+        current.workspaceFileCount = input.workspaceFileCount;
       }
     }
-    job.updatedAt = now;
-    job.completedAt = now;
-    return job;
+    current.updatedAt = now;
+    current.completedAt = now;
+    return current;
   });
+  await saveJobRecord(job);
+  return job;
 }
 
 export async function setJobWorkspaceFileCount(
   jobId: string,
   workspaceFileCount: number,
 ) {
-  return mutate((store) => {
-    const job = store.jobs.find((j) => j.id === jobId);
-    if (!job) throw new Error("Job not found");
-    job.workspaceFileCount = workspaceFileCount;
-    if (!job.workspaceId) job.workspaceId = `${job.accountId}/${job.id}`;
-    job.updatedAt = new Date().toISOString();
-    return job;
+  const side = await loadJobRecord(jobId);
+  const job = await mutate((store) => {
+    let current = store.jobs.find((j) => j.id === jobId);
+    if (!current && side) {
+      store.jobs.push({ ...side });
+      current = store.jobs.find((j) => j.id === jobId);
+    }
+    if (!current) throw new Error("Job not found");
+    current.workspaceFileCount = workspaceFileCount;
+    if (!current.workspaceId) {
+      current.workspaceId = `${current.accountId}/${current.id}`;
+    }
+    current.updatedAt = new Date().toISOString();
+    return current;
   });
+  await saveJobRecord(job);
+  return job;
 }
 
 export async function getPayments(accountId: string) {

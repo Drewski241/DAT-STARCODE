@@ -42,20 +42,32 @@ async function claim() {
   return data.job;
 }
 
-async function complete(jobId, { result, error }) {
-  const res = await fetch(`${API_BASE}/api/worker/complete`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "x-worker-key": WORKER_KEY,
-    },
-    body: JSON.stringify({ jobId, workerId: WORKER_ID, result, error }),
-  });
-  if (!res.ok) {
+async function complete(job, { result, error }) {
+  const payload = {
+    jobId: job.id,
+    workerId: WORKER_ID,
+    result,
+    error,
+    // Helps the API recreate the row if store.json lost a concurrent write.
+    snapshot: job,
+  };
+  let lastErr;
+  for (let attempt = 0; attempt < 4; attempt++) {
+    const res = await fetch(`${API_BASE}/api/worker/complete`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-worker-key": WORKER_KEY,
+      },
+      body: JSON.stringify(payload),
+    });
+    if (res.ok) return res.json();
     const text = await res.text();
-    throw new Error(`complete ${res.status}: ${text}`);
+    lastErr = new Error(`complete ${res.status}: ${text}`);
+    if (res.status === 401) throw lastErr;
+    await sleep(500 * (attempt + 1));
   }
-  return res.json();
+  throw lastErr;
 }
 
 function systemPromptFor(job, model) {
@@ -151,7 +163,7 @@ async function loop() {
         `[dat-starcoder-worker] claimed ${job.id} model=${model}`,
       );
       const result = await runWithOllama(job);
-      await complete(job.id, { result });
+      await complete(job, { result });
       console.log(`[dat-starcoder-worker] completed ${job.id}`);
     } catch (err) {
       console.error("[dat-starcoder-worker]", err);
