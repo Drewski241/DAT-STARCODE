@@ -1,7 +1,6 @@
 "use client";
 
 import { useState } from "react";
-import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -25,7 +24,6 @@ export function AuthForm({
   onAuthed?: (account: PublicAccount) => void;
   initialMode?: Mode;
 }) {
-  const router = useRouter();
   const [mode, setMode] = useState<Mode>(initialMode);
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
@@ -165,8 +163,12 @@ export function AuthForm({
           ? "Account created with 20 starter credits. Opening studio…"
           : "Signed in.",
       );
-      router.refresh();
-      window.setTimeout(() => router.push("/studio"), 400);
+      // Full navigation so the browser commits Set-Cookie before /studio
+      // auth checks. Soft router.push can race and bounce back to /account
+      // (especially on the custom domain behind CloudFront).
+      window.setTimeout(() => {
+        window.location.assign("/studio");
+      }, 150);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Auth failed");
     } finally {
