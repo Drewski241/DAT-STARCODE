@@ -512,6 +512,21 @@ export async function getJob(jobId: string) {
   return found ? normalizeJob(found) : null;
 }
 
+/** Re-insert an account wiped by a store.json race (JWT still valid). */
+function ensureAccount(store: StoreSnapshot, seed: Account): Account {
+  let account = store.accounts.find((a) => a.id === seed.id);
+  if (account) return account;
+  const now = new Date().toISOString();
+  account = {
+    ...seed,
+    passwordHash: seed.passwordHash ?? null,
+    createdAt: seed.createdAt || now,
+    updatedAt: now,
+  };
+  store.accounts.push(account);
+  return account;
+}
+
 export async function enqueueJob(input: {
   accountId: string;
   prompt: string;
@@ -519,9 +534,14 @@ export async function enqueueJob(input: {
   modelRequested?: string | null;
   modelResolved: string;
   modelReason: string;
+  /** When store.json lost the row, rehydrate from the authed session account. */
+  accountSeed?: Account | null;
 }) {
   const result = await mutate((store) => {
-    const account = store.accounts.find((a) => a.id === input.accountId);
+    let account = store.accounts.find((a) => a.id === input.accountId);
+    if (!account && input.accountSeed && input.accountSeed.id === input.accountId) {
+      account = ensureAccount(store, input.accountSeed);
+    }
     if (!account) throw new Error("Account not found");
     if (account.credits < CREDITS_PER_JOB) {
       throw new Error(

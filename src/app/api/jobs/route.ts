@@ -42,6 +42,7 @@ export async function POST(req: NextRequest) {
       modelRequested: resolved.requested,
       modelResolved: resolved.resolved,
       modelReason: resolved.reason,
+      accountSeed: auth.account,
     });
 
     // Create the customer's working directory as soon as the job is queued.
