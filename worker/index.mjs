@@ -70,6 +70,19 @@ async function complete(job, { result, error }) {
   throw lastErr;
 }
 
+const HOW_TO_RUN_RULES = [
+  "Always include a section titled exactly: ## How to run / play",
+  "Write it for a non-technical user. Numbered steps only. Do not stop at \"download the zip\".",
+  "Cover, in order:",
+  "1) In DAT STARCODER Studio, open the job Workspace tab and click Download zip (or say where the files already are).",
+  "2) Unzip the file on their computer (Downloads is fine).",
+  "3) Exactly which file to open or which command to run (e.g. double-click index.html, or open Terminal in that folder and run a command).",
+  "4) If the project needs a local server, give the exact command for Mac/Linux and for Windows when relevant.",
+  "5) How to play / use it: controls, goal, win/lose, and what they should see first.",
+  "6) Common problems (blank page, wrong folder, blocked file) with one-line fixes.",
+  "Never say only \"download the zip\" without the steps after download.",
+];
+
 function systemPromptFor(job, model) {
   const coding = /coder/i.test(model);
   const prior = job.context
@@ -77,6 +90,8 @@ function systemPromptFor(job, model) {
         "",
         "The user is continuing from a prior job. Use this context — they are",
         "referring to that project/game/code unless they clearly change topics.",
+        "If they ask how to play/run/use it, walk them through post-download steps",
+        "using the prior files (do not invent a different project).",
         "",
         job.context,
         "",
@@ -94,6 +109,7 @@ function systemPromptFor(job, model) {
       "```",
       "",
       "Prefer real relative paths (src/..., lib/..., tests/...). Do not use placeholders.",
+      ...HOW_TO_RUN_RULES,
       job.repoHint ? `Repo/path hint: ${job.repoHint}` : "",
       ...prior,
       "User request:",
@@ -108,6 +124,7 @@ function systemPromptFor(job, model) {
     "If you produce code the user should keep, emit each file as:",
     "### File: path/to/file.ext",
     "followed by a fenced code block with the full contents.",
+    ...HOW_TO_RUN_RULES,
     ...prior,
     "User request:",
     job.prompt,
