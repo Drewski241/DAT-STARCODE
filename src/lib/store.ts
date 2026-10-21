@@ -133,17 +133,36 @@ async function writeStore(store: StoreSnapshot, etag?: string) {
   const body = JSON.stringify(store, null, 2);
 
   if (s3 && STORE_S3_BUCKET) {
-    await s3.send(
-      new PutObjectCommand({
-        Bucket: STORE_S3_BUCKET,
-        Key: STORE_S3_KEY,
-        Body: body,
-        ContentType: "application/json",
-        ...(etag
-          ? { IfMatch: etag.replaceAll('"', "") }
-          : { IfNoneMatch: "*" }),
-      }),
-    );
+    const conditional = etag
+      ? { IfMatch: etag } // keep quotes from GetObject ETag
+      : { IfNoneMatch: "*" };
+    try {
+      await s3.send(
+        new PutObjectCommand({
+          Bucket: STORE_S3_BUCKET,
+          Key: STORE_S3_KEY,
+          Body: body,
+          ContentType: "application/json",
+          ...conditional,
+        }),
+      );
+    } catch (err) {
+      // Some accounts/regions reject conditional headers — retry once plain.
+      const status = (err as { $metadata?: { httpStatusCode?: number } })
+        .$metadata?.httpStatusCode;
+      if (status === 400 || status === 501) {
+        await s3.send(
+          new PutObjectCommand({
+            Bucket: STORE_S3_BUCKET,
+            Key: STORE_S3_KEY,
+            Body: body,
+            ContentType: "application/json",
+          }),
+        );
+        return;
+      }
+      throw err;
+    }
     return;
   }
 

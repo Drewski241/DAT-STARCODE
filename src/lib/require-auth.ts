@@ -16,7 +16,12 @@ export async function requireRegisteredAccount(): Promise<
       ),
     };
   }
-  const account = await getAccount(accountId);
+  // Brief retry — S3 store can lag or race while the worker claims a job.
+  let account = await getAccount(accountId);
+  if (!account || !isRegisteredAccount(account)) {
+    await new Promise((r) => setTimeout(r, 150));
+    account = await getAccount(accountId);
+  }
   if (!account || !isRegisteredAccount(account)) {
     return {
       error: NextResponse.json(

@@ -50,27 +50,37 @@ export function StudioClient() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [authed, setAuthed] = useState<boolean | null>(null);
+  const [authFails, setAuthFails] = useState(0);
   const [workspaceFiles, setWorkspaceFiles] = useState<WorkspaceFile[]>([]);
   const [previewPath, setPreviewPath] = useState<string | null>(null);
   const [previewContent, setPreviewContent] = useState<string | null>(null);
   const [panel, setPanel] = useState<"output" | "workspace">("output");
 
   const refresh = useCallback(async () => {
-    // Retry briefly — Amplify/S3 can return a transient 401 right after login.
+    // Retry briefly — Amplify/S3 can return a transient 401 while a job
+    // is being claimed/written.
     let res: Response | null = null;
     let data: { account?: Account; jobs?: Job[]; error?: string } = {};
     for (let i = 0; i < 4; i++) {
       res = await fetch("/api/jobs", { credentials: "same-origin" });
       data = await res.json();
       if (res.status !== 401) break;
-      await new Promise((r) => window.setTimeout(r, 200));
+      await new Promise((r) => window.setTimeout(r, 250));
     }
     if (!res || res.status === 401) {
-      setAuthed(false);
-      router.replace("/account");
+      setAuthFails((n) => {
+        const next = n + 1;
+        // Only kick to login after sustained failures, not one blip mid-job.
+        if (next >= 5) {
+          setAuthed(false);
+          router.replace("/account");
+        }
+        return next;
+      });
       return;
     }
     if (res.ok) {
+      setAuthFails(0);
       setAuthed(true);
       setAccount(data.account ?? null);
       setJobs(data.jobs ?? []);
