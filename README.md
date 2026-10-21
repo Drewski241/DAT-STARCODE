@@ -132,7 +132,12 @@ Then set Amplify env vars (from stack outputs):
 | `NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID` | WalletConnect project id |
 | `ALLOW_DEMO_PAYMENTS` | `1` only for invite-only tester credits |
 
-Grant the Amplify SSR compute role `s3:GetObject`, `s3:PutObject`, `s3:DeleteObject`, `s3:ListBucket` on the workspace bucket.
+**Amplify SSR must be able to call S3.** If `/api/worker/queue` reports `CredentialsProviderError`, the compute has no AWS credentials:
+
+1. **Preferred:** Amplify console → App settings → **IAM roles** → create/attach an **SSR compute role** with `s3:GetObject`, `s3:PutObject`, `s3:DeleteObject`, `s3:ListBucket` on `arn:aws:s3:::dat-starcoder-workspaces-*` and `.../*`. Redeploy.
+2. **Escape hatch** (Amplify forbids `AWS_*` env vars): set these Amplify env vars from an IAM user that can access the bucket, then redeploy:
+   - `STARCODER_AWS_ACCESS_KEY_ID`
+   - `STARCODER_AWS_SECRET_ACCESS_KEY`
 
 Without `WORKSPACE_S3_BUCKET`, Amplify’s ephemeral disk cannot keep accounts — sign-in will look successful then bounce back to the login screen.
 

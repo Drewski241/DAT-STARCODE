@@ -15,7 +15,8 @@ import {
   normalizePath,
   type ExtractedFile,
 } from "@/lib/extract-files";
-import { awsRegion, resolveWorkspaceBucket } from "@/lib/s3-bucket";
+import { awsClientConfig } from "@/lib/aws-creds";
+import { resolveWorkspaceBucket } from "@/lib/s3-bucket";
 
 const DATA_DIR =
   process.env.DAT_STARCODER_DATA_DIR ??
@@ -36,7 +37,7 @@ async function getS3(): Promise<{ client: S3Client; bucket: string } | null> {
   const resolved = await resolveWorkspaceBucket();
   if (!resolved.bucket) return null;
   if (!s3Client) {
-    s3Client = new S3Client({ region: awsRegion() });
+    s3Client = new S3Client(awsClientConfig());
   }
   return { client: s3Client, bucket: resolved.bucket };
 }

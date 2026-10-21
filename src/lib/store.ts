@@ -19,8 +19,8 @@ import { CREDITS_PER_JOB, DAT_ASSET_ID } from "@/lib/config";
 import { creditsForDat } from "@/lib/economy";
 import { resolveModel } from "@/lib/models";
 import { hashPassword, verifyPassword } from "@/lib/password";
+import { awsClientConfig } from "@/lib/aws-creds";
 import {
-  awsRegion,
   clearWorkspaceBucketCache,
   formatAwsError,
   peekWorkspaceBucketEnv,
@@ -51,7 +51,7 @@ async function getS3(): Promise<{
   const resolved = await resolveWorkspaceBucket();
   if (!resolved.bucket) return null;
   if (!s3Client) {
-    s3Client = new S3Client({ region: awsRegion() });
+    s3Client = new S3Client(awsClientConfig());
   }
   return {
     client: s3Client,

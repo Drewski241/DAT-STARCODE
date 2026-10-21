@@ -11,18 +11,17 @@
 import { GetObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import { GetParameterCommand, SSMClient } from "@aws-sdk/client-ssm";
 import { GetCallerIdentityCommand, STSClient } from "@aws-sdk/client-sts";
+import {
+  awsClientConfig,
+  getExplicitAwsCredentials,
+} from "@/lib/aws-creds";
 
 function envName(name: string): string {
   return (process.env[name] ?? "").trim();
 }
 
 export function awsRegion() {
-  return (
-    envName("AWS_REGION") ||
-    envName("AWS_DEFAULT_REGION") ||
-    envName("STARCODER_AWS_REGION") ||
-    "us-east-1"
-  );
+  return awsClientConfig().region;
 }
 
 export type BucketResolution = {
@@ -58,7 +57,7 @@ async function fromSsm(): Promise<string> {
     "/DAT-STARCODE/workspace-s3-bucket",
   ].filter(Boolean);
 
-  const ssm = new SSMClient({ region: awsRegion() });
+  const ssm = new SSMClient(awsClientConfig());
   for (const name of names) {
     try {
       const res = await ssm.send(
@@ -76,7 +75,7 @@ async function fromSsm(): Promise<string> {
 async function fromConvention(): Promise<string> {
   const project = envName("STARCODER_PROJECT_NAME") || "dat-starcoder";
   try {
-    const sts = new STSClient({ region: awsRegion() });
+    const sts = new STSClient(awsClientConfig());
     const id = await sts.send(new GetCallerIdentityCommand({}));
     if (id.Account) return `${project}-workspaces-${id.Account}`;
   } catch {
@@ -99,7 +98,7 @@ function isMissingObject(err: unknown): boolean {
 
 /** Probe with GetObject — Amplify roles often lack s3:HeadBucket/ListBucket. */
 async function probeBucket(bucket: string): Promise<string | null> {
-  const client = new S3Client({ region: awsRegion() });
+  const client = new S3Client(awsClientConfig());
   try {
     await client.send(
       new GetObjectCommand({
@@ -184,6 +183,7 @@ export function peekWorkspaceBucketEnv(): {
   workspaceLen: number;
   region: string;
   awsHosted: boolean;
+  explicitCreds: boolean;
 } {
   const store = (process.env.STORE_S3_BUCKET ?? "").trim();
   const workspace = (process.env.WORKSPACE_S3_BUCKET ?? "").trim();
@@ -199,6 +199,7 @@ export function peekWorkspaceBucketEnv(): {
         envName("AMPLIFY_APP_ID") ||
         envName("AWS_APP_ID"),
     ),
+    explicitCreds: Boolean(getExplicitAwsCredentials()),
   };
 }
 
