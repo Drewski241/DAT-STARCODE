@@ -1,4 +1,5 @@
 import { claimNextJob, completeJob, markJobRunning } from "@/lib/store";
+import { materializeWorkspaceFromResult } from "@/lib/workspace";
 
 const INLINE_WORKER_ID = "inline-dev-worker";
 
@@ -38,13 +39,36 @@ export async function processOneInlineJob() {
     `## Notes`,
     "This result was produced by the **demo worker**.",
     "Connect a live worker to run full model inference for production jobs.",
+    "",
+    "### File: src/solution.ts",
+    "```ts",
+    `/** Demo implementation scaffold for: ${job.prompt.slice(0, 80).replace(/\n/g, " ")} */`,
+    "export function run(): string {",
+    `  return ${JSON.stringify(job.prompt.slice(0, 100))};`,
+    "}",
+    "",
+    "export default run;",
+    "```",
+    "",
+    "### File: src/solution.test.ts",
+    "```ts",
+    'import run from "./solution";',
+    "",
+    'if (typeof run() !== "string") {',
+    '  throw new Error("expected string result");',
+    "}",
+    'console.log("ok");',
+    "```",
   ]
     .filter(Boolean)
     .join("\n");
+
+  const materialized = await materializeWorkspaceFromResult(job, result);
 
   return completeJob({
     jobId: job.id,
     workerId: INLINE_WORKER_ID,
     result,
+    workspaceFileCount: materialized.count,
   });
 }

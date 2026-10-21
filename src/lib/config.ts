@@ -33,6 +33,10 @@ export const DAT_BURN_ADDRESS =
 export const WORKER_API_KEY =
   process.env.WORKER_API_KEY ?? "dev-worker-key-change-me";
 
+/** S3 bucket for customer job workspaces (Amplify / multi-instance). Empty = local `.data/workspaces`. */
+export const WORKSPACE_S3_BUCKET =
+  process.env.WORKSPACE_S3_BUCKET?.trim() || "";
+
 export const WALLETCONNECT_PROJECT_ID =
   process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID ?? "";
 

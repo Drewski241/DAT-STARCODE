@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { WORKER_API_KEY } from "@/lib/config";
-import { completeJob } from "@/lib/store";
+import { completeJob, getJob } from "@/lib/store";
+import { materializeWorkspaceFromResult } from "@/lib/workspace";
+import type { ExtractedFile } from "@/lib/extract-files";
 
 export async function POST(req: NextRequest) {
   const key = req.headers.get("x-worker-key");
@@ -13,6 +15,7 @@ export async function POST(req: NextRequest) {
     workerId?: string;
     result?: string;
     error?: string;
+    files?: ExtractedFile[];
   };
 
   if (!body.jobId || !body.workerId) {
@@ -23,11 +26,25 @@ export async function POST(req: NextRequest) {
   }
 
   try {
+    let workspaceFileCount: number | undefined;
+    if (!body.error && body.result) {
+      const existing = await getJob(body.jobId);
+      if (existing) {
+        const materialized = await materializeWorkspaceFromResult(
+          existing,
+          body.result,
+          body.files,
+        );
+        workspaceFileCount = materialized.count;
+      }
+    }
+
     const job = await completeJob({
       jobId: body.jobId,
       workerId: body.workerId,
       result: body.result,
       error: body.error,
+      workspaceFileCount,
     });
     return NextResponse.json({ job });
   } catch (err) {

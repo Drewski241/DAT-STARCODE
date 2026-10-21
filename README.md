@@ -27,9 +27,19 @@ At that pace, even nonstop max usage leaves ~90% of DAT unburned after a century
 Browser ──► Amplify (Next.js site + API)
                 │
                 ├── DynamoDB (credits, jobs)   [JSON file in local demo]
+                ├── S3 (per-job customer workspaces)
                 │
                 └── HTTPS claim/complete ◄── on-prem worker ──► Ollama/vLLM
 ```
+
+### Customer workspaces
+
+Every job gets a working directory under `{accountId}/{jobId}`:
+
+- **Local demo:** `.data/workspaces/...`
+- **AWS:** S3 bucket from CloudFormation (`WORKSPACE_S3_BUCKET`)
+
+The agent writes real files (parsed from `### File: path` code fences). In the studio, open the **Workspace** tab to browse files or **Download zip**.
 
 Diagram: [`docs/anvil-hybrid-architecture.drawio`](docs/anvil-hybrid-architecture.drawio)
 
@@ -98,7 +108,7 @@ NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID=your_project_id_here
 2. Environment variables from `.env.example` (`WORKER_API_KEY`, DAT asset id, burn address).
 3. Optional: use `infra/amplify.yml` as the build spec.
 
-### 2. DynamoDB (production store)
+### 2. DynamoDB + workspace S3
 
 ```bash
 aws cloudformation deploy \
@@ -108,14 +118,28 @@ aws cloudformation deploy \
   --capabilities CAPABILITY_NAMED_IAM
 ```
 
-Local demo uses `.data/store.json`. Wire Amplify to DynamoDB when you leave demo mode.
+Then set Amplify env vars (from stack outputs):
 
-### Cost sketch (dev traffic)
+| Variable | Value |
+| --- | --- |
+| `WORKER_API_KEY` | same secret as the stack parameter |
+| `WORKSPACE_S3_BUCKET` | `WorkspaceBucketName` output |
+| `AWS_REGION` | your stack region |
+| `AUTH_SECRET` | long random string |
+| `NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID` | WalletConnect project id |
+| `ALLOW_DEMO_PAYMENTS` | `1` only for invite-only tester credits |
+
+Grant the Amplify SSR compute role `s3:GetObject`, `s3:PutObject`, `s3:DeleteObject`, `s3:ListBucket` on the workspace bucket.
+
+Local demo uses `.data/store.json` and `.data/workspaces/`. Wire Amplify to DynamoDB when you leave demo mode.
+
+### Cost sketch (dev traffic / few testers)
 
 | Service | Typical monthly |
 | --- | --- |
 | Amplify Hosting (SSR, low traffic) | ~$5–20 |
 | DynamoDB on-demand | usually &lt; $5 |
+| S3 workspaces | usually &lt; $1–3 |
 | Data transfer | small unless you stream large artifacts |
 | Local GPU electricity | on your power bill |
 
@@ -126,9 +150,12 @@ Local demo uses `.data/store.json`. Wire Amplify to DynamoDB when you leave demo
 | `GET /api/session` | browser | create/load credit account |
 | `POST /api/payments/intent` | browser | start DAT pack (burn destination) |
 | `POST /api/payments/confirm` | browser | credit after burn (demo or tx id) |
-| `POST /api/jobs` | browser | enqueue coding job |
+| `POST /api/jobs` | browser | enqueue coding job (creates workspace) |
+| `GET /api/jobs/:id/workspace` | browser | list workspace files |
+| `GET /api/jobs/:id/workspace/file?path=` | browser | read one file |
+| `GET /api/jobs/:id/workspace/download` | browser | zip download |
 | `POST /api/worker/claim` | worker | claim next job (`x-worker-key`) |
-| `POST /api/worker/complete` | worker | post result |
+| `POST /api/worker/complete` | worker | post result (+ materialize files) |
 
 ## Next upgrades
 

@@ -305,16 +305,27 @@ export async function confirmPayment(input: {
   });
 }
 
+function normalizeJob(job: CodingJob): CodingJob {
+  return {
+    ...job,
+    workspaceId: job.workspaceId ?? `${job.accountId}/${job.id}`,
+    workspaceFileCount:
+      typeof job.workspaceFileCount === "number" ? job.workspaceFileCount : 0,
+  };
+}
+
 export async function listJobs(accountId: string) {
   const store = await readStore();
   return store.jobs
     .filter((j) => j.accountId === accountId)
+    .map(normalizeJob)
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 }
 
 export async function getJob(jobId: string) {
   const store = await readStore();
-  return store.jobs.find((j) => j.id === jobId) ?? null;
+  const found = store.jobs.find((j) => j.id === jobId) ?? null;
+  return found ? normalizeJob(found) : null;
 }
 
 export async function enqueueJob(input: {
@@ -336,8 +347,9 @@ export async function enqueueJob(input: {
     const now = new Date().toISOString();
     account.credits -= CREDITS_PER_JOB;
     account.updatedAt = now;
+    const id = randomUUID();
     const job: CodingJob = {
-      id: randomUUID(),
+      id,
       accountId: input.accountId,
       prompt: input.prompt.trim(),
       repoHint: input.repoHint?.trim() || null,
@@ -349,6 +361,8 @@ export async function enqueueJob(input: {
       result: null,
       error: null,
       workerId: null,
+      workspaceId: `${input.accountId}/${id}`,
+      workspaceFileCount: 0,
       createdAt: now,
       updatedAt: now,
       completedAt: null,
@@ -386,12 +400,20 @@ export async function completeJob(input: {
   workerId: string;
   result?: string | null;
   error?: string | null;
+  workspaceFileCount?: number;
 }) {
   return mutate((store) => {
     const job = store.jobs.find((j) => j.id === input.jobId);
     if (!job) throw new Error("Job not found");
     if (job.workerId !== input.workerId) throw new Error("Worker mismatch");
     const now = new Date().toISOString();
+    // Backfill for jobs created before workspaces existed.
+    if (!job.workspaceId) {
+      job.workspaceId = `${job.accountId}/${job.id}`;
+    }
+    if (typeof job.workspaceFileCount !== "number") {
+      job.workspaceFileCount = 0;
+    }
     if (input.error) {
       job.status = "failed";
       job.error = input.error;
@@ -404,9 +426,26 @@ export async function completeJob(input: {
       job.status = "completed";
       job.result = input.result ?? "";
       job.error = null;
+      if (typeof input.workspaceFileCount === "number") {
+        job.workspaceFileCount = input.workspaceFileCount;
+      }
     }
     job.updatedAt = now;
     job.completedAt = now;
+    return job;
+  });
+}
+
+export async function setJobWorkspaceFileCount(
+  jobId: string,
+  workspaceFileCount: number,
+) {
+  return mutate((store) => {
+    const job = store.jobs.find((j) => j.id === jobId);
+    if (!job) throw new Error("Job not found");
+    job.workspaceFileCount = workspaceFileCount;
+    if (!job.workspaceId) job.workspaceId = `${job.accountId}/${job.id}`;
+    job.updatedAt = new Date().toISOString();
     return job;
   });
 }

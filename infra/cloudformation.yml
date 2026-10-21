@@ -1,8 +1,9 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Description: >
-  DAT STARCODER stack — DynamoDB for credits/jobs plus SSM worker secret.
-  Host the Next.js app with Amplify Hosting (connect this repo in the Amplify console)
-  or any Node host. The on-prem worker polls HTTPS; it does not need a VPC.
+  DAT STARCODER stack — DynamoDB for credits/jobs, S3 for customer workspaces,
+  plus SSM worker secret. Host the Next.js app with Amplify Hosting (connect
+  this repo in the Amplify console) or any Node host. The on-prem worker polls
+  HTTPS; it does not need a VPC.
 
 Parameters:
   ProjectName:
@@ -38,6 +39,55 @@ Resources:
         - Key: Project
           Value: !Ref ProjectName
 
+  WorkspaceBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub "${ProjectName}-workspaces-${AWS::AccountId}"
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      VersioningConfiguration:
+        Status: Enabled
+      LifecycleConfiguration:
+        Rules:
+          - Id: ExpireOldVersions
+            Status: Enabled
+            NoncurrentVersionExpiration:
+              NoncurrentDays: 30
+      CorsConfiguration:
+        CorsRules:
+          - AllowedHeaders: ["*"]
+            AllowedMethods: [GET, HEAD]
+            AllowedOrigins: ["*"]
+            MaxAge: 3000
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+
+  WorkspaceBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref WorkspaceBucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: DenyInsecureTransport
+            Effect: Deny
+            Principal: "*"
+            Action: "s3:*"
+            Resource:
+              - !GetAtt WorkspaceBucket.Arn
+              - !Sub "${WorkspaceBucket.Arn}/*"
+            Condition:
+              Bool:
+                aws:SecureTransport: false
+
   WorkerApiKeyParam:
     Type: AWS::SSM::Parameter
     Properties:
@@ -46,15 +96,33 @@ Resources:
       Value: !Ref WorkerApiKey
       Description: Worker auth key for DAT STARCODER claim/complete routes
 
+  WorkspaceBucketParam:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: !Sub "/${ProjectName}/workspace-s3-bucket"
+      Type: String
+      Value: !Ref WorkspaceBucket
+      Description: S3 bucket for per-job customer workspaces
+
 Outputs:
   TableName:
     Value: !Ref AnvilTable
   TableArn:
     Value: !GetAtt AnvilTable.Arn
+  WorkspaceBucketName:
+    Value: !Ref WorkspaceBucket
+  WorkspaceBucketArn:
+    Value: !GetAtt WorkspaceBucket.Arn
   WorkerKeyParameter:
     Value: !Ref WorkerApiKeyParam
+  AmplifyEnvHint:
+    Value: !Sub >
+      Set Amplify env WORKSPACE_S3_BUCKET=${WorkspaceBucket} and grant the
+      Amplify SSR role s3:GetObject,s3:PutObject,s3:DeleteObject,s3:ListBucket
+      on this bucket. Also set WORKER_API_KEY from /${ProjectName}/worker-api-key.
   EstimatedMonthlyCostNote:
     Value: >
       DynamoDB on-demand for light traffic is typically under $5/mo.
+      S3 workspaces for a few testers is usually under $1–3/mo.
       Amplify Hosting SSR for a small site is often $5–20/mo depending on
       build minutes and data transfer. GPU cost stays on your electricity bill.

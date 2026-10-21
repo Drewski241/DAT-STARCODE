@@ -29,9 +29,13 @@ type Job = {
   creditsCharged: number;
   result: string | null;
   error: string | null;
+  workspaceId?: string | null;
+  workspaceFileCount?: number;
   createdAt: string;
   completedAt: string | null;
 };
+
+type WorkspaceFile = { path: string; size: number };
 
 export function StudioClient() {
   const router = useRouter();
@@ -46,6 +50,10 @@ export function StudioClient() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [authed, setAuthed] = useState<boolean | null>(null);
+  const [workspaceFiles, setWorkspaceFiles] = useState<WorkspaceFile[]>([]);
+  const [previewPath, setPreviewPath] = useState<string | null>(null);
+  const [previewContent, setPreviewContent] = useState<string | null>(null);
+  const [panel, setPanel] = useState<"output" | "workspace">("output");
 
   const refresh = useCallback(async () => {
     const res = await fetch("/api/jobs", { credentials: "same-origin" });
@@ -69,6 +77,44 @@ export function StudioClient() {
     return () => clearInterval(t);
   }, [refresh]);
 
+  const loadWorkspace = useCallback(async (jobId: string) => {
+    const res = await fetch(`/api/jobs/${jobId}/workspace`, {
+      credentials: "same-origin",
+    });
+    if (!res.ok) {
+      setWorkspaceFiles([]);
+      return;
+    }
+    const data = await res.json();
+    setWorkspaceFiles(data.files ?? []);
+  }, []);
+
+  useEffect(() => {
+    if (!selectedId) {
+      setWorkspaceFiles([]);
+      setPreviewPath(null);
+      setPreviewContent(null);
+      return;
+    }
+    void loadWorkspace(selectedId);
+  }, [selectedId, jobs, loadWorkspace]);
+
+  async function openFile(jobId: string, filePath: string) {
+    setPreviewPath(filePath);
+    setPreviewContent("Loading…");
+    setPanel("workspace");
+    const res = await fetch(
+      `/api/jobs/${jobId}/workspace/file?path=${encodeURIComponent(filePath)}`,
+      { credentials: "same-origin" },
+    );
+    const data = await res.json();
+    if (!res.ok) {
+      setPreviewContent(data.error ?? "Could not read file");
+      return;
+    }
+    setPreviewContent(data.content);
+  }
+
   async function submitJob() {
     setBusy(true);
     setError(null);
@@ -83,6 +129,7 @@ export function StudioClient() {
       if (!res.ok) throw new Error(data.error ?? "Failed to enqueue");
       setAccount(data.account);
       setSelectedId(data.job.id);
+      setPanel("workspace");
       // Optional demo fallback — only when explicitly enabled.
       if (process.env.NEXT_PUBLIC_USE_INLINE_WORKER === "1") {
         void fetch("/api/worker/inline", { method: "POST" });
@@ -128,8 +175,9 @@ export function StudioClient() {
               Dispatch a job
             </h1>
             <p className="mt-3 text-sm leading-relaxed text-steel-300">
-              Describe the change you want. Each job costs {CREDITS_PER_JOB}{" "}
-              credits — buy more by burning DAT.
+              Describe the change you want. Each job gets a working directory
+              you can browse and download. Cost: {CREDITS_PER_JOB} credits —
+              buy more by burning DAT.
             </p>
 
             <label className="mt-8 block font-mono text-[11px] uppercase tracking-widest text-steel-400">
@@ -222,12 +270,15 @@ export function StudioClient() {
                       </span>
                       <StatusPill status={job.status} />
                     </div>
-                    {job.modelResolved && (
-                      <p className="mt-1 truncate font-mono text-[10px] text-steel-500">
-                        {job.modelRequested === "auto" ? "auto → " : ""}
-                        {job.modelResolved}
-                      </p>
-                    )}
+                    <p className="mt-1 truncate font-mono text-[10px] text-steel-500">
+                      {job.modelResolved
+                        ? `${job.modelRequested === "auto" ? "auto → " : ""}${job.modelResolved}`
+                        : ""}
+                      {typeof job.workspaceFileCount === "number" &&
+                      job.workspaceFileCount > 0
+                        ? ` · ${job.workspaceFileCount} files`
+                        : ""}
+                    </p>
                   </button>
                 </li>
               ))}
@@ -237,7 +288,7 @@ export function StudioClient() {
           <section className="min-h-[28rem] border border-copper-800/40 bg-ink-900/50 p-5 md:p-6">
             {!selected ? (
               <p className="font-mono text-sm text-steel-500">
-                Submit a job to see agent output.
+                Submit a job to see agent output and your workspace.
               </p>
             ) : (
               <>
@@ -260,25 +311,95 @@ export function StudioClient() {
                   </div>
                   <StatusPill status={selected.status} />
                 </div>
+
+                <div className="mt-4 flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setPanel("output")}
+                    className={cn(
+                      "font-mono text-[11px] uppercase tracking-widest",
+                      panel === "output"
+                        ? "text-copper-200"
+                        : "text-steel-500 hover:text-copper-300",
+                    )}
+                  >
+                    Output
+                  </button>
+                  <span className="text-steel-700">·</span>
+                  <button
+                    type="button"
+                    onClick={() => setPanel("workspace")}
+                    className={cn(
+                      "font-mono text-[11px] uppercase tracking-widest",
+                      panel === "workspace"
+                        ? "text-copper-200"
+                        : "text-steel-500 hover:text-copper-300",
+                    )}
+                  >
+                    Workspace ({workspaceFiles.length})
+                  </button>
+                  {workspaceFiles.length > 0 && (
+                    <a
+                      href={`/api/jobs/${selected.id}/workspace/download`}
+                      className="ml-auto font-mono text-[11px] uppercase tracking-widest text-copper-400 hover:text-copper-200"
+                    >
+                      Download zip
+                    </a>
+                  )}
+                </div>
+
                 <div className="mt-5 max-h-[32rem] overflow-auto">
-                  {selected.status === "queued" ||
-                  selected.status === "claimed" ||
-                  selected.status === "running" ? (
-                    <p className="animate-pulse-soft font-mono text-sm text-copper-300">
-                      Worker is on it
-                      {selected.modelResolved
-                        ? ` (${selected.modelResolved})`
-                        : ""}
-                      …
-                    </p>
-                  ) : selected.error ? (
-                    <pre className="whitespace-pre-wrap font-mono text-xs text-rose-300">
-                      {selected.error}
-                    </pre>
+                  {panel === "output" ? (
+                    selected.status === "queued" ||
+                    selected.status === "claimed" ||
+                    selected.status === "running" ? (
+                      <p className="animate-pulse-soft font-mono text-sm text-copper-300">
+                        Worker is on it
+                        {selected.modelResolved
+                          ? ` (${selected.modelResolved})`
+                          : ""}
+                        …
+                      </p>
+                    ) : selected.error ? (
+                      <pre className="whitespace-pre-wrap font-mono text-xs text-rose-300">
+                        {selected.error}
+                      </pre>
+                    ) : (
+                      <pre className="whitespace-pre-wrap font-mono text-xs leading-relaxed text-steel-200">
+                        {selected.result}
+                      </pre>
+                    )
                   ) : (
-                    <pre className="whitespace-pre-wrap font-mono text-xs leading-relaxed text-steel-200">
-                      {selected.result}
-                    </pre>
+                    <div className="grid gap-4 md:grid-cols-[11rem_1fr]">
+                      <ul className="space-y-1 border-r border-copper-900/60 pr-3">
+                        {workspaceFiles.length === 0 && (
+                          <li className="font-mono text-[11px] text-steel-500">
+                            Workspace seeding…
+                          </li>
+                        )}
+                        {workspaceFiles.map((file) => (
+                          <li key={file.path}>
+                            <button
+                              type="button"
+                              onClick={() => openFile(selected.id, file.path)}
+                              className={cn(
+                                "w-full truncate text-left font-mono text-[11px]",
+                                previewPath === file.path
+                                  ? "text-copper-200"
+                                  : "text-steel-400 hover:text-copper-300",
+                              )}
+                              title={file.path}
+                            >
+                              {file.path}
+                            </button>
+                          </li>
+                        ))}
+                      </ul>
+                      <pre className="min-h-[12rem] whitespace-pre-wrap break-words font-mono text-xs leading-relaxed text-steel-200">
+                        {previewContent ??
+                          "Select a file to preview. Download the zip to use the full project locally."}
+                      </pre>
+                    </div>
                   )}
                 </div>
               </>

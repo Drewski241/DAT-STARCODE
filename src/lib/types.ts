@@ -53,6 +53,9 @@ export interface CodingJob {
   result: string | null;
   error: string | null;
   workerId: string | null;
+  /** Relative workspace key: `{accountId}/{jobId}` */
+  workspaceId: string | null;
+  workspaceFileCount: number;
   createdAt: string;
   updatedAt: string;
   completedAt: string | null;

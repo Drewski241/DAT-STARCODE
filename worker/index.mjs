@@ -63,7 +63,15 @@ function systemPromptFor(job, model) {
   if (coding) {
     return [
       "You are DAT STARCODER, a careful coding agent.",
-      "Return a concrete implementation plan and code patches in markdown.",
+      "Return a short plan, then the full file contents customers can download.",
+      "For every file you create or change, use this exact shape:",
+      "",
+      "### File: path/to/file.ext",
+      "```",
+      "// full file contents",
+      "```",
+      "",
+      "Prefer real relative paths (src/..., lib/..., tests/...). Do not use placeholders.",
       job.repoHint ? `Repo/path hint: ${job.repoHint}` : "",
       "",
       "User request:",
@@ -75,6 +83,9 @@ function systemPromptFor(job, model) {
   return [
     "You are DAT STARCODER, a helpful assistant.",
     "Answer clearly and accurately. Use markdown when useful.",
+    "If you produce code the user should keep, emit each file as:",
+    "### File: path/to/file.ext",
+    "followed by a fenced code block with the full contents.",
     "",
     "User request:",
     job.prompt,

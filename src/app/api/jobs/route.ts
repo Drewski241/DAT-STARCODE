@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { toPublicAccount } from "@/lib/account-public";
 import { resolveModel } from "@/lib/models";
 import { requireRegisteredAccount } from "@/lib/require-auth";
-import { enqueueJob, listJobs } from "@/lib/store";
+import { enqueueJob, listJobs, setJobWorkspaceFileCount } from "@/lib/store";
+import { initWorkspace, listWorkspaceFiles } from "@/lib/workspace";
 
 export async function GET() {
   const auth = await requireRegisteredAccount();
@@ -42,8 +43,17 @@ export async function POST(req: NextRequest) {
       modelResolved: resolved.resolved,
       modelReason: resolved.reason,
     });
+
+    // Create the customer's working directory as soon as the job is queued.
+    await initWorkspace(result.job);
+    const seeded = await listWorkspaceFiles(result.job);
+    const job =
+      seeded.length > 0
+        ? await setJobWorkspaceFileCount(result.job.id, seeded.length)
+        : result.job;
+
     return NextResponse.json({
-      job: result.job,
+      job,
       account: toPublicAccount(result.account),
     });
   } catch (err) {
