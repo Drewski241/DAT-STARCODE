@@ -1,0 +1,38 @@
+version: 1
+frontend:
+  phases:
+    preBuild:
+      commands:
+        - npm ci
+    build:
+      commands:
+        # Bake server env into the build so SSR compute sees the bucket even
+        # when Amplify runtime env injection is incomplete.
+        - |
+          set -e
+          : > .env.production
+          if [ -n "$WORKSPACE_S3_BUCKET" ]; then
+            echo "WORKSPACE_S3_BUCKET=$WORKSPACE_S3_BUCKET" >> .env.production
+          fi
+          if [ -n "$STORE_S3_BUCKET" ]; then
+            echo "STORE_S3_BUCKET=$STORE_S3_BUCKET" >> .env.production
+          fi
+          if [ -n "$WORKER_API_KEY" ]; then
+            echo "WORKER_API_KEY=$WORKER_API_KEY" >> .env.production
+          fi
+          if [ -n "$AUTH_SECRET" ]; then
+            echo "AUTH_SECRET=$AUTH_SECRET" >> .env.production
+          fi
+          if [ -n "$COOKIE_DOMAIN" ]; then
+            echo "COOKIE_DOMAIN=$COOKIE_DOMAIN" >> .env.production
+          fi
+          echo "Wrote $(wc -l < .env.production) env lines for production build"
+          npm run build
+  artifacts:
+    baseDirectory: .next
+    files:
+      - "**/*"
+  cache:
+    paths:
+      - node_modules/**/*
+      - .next/cache/**/*

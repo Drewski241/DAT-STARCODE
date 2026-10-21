@@ -19,6 +19,11 @@ import { CREDITS_PER_JOB, DAT_ASSET_ID } from "@/lib/config";
 import { creditsForDat } from "@/lib/economy";
 import { resolveModel } from "@/lib/models";
 import { hashPassword, verifyPassword } from "@/lib/password";
+import {
+  awsRegion,
+  peekWorkspaceBucketEnv,
+  resolveWorkspaceBucket,
+} from "@/lib/s3-bucket";
 
 const DATA_DIR =
   process.env.DAT_STARCODER_DATA_DIR ??
@@ -26,47 +31,31 @@ const DATA_DIR =
   path.join(process.cwd(), ".data");
 const STORE_PATH = path.join(DATA_DIR, "store.json");
 
-/**
- * On Amplify / multi-instance hosts the local filesystem is ephemeral, so
- * login appears to succeed then bounce back. Persist the JSON store to S3
- * when a bucket is configured (same bucket as workspaces is fine).
- *
- * IMPORTANT: read env at call time via process.env[name]. Next/Amplify can
- * inline module-scope process.env.FOO as "" at build time even when the
- * runtime console has WORKSPACE_S3_BUCKET set (same class of bug as
- * getWorkerApiKey).
- */
 function envName(name: string): string {
   return (process.env[name] ?? "").trim();
-}
-
-function getStoreS3Bucket(): string {
-  return envName("STORE_S3_BUCKET") || envName("WORKSPACE_S3_BUCKET");
 }
 
 function getStoreS3Key(): string {
   return envName("STORE_S3_KEY") || "store/store.json";
 }
 
-function awsRegion() {
-  // Amplify forbids custom env vars starting with AWS_; it injects AWS_REGION itself.
-  return (
-    envName("AWS_REGION") ||
-    envName("AWS_DEFAULT_REGION") ||
-    envName("STARCODER_AWS_REGION") ||
-    "us-east-1"
-  );
-}
-
 let s3Client: S3Client | null = null;
 
-function getS3(): { client: S3Client; bucket: string } | null {
-  const bucket = getStoreS3Bucket();
-  if (!bucket) return null;
+async function getS3(): Promise<{
+  client: S3Client;
+  bucket: string;
+  source: string;
+} | null> {
+  const resolved = await resolveWorkspaceBucket();
+  if (!resolved.bucket) return null;
   if (!s3Client) {
     s3Client = new S3Client({ region: awsRegion() });
   }
-  return { client: s3Client, bucket };
+  return {
+    client: s3Client,
+    bucket: resolved.bucket,
+    source: resolved.source,
+  };
 }
 
 const emptyStore = (): StoreSnapshot => ({
@@ -115,7 +104,7 @@ function isAwsHosted() {
 }
 
 async function readStoreWithMeta(): Promise<StoreRead> {
-  const s3 = getS3();
+  const s3 = await getS3();
   if (s3) {
     try {
       const res = await s3.client.send(
@@ -139,10 +128,11 @@ async function readStoreWithMeta(): Promise<StoreRead> {
     }
   }
 
-  // Local demo only (no STORE/WORKSPACE S3 bucket at runtime).
+  // Local demo only — Amplify must resolve a bucket via env, SSM, or convention.
   if (isAwsHosted()) {
+    const peek = peekWorkspaceBucketEnv();
     throw new Error(
-      "STORE_S3_BUCKET / WORKSPACE_S3_BUCKET is required on Amplify (must be readable at runtime, not only in the console)",
+      `Could not resolve workspace S3 bucket on Amplify (env store=${peek.store} workspace=${peek.workspace}). Set WORKSPACE_S3_BUCKET or ensure SSM /dat-starcoder/workspace-s3-bucket exists and the Amplify role can read it.`,
     );
   }
 
@@ -161,7 +151,7 @@ async function readStore(): Promise<StoreSnapshot> {
 
 async function writeStore(store: StoreSnapshot, etag?: string) {
   const body = JSON.stringify(store, null, 2);
-  const s3 = getS3();
+  const s3 = await getS3();
 
   if (s3) {
     // Always use conditional writes — plain overwrites cause "Job not found"
@@ -196,7 +186,7 @@ function jobRecordPath(jobId: string) {
 async function saveJobRecord(job: CodingJob) {
   const normalized = normalizeJob(job);
   const body = JSON.stringify(normalized, null, 2);
-  const s3 = getS3();
+  const s3 = await getS3();
   if (s3) {
     await s3.client.send(
       new PutObjectCommand({
@@ -214,7 +204,7 @@ async function saveJobRecord(job: CodingJob) {
 }
 
 async function loadJobRecord(jobId: string): Promise<CodingJob | null> {
-  const s3 = getS3();
+  const s3 = await getS3();
   if (s3) {
     try {
       const res = await s3.client.send(
@@ -241,7 +231,7 @@ async function loadJobRecord(jobId: string): Promise<CodingJob | null> {
 
 /** List recent job sidecar IDs (S3 or local) so claim can recover orphans. */
 async function listJobSidecarIds(limit = 80): Promise<string[]> {
-  const s3 = getS3();
+  const s3 = await getS3();
   if (s3) {
     const res = await s3.client.send(
       new ListObjectsV2Command({
@@ -287,7 +277,8 @@ async function listJobSidecarIds(limit = 80): Promise<string[]> {
 
 function mutate<T>(fn: (store: StoreSnapshot) => T): Promise<T> {
   const run = writeChain.then(async () => {
-    const maxAttempts = getStoreS3Bucket() ? 8 : 1;
+    const resolved = await resolveWorkspaceBucket();
+    const maxAttempts = resolved.bucket ? 8 : 1;
     let lastErr: unknown;
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
       const { store, etag } = await readStoreWithMeta();
@@ -898,11 +889,17 @@ export async function getWorkerQueueSnapshot() {
     byStatus[j.status] = (byStatus[j.status] || 0) + 1;
   }
 
+  const resolved = await resolveWorkspaceBucket();
   return {
     storeJobCount: store.jobs.length,
     byStatus,
-    storeBackend: getStoreS3Bucket() ? "s3" : "local",
-    storeBucketConfigured: Boolean(getStoreS3Bucket()),
+    storeBackend: resolved.bucket ? "s3" : "local",
+    storeBucketSource: resolved.source,
+    storeBucketConfigured: Boolean(resolved.bucket),
+    storeBucketPreview: resolved.bucket
+      ? `${resolved.bucket.slice(0, 12)}…`
+      : "",
+    envPeek: peekWorkspaceBucketEnv(),
     staleClaimMs: STALE_CLAIM_MS,
     activeInStore: store.jobs
       .filter(

@@ -15,39 +15,30 @@ import {
   normalizePath,
   type ExtractedFile,
 } from "@/lib/extract-files";
+import { awsRegion, resolveWorkspaceBucket } from "@/lib/s3-bucket";
 
 const DATA_DIR =
   process.env.DAT_STARCODER_DATA_DIR ??
   process.env.ANVIL_DATA_DIR ??
   path.join(process.cwd(), ".data");
 
-/** Read at call time — Amplify runtime env must not be build-time inlined. */
+/** Sync env peek only — prefer resolveWorkspaceBucket() for real use. */
 export function getWorkspaceS3Bucket(): string {
   return (process.env["WORKSPACE_S3_BUCKET"] ?? "").trim();
 }
 
-/** @deprecated Prefer getWorkspaceS3Bucket() */
+/** @deprecated Prefer resolveWorkspaceBucket() */
 export const WORKSPACE_S3_BUCKET = getWorkspaceS3Bucket();
-
-function awsRegion() {
-  // Amplify forbids custom env vars starting with AWS_; it injects AWS_REGION itself.
-  return (
-    (process.env["AWS_REGION"] ?? "").trim() ||
-    (process.env["AWS_DEFAULT_REGION"] ?? "").trim() ||
-    (process.env["STARCODER_AWS_REGION"] ?? "").trim() ||
-    "us-east-1"
-  );
-}
 
 let s3Client: S3Client | null = null;
 
-function getS3(): { client: S3Client; bucket: string } | null {
-  const bucket = getWorkspaceS3Bucket();
-  if (!bucket) return null;
+async function getS3(): Promise<{ client: S3Client; bucket: string } | null> {
+  const resolved = await resolveWorkspaceBucket();
+  if (!resolved.bucket) return null;
   if (!s3Client) {
     s3Client = new S3Client({ region: awsRegion() });
   }
-  return { client: s3Client, bucket };
+  return { client: s3Client, bucket: resolved.bucket };
 }
 
 export type WorkspaceFileInfo = {
@@ -188,7 +179,7 @@ export async function writeWorkspaceFiles(
     const rel = normalizePath(file.path);
     if (!isSafeWorkspacePath(rel)) continue;
     const size = Buffer.byteLength(file.content, "utf8");
-    const s3 = getS3();
+    const s3 = await getS3();
     if (s3) {
       await s3.client.send(
         new PutObjectCommand({
@@ -256,7 +247,7 @@ export async function materializeWorkspaceFromResult(
 export async function listWorkspaceFiles(
   job: WorkspaceJob,
 ): Promise<WorkspaceFileInfo[]> {
-  const s3 = getS3();
+  const s3 = await getS3();
   if (s3) {
     const prefix = `${workspacePrefix(job)}/`;
     const out: WorkspaceFileInfo[] = [];
@@ -316,7 +307,7 @@ export async function readWorkspaceFile(
   const rel = normalizePath(relPath);
   if (!isSafeWorkspacePath(rel)) return null;
 
-  const s3 = getS3();
+  const s3 = await getS3();
   if (s3) {
     try {
       const res = await s3.client.send(
@@ -361,7 +352,7 @@ export async function buildWorkspaceZip(
 export async function clearWorkspace(
   job: WorkspaceJob,
 ): Promise<void> {
-  const s3 = getS3();
+  const s3 = await getS3();
   if (s3) {
     const files = await listWorkspaceFiles(job);
     if (files.length === 0) return;
