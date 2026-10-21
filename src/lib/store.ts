@@ -30,29 +30,44 @@ const STORE_PATH = path.join(DATA_DIR, "store.json");
  * On Amplify / multi-instance hosts the local filesystem is ephemeral, so
  * login appears to succeed then bounce back. Persist the JSON store to S3
  * when a bucket is configured (same bucket as workspaces is fine).
+ *
+ * IMPORTANT: read env at call time via process.env[name]. Next/Amplify can
+ * inline module-scope process.env.FOO as "" at build time even when the
+ * runtime console has WORKSPACE_S3_BUCKET set (same class of bug as
+ * getWorkerApiKey).
  */
-const STORE_S3_BUCKET =
-  process.env.STORE_S3_BUCKET?.trim() ||
-  process.env.WORKSPACE_S3_BUCKET?.trim() ||
-  "";
-const STORE_S3_KEY =
-  process.env.STORE_S3_KEY?.trim() || "store/store.json";
+function envName(name: string): string {
+  return (process.env[name] ?? "").trim();
+}
+
+function getStoreS3Bucket(): string {
+  return envName("STORE_S3_BUCKET") || envName("WORKSPACE_S3_BUCKET");
+}
+
+function getStoreS3Key(): string {
+  return envName("STORE_S3_KEY") || "store/store.json";
+}
 
 function awsRegion() {
   // Amplify forbids custom env vars starting with AWS_; it injects AWS_REGION itself.
   return (
-    process.env.AWS_REGION ??
-    process.env.AWS_DEFAULT_REGION ??
-    process.env.STARCODER_AWS_REGION ??
+    envName("AWS_REGION") ||
+    envName("AWS_DEFAULT_REGION") ||
+    envName("STARCODER_AWS_REGION") ||
     "us-east-1"
   );
 }
 
-const s3 = STORE_S3_BUCKET
-  ? new S3Client({
-      region: awsRegion(),
-    })
-  : null;
+let s3Client: S3Client | null = null;
+
+function getS3(): { client: S3Client; bucket: string } | null {
+  const bucket = getStoreS3Bucket();
+  if (!bucket) return null;
+  if (!s3Client) {
+    s3Client = new S3Client({ region: awsRegion() });
+  }
+  return { client: s3Client, bucket };
+}
 
 const emptyStore = (): StoreSnapshot => ({
   accounts: [],
@@ -92,20 +107,21 @@ type StoreRead = { store: StoreSnapshot; etag?: string };
 
 function isAwsHosted() {
   return Boolean(
-    process.env.AWS_EXECUTION_ENV ||
-      process.env.AWS_REGION ||
-      process.env.AMPLIFY_APP_ID ||
-      process.env.AWS_APP_ID,
+    envName("AWS_EXECUTION_ENV") ||
+      envName("AWS_REGION") ||
+      envName("AMPLIFY_APP_ID") ||
+      envName("AWS_APP_ID"),
   );
 }
 
 async function readStoreWithMeta(): Promise<StoreRead> {
-  if (s3 && STORE_S3_BUCKET) {
+  const s3 = getS3();
+  if (s3) {
     try {
-      const res = await s3.send(
+      const res = await s3.client.send(
         new GetObjectCommand({
-          Bucket: STORE_S3_BUCKET,
-          Key: STORE_S3_KEY,
+          Bucket: s3.bucket,
+          Key: getStoreS3Key(),
         }),
       );
       const raw = await res.Body?.transformToString();
@@ -123,10 +139,10 @@ async function readStoreWithMeta(): Promise<StoreRead> {
     }
   }
 
-  // Local demo only (no STORE/WORKSPACE S3 bucket).
+  // Local demo only (no STORE/WORKSPACE S3 bucket at runtime).
   if (isAwsHosted()) {
     throw new Error(
-      "STORE_S3_BUCKET / WORKSPACE_S3_BUCKET is required on Amplify",
+      "STORE_S3_BUCKET / WORKSPACE_S3_BUCKET is required on Amplify (must be readable at runtime, not only in the console)",
     );
   }
 
@@ -145,14 +161,15 @@ async function readStore(): Promise<StoreSnapshot> {
 
 async function writeStore(store: StoreSnapshot, etag?: string) {
   const body = JSON.stringify(store, null, 2);
+  const s3 = getS3();
 
-  if (s3 && STORE_S3_BUCKET) {
+  if (s3) {
     // Always use conditional writes — plain overwrites cause "Job not found"
     // when claim and complete race with other store mutations.
-    await s3.send(
+    await s3.client.send(
       new PutObjectCommand({
-        Bucket: STORE_S3_BUCKET,
-        Key: STORE_S3_KEY,
+        Bucket: s3.bucket,
+        Key: getStoreS3Key(),
         Body: body,
         ContentType: "application/json",
         ...(etag ? { IfMatch: etag } : { IfNoneMatch: "*" }),
@@ -179,10 +196,11 @@ function jobRecordPath(jobId: string) {
 async function saveJobRecord(job: CodingJob) {
   const normalized = normalizeJob(job);
   const body = JSON.stringify(normalized, null, 2);
-  if (s3 && STORE_S3_BUCKET) {
-    await s3.send(
+  const s3 = getS3();
+  if (s3) {
+    await s3.client.send(
       new PutObjectCommand({
-        Bucket: STORE_S3_BUCKET,
+        Bucket: s3.bucket,
         Key: jobRecordKey(job.id),
         Body: body,
         ContentType: "application/json",
@@ -196,11 +214,12 @@ async function saveJobRecord(job: CodingJob) {
 }
 
 async function loadJobRecord(jobId: string): Promise<CodingJob | null> {
-  if (s3 && STORE_S3_BUCKET) {
+  const s3 = getS3();
+  if (s3) {
     try {
-      const res = await s3.send(
+      const res = await s3.client.send(
         new GetObjectCommand({
-          Bucket: STORE_S3_BUCKET,
+          Bucket: s3.bucket,
           Key: jobRecordKey(jobId),
         }),
       );
@@ -222,10 +241,11 @@ async function loadJobRecord(jobId: string): Promise<CodingJob | null> {
 
 /** List recent job sidecar IDs (S3 or local) so claim can recover orphans. */
 async function listJobSidecarIds(limit = 80): Promise<string[]> {
-  if (s3 && STORE_S3_BUCKET) {
-    const res = await s3.send(
+  const s3 = getS3();
+  if (s3) {
+    const res = await s3.client.send(
       new ListObjectsV2Command({
-        Bucket: STORE_S3_BUCKET,
+        Bucket: s3.bucket,
         Prefix: "store/jobs/",
         MaxKeys: Math.min(Math.max(limit * 2, limit), 200),
       }),
@@ -267,7 +287,7 @@ async function listJobSidecarIds(limit = 80): Promise<string[]> {
 
 function mutate<T>(fn: (store: StoreSnapshot) => T): Promise<T> {
   const run = writeChain.then(async () => {
-    const maxAttempts = STORE_S3_BUCKET ? 8 : 1;
+    const maxAttempts = getStoreS3Bucket() ? 8 : 1;
     let lastErr: unknown;
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
       const { store, etag } = await readStoreWithMeta();
@@ -881,7 +901,8 @@ export async function getWorkerQueueSnapshot() {
   return {
     storeJobCount: store.jobs.length,
     byStatus,
-    storeBackend: STORE_S3_BUCKET ? "s3" : "local",
+    storeBackend: getStoreS3Bucket() ? "s3" : "local",
+    storeBucketConfigured: Boolean(getStoreS3Bucket()),
     staleClaimMs: STALE_CLAIM_MS,
     activeInStore: store.jobs
       .filter(

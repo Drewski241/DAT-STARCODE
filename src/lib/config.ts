@@ -33,7 +33,7 @@ export const DAT_BURN_ADDRESS =
 /** Read at call time so Amplify runtime env is honored (not build-time inlined). */
 export function getWorkerApiKey() {
   return (
-    process.env.WORKER_API_KEY?.trim() ||
+    (process.env["WORKER_API_KEY"] ?? "").trim() ||
     "dev-worker-key-change-me"
   );
 }
@@ -41,9 +41,13 @@ export function getWorkerApiKey() {
 /** @deprecated Prefer getWorkerApiKey() — kept for older imports. */
 export const WORKER_API_KEY = getWorkerApiKey();
 
-/** S3 bucket for customer job workspaces (Amplify / multi-instance). Empty = local `.data/workspaces`. */
-export const WORKSPACE_S3_BUCKET =
-  process.env.WORKSPACE_S3_BUCKET?.trim() || "";
+/** S3 bucket for customer job workspaces — read at call time (Amplify runtime). */
+export function getWorkspaceS3Bucket() {
+  return (process.env["WORKSPACE_S3_BUCKET"] ?? "").trim();
+}
+
+/** @deprecated Prefer getWorkspaceS3Bucket() */
+export const WORKSPACE_S3_BUCKET = getWorkspaceS3Bucket();
 
 export const WALLETCONNECT_PROJECT_ID =
   process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID ?? "";

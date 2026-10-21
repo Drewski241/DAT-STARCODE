@@ -21,24 +21,34 @@ const DATA_DIR =
   process.env.ANVIL_DATA_DIR ??
   path.join(process.cwd(), ".data");
 
-export const WORKSPACE_S3_BUCKET =
-  process.env.WORKSPACE_S3_BUCKET?.trim() || "";
+/** Read at call time — Amplify runtime env must not be build-time inlined. */
+export function getWorkspaceS3Bucket(): string {
+  return (process.env["WORKSPACE_S3_BUCKET"] ?? "").trim();
+}
+
+/** @deprecated Prefer getWorkspaceS3Bucket() */
+export const WORKSPACE_S3_BUCKET = getWorkspaceS3Bucket();
 
 function awsRegion() {
   // Amplify forbids custom env vars starting with AWS_; it injects AWS_REGION itself.
   return (
-    process.env.AWS_REGION ??
-    process.env.AWS_DEFAULT_REGION ??
-    process.env.STARCODER_AWS_REGION ??
+    (process.env["AWS_REGION"] ?? "").trim() ||
+    (process.env["AWS_DEFAULT_REGION"] ?? "").trim() ||
+    (process.env["STARCODER_AWS_REGION"] ?? "").trim() ||
     "us-east-1"
   );
 }
 
-const s3 = WORKSPACE_S3_BUCKET
-  ? new S3Client({
-      region: awsRegion(),
-    })
-  : null;
+let s3Client: S3Client | null = null;
+
+function getS3(): { client: S3Client; bucket: string } | null {
+  const bucket = getWorkspaceS3Bucket();
+  if (!bucket) return null;
+  if (!s3Client) {
+    s3Client = new S3Client({ region: awsRegion() });
+  }
+  return { client: s3Client, bucket };
+}
 
 export type WorkspaceFileInfo = {
   path: string;
@@ -178,10 +188,11 @@ export async function writeWorkspaceFiles(
     const rel = normalizePath(file.path);
     if (!isSafeWorkspacePath(rel)) continue;
     const size = Buffer.byteLength(file.content, "utf8");
-    if (s3 && WORKSPACE_S3_BUCKET) {
-      await s3.send(
+    const s3 = getS3();
+    if (s3) {
+      await s3.client.send(
         new PutObjectCommand({
-          Bucket: WORKSPACE_S3_BUCKET,
+          Bucket: s3.bucket,
           Key: s3Key(job, rel),
           Body: file.content,
           ContentType: contentTypeFor(rel),
@@ -245,14 +256,15 @@ export async function materializeWorkspaceFromResult(
 export async function listWorkspaceFiles(
   job: WorkspaceJob,
 ): Promise<WorkspaceFileInfo[]> {
-  if (s3 && WORKSPACE_S3_BUCKET) {
+  const s3 = getS3();
+  if (s3) {
     const prefix = `${workspacePrefix(job)}/`;
     const out: WorkspaceFileInfo[] = [];
     let token: string | undefined;
     do {
-      const res = await s3.send(
+      const res = await s3.client.send(
         new ListObjectsV2Command({
-          Bucket: WORKSPACE_S3_BUCKET,
+          Bucket: s3.bucket,
           Prefix: prefix,
           ContinuationToken: token,
         }),
@@ -304,11 +316,12 @@ export async function readWorkspaceFile(
   const rel = normalizePath(relPath);
   if (!isSafeWorkspacePath(rel)) return null;
 
-  if (s3 && WORKSPACE_S3_BUCKET) {
+  const s3 = getS3();
+  if (s3) {
     try {
-      const res = await s3.send(
+      const res = await s3.client.send(
         new GetObjectCommand({
-          Bucket: WORKSPACE_S3_BUCKET,
+          Bucket: s3.bucket,
           Key: s3Key(job, rel),
         }),
       );
@@ -348,12 +361,13 @@ export async function buildWorkspaceZip(
 export async function clearWorkspace(
   job: WorkspaceJob,
 ): Promise<void> {
-  if (s3 && WORKSPACE_S3_BUCKET) {
+  const s3 = getS3();
+  if (s3) {
     const files = await listWorkspaceFiles(job);
     if (files.length === 0) return;
-    await s3.send(
+    await s3.client.send(
       new DeleteObjectsCommand({
-        Bucket: WORKSPACE_S3_BUCKET,
+        Bucket: s3.bucket,
         Delete: {
           Objects: files.map((f) => ({ Key: s3Key(job, f.path) })),
         },
