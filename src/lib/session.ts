@@ -41,26 +41,43 @@ function cookieSecure() {
   );
 }
 
+/**
+ * Share session across apex + www (e.g. datstarcoder.com and www.datstarcoder.com).
+ * Set COOKIE_DOMAIN=.datstarcoder.com in Amplify. Leading dot is required.
+ */
+function cookieDomain(): string | undefined {
+  const raw = process.env.COOKIE_DOMAIN?.trim();
+  if (!raw) return undefined;
+  return raw.startsWith(".") ? raw : `.${raw}`;
+}
+
+function sessionCookieOptions(maxAge: number) {
+  const domain = cookieDomain();
+  return {
+    httpOnly: true,
+    sameSite: "lax" as const,
+    path: "/",
+    maxAge,
+    secure: cookieSecure(),
+    ...(domain ? { domain } : {}),
+  };
+}
+
 export function attachSession(
   res: NextResponse,
   token: string,
   accountId: string,
 ) {
-  const base = {
-    httpOnly: true,
-    sameSite: "lax" as const,
-    path: "/",
-    maxAge: 60 * 60 * 24 * 30,
-    secure: cookieSecure(),
-  };
+  const base = sessionCookieOptions(60 * 60 * 24 * 30);
   res.cookies.set(SESSION_COOKIE, token, base);
   res.cookies.set(ACCOUNT_COOKIE, accountId, base);
   return res;
 }
 
 export function clearSession(res: NextResponse) {
-  res.cookies.set(SESSION_COOKIE, "", { httpOnly: true, path: "/", maxAge: 0 });
-  res.cookies.set(ACCOUNT_COOKIE, "", { httpOnly: true, path: "/", maxAge: 0 });
+  const base = sessionCookieOptions(0);
+  res.cookies.set(SESSION_COOKIE, "", base);
+  res.cookies.set(ACCOUNT_COOKIE, "", base);
   return res;
 }
 
