@@ -124,8 +124,8 @@ Then set Amplify env vars (from stack outputs):
 | --- | --- |
 | `WORKER_API_KEY` | same secret as the stack parameter |
 | `WORKSPACE_S3_BUCKET` | `WorkspaceBucketName` output (**required** — also persists accounts/sessions) |
-| `AWS_REGION` | your stack region |
 | `AUTH_SECRET` | long random string (must be stable across deploys) |
+| ~~`AWS_REGION`~~ | **Do not set** — Amplify reserves `AWS_*` and injects the region itself |
 | `NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID` | WalletConnect project id |
 | `ALLOW_DEMO_PAYMENTS` | `1` only for invite-only tester credits |
 

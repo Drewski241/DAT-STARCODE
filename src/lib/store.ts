@@ -35,12 +35,19 @@ const STORE_S3_BUCKET =
 const STORE_S3_KEY =
   process.env.STORE_S3_KEY?.trim() || "store/store.json";
 
+function awsRegion() {
+  // Amplify forbids custom env vars starting with AWS_; it injects AWS_REGION itself.
+  return (
+    process.env.AWS_REGION ??
+    process.env.AWS_DEFAULT_REGION ??
+    process.env.STARCODER_AWS_REGION ??
+    "us-east-1"
+  );
+}
+
 const s3 = STORE_S3_BUCKET
   ? new S3Client({
-      region:
-        process.env.AWS_REGION ??
-        process.env.AWS_DEFAULT_REGION ??
-        "us-east-1",
+      region: awsRegion(),
     })
   : null;
 
