@@ -266,7 +266,8 @@ export function AuthForm({
             id="country-code"
             value={countryCode}
             onChange={(e) => setCountryCode(e.target.value)}
-            className="flex h-9 w-full rounded-none border border-copper-800/50 bg-ink-900/80 px-3 py-1 font-mono text-sm text-copper-50 outline-none focus-visible:border-copper-500"
+            aria-label="Country"
+            className="flex h-10 w-full appearance-auto rounded-none border border-copper-800/50 bg-ink-900 px-3 py-2 font-mono text-sm text-copper-50 outline-none focus-visible:border-copper-500"
           >
             {COUNTRIES.map((c) => (
               <option

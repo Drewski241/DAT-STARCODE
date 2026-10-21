@@ -33,23 +33,28 @@ export async function readSessionAccountId(): Promise<string | null> {
   }
 }
 
+function cookieSecure() {
+  // Amplify serves HTTPS; without Secure the browser may drop the session.
+  return (
+    process.env.NODE_ENV === "production" ||
+    process.env.COOKIE_SECURE === "1"
+  );
+}
+
 export function attachSession(
   res: NextResponse,
   token: string,
   accountId: string,
 ) {
-  res.cookies.set(SESSION_COOKIE, token, {
+  const base = {
     httpOnly: true,
-    sameSite: "lax",
+    sameSite: "lax" as const,
     path: "/",
     maxAge: 60 * 60 * 24 * 30,
-  });
-  res.cookies.set(ACCOUNT_COOKIE, accountId, {
-    httpOnly: true,
-    sameSite: "lax",
-    path: "/",
-    maxAge: 60 * 60 * 24 * 30,
-  });
+    secure: cookieSecure(),
+  };
+  res.cookies.set(SESSION_COOKIE, token, base);
+  res.cookies.set(ACCOUNT_COOKIE, accountId, base);
   return res;
 }
 

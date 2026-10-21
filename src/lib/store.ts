@@ -1,6 +1,11 @@
 import { promises as fs } from "fs";
 import path from "path";
 import { randomUUID } from "crypto";
+import {
+  GetObjectCommand,
+  PutObjectCommand,
+  S3Client,
+} from "@aws-sdk/client-s3";
 import type {
   Account,
   AccountSource,
@@ -18,6 +23,27 @@ const DATA_DIR =
   path.join(process.cwd(), ".data");
 const STORE_PATH = path.join(DATA_DIR, "store.json");
 
+/**
+ * On Amplify / multi-instance hosts the local filesystem is ephemeral, so
+ * login appears to succeed then bounce back. Persist the JSON store to S3
+ * when a bucket is configured (same bucket as workspaces is fine).
+ */
+const STORE_S3_BUCKET =
+  process.env.STORE_S3_BUCKET?.trim() ||
+  process.env.WORKSPACE_S3_BUCKET?.trim() ||
+  "";
+const STORE_S3_KEY =
+  process.env.STORE_S3_KEY?.trim() || "store/store.json";
+
+const s3 = STORE_S3_BUCKET
+  ? new S3Client({
+      region:
+        process.env.AWS_REGION ??
+        process.env.AWS_DEFAULT_REGION ??
+        "us-east-1",
+    })
+  : null;
+
 const emptyStore = (): StoreSnapshot => ({
   accounts: [],
   payments: [],
@@ -30,7 +56,44 @@ async function ensureDir() {
   await fs.mkdir(DATA_DIR, { recursive: true });
 }
 
+function isMissingS3Object(err: unknown): boolean {
+  if (!err || typeof err !== "object") return false;
+  const e = err as { name?: string; $metadata?: { httpStatusCode?: number } };
+  return (
+    e.name === "NoSuchKey" ||
+    e.name === "NotFound" ||
+    e.$metadata?.httpStatusCode === 404
+  );
+}
+
 async function readStore(): Promise<StoreSnapshot> {
+  if (s3 && STORE_S3_BUCKET) {
+    try {
+      const res = await s3.send(
+        new GetObjectCommand({
+          Bucket: STORE_S3_BUCKET,
+          Key: STORE_S3_KEY,
+        }),
+      );
+      const raw = await res.Body?.transformToString();
+      if (!raw) return emptyStore();
+      return JSON.parse(raw) as StoreSnapshot;
+    } catch (err) {
+      if (isMissingS3Object(err)) return emptyStore();
+      // Local demos without AWS creds fall back to the file store.
+      const name = err instanceof Error ? err.name : "";
+      const msg = err instanceof Error ? err.message : "";
+      if (
+        name === "CredentialsProviderError" ||
+        /could not load credentials|Missing credentials/i.test(msg)
+      ) {
+        // fall through
+      } else if (process.env.AWS_EXECUTION_ENV || process.env.AWS_REGION) {
+        throw err;
+      }
+    }
+  }
+
   try {
     const raw = await fs.readFile(STORE_PATH, "utf8");
     return JSON.parse(raw) as StoreSnapshot;
@@ -40,9 +103,23 @@ async function readStore(): Promise<StoreSnapshot> {
 }
 
 async function writeStore(store: StoreSnapshot) {
+  const body = JSON.stringify(store, null, 2);
+
+  if (s3 && STORE_S3_BUCKET) {
+    await s3.send(
+      new PutObjectCommand({
+        Bucket: STORE_S3_BUCKET,
+        Key: STORE_S3_KEY,
+        Body: body,
+        ContentType: "application/json",
+      }),
+    );
+    return;
+  }
+
   await ensureDir();
   const tmp = `${STORE_PATH}.${process.pid}.tmp`;
-  await fs.writeFile(tmp, JSON.stringify(store, null, 2), "utf8");
+  await fs.writeFile(tmp, body, "utf8");
   await fs.rename(tmp, STORE_PATH);
 }
 

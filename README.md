@@ -123,13 +123,15 @@ Then set Amplify env vars (from stack outputs):
 | Variable | Value |
 | --- | --- |
 | `WORKER_API_KEY` | same secret as the stack parameter |
-| `WORKSPACE_S3_BUCKET` | `WorkspaceBucketName` output |
+| `WORKSPACE_S3_BUCKET` | `WorkspaceBucketName` output (**required** — also persists accounts/sessions) |
 | `AWS_REGION` | your stack region |
-| `AUTH_SECRET` | long random string |
+| `AUTH_SECRET` | long random string (must be stable across deploys) |
 | `NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID` | WalletConnect project id |
 | `ALLOW_DEMO_PAYMENTS` | `1` only for invite-only tester credits |
 
 Grant the Amplify SSR compute role `s3:GetObject`, `s3:PutObject`, `s3:DeleteObject`, `s3:ListBucket` on the workspace bucket.
+
+Without `WORKSPACE_S3_BUCKET`, Amplify’s ephemeral disk cannot keep accounts — sign-in will look successful then bounce back to the login screen.
 
 Local demo uses `.data/store.json` and `.data/workspaces/`. Wire Amplify to DynamoDB when you leave demo mode.
 
