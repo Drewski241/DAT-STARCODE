@@ -45,15 +45,42 @@ export type WorkspaceFileInfo = {
   size: number;
 };
 
-export function workspacePrefix(job: Pick<CodingJob, "accountId" | "id">) {
-  return `${job.accountId}/${job.id}`;
+export type WorkspaceRef = { accountId: string; key: string };
+
+type WorkspaceJob = Pick<
+  CodingJob,
+  "accountId" | "id" | "projectId" | "workspaceId"
+>;
+
+/** Resolve storage root: project workspaces persist across turns. */
+export function workspaceRefForJob(job: WorkspaceJob): WorkspaceRef {
+  if (job.workspaceId) {
+    const prefix = `${job.accountId}/`;
+    if (job.workspaceId.startsWith(prefix)) {
+      return {
+        accountId: job.accountId,
+        key: job.workspaceId.slice(prefix.length),
+      };
+    }
+    return { accountId: job.accountId, key: job.workspaceId };
+  }
+  if (job.projectId) {
+    return { accountId: job.accountId, key: `projects/${job.projectId}` };
+  }
+  return { accountId: job.accountId, key: job.id };
 }
 
-function localRoot(job: Pick<CodingJob, "accountId" | "id">) {
-  return path.join(DATA_DIR, "workspaces", job.accountId, job.id);
+export function workspacePrefix(job: WorkspaceJob) {
+  const ref = workspaceRefForJob(job);
+  return `${ref.accountId}/${ref.key}`;
 }
 
-function s3Key(job: Pick<CodingJob, "accountId" | "id">, relPath: string) {
+function localRoot(job: WorkspaceJob) {
+  const ref = workspaceRefForJob(job);
+  return path.join(DATA_DIR, "workspaces", ref.accountId, ...ref.key.split("/"));
+}
+
+function s3Key(job: WorkspaceJob, relPath: string) {
   return `${workspacePrefix(job)}/${relPath}`;
 }
 
@@ -68,10 +95,34 @@ async function streamToString(
 }
 
 export async function initWorkspace(job: CodingJob): Promise<void> {
+  const existing = await listWorkspaceFiles(job);
+  const turnMeta = {
+    id: job.id,
+    accountId: job.accountId,
+    projectId: job.projectId,
+    prompt: job.prompt,
+    repoHint: job.repoHint,
+    modelRequested: job.modelRequested,
+    modelResolved: job.modelResolved,
+    modelReason: job.modelReason,
+    createdAt: job.createdAt,
+  };
+
+  // Project workspaces persist — don't clobber files on later turns.
+  if (existing.length > 0) {
+    await writeWorkspaceFiles(job, [
+      {
+        path: `turns/${job.id}.json`,
+        content: JSON.stringify(turnMeta, null, 2),
+      },
+    ]);
+    return;
+  }
+
   const readme = [
     `# DAT STARCODER workspace`,
     ``,
-    `Job: ${job.id}`,
+    job.projectId ? `Project: ${job.projectId}` : `Job: ${job.id}`,
     `Created: ${job.createdAt}`,
     ``,
     `## Request`,
@@ -84,8 +135,8 @@ export async function initWorkspace(job: CodingJob): Promise<void> {
     `${job.modelRequested} → ${job.modelResolved}`,
     job.modelReason ? `\n${job.modelReason}` : "",
     ``,
-    `Files the agent creates for this job appear in this folder.`,
-    `Download the zip from the studio when the job completes.`,
+    `This folder is your project workspace. Later prompts in the same project`,
+    `edit these files in place. Download the zip from Studio anytime.`,
     ``,
   ]
     .filter((line) => line !== undefined)
@@ -95,28 +146,15 @@ export async function initWorkspace(job: CodingJob): Promise<void> {
     { path: "README.md", content: readme },
     {
       path: "job.json",
-      content: JSON.stringify(
-        {
-          id: job.id,
-          accountId: job.accountId,
-          prompt: job.prompt,
-          repoHint: job.repoHint,
-          modelRequested: job.modelRequested,
-          modelResolved: job.modelResolved,
-          modelReason: job.modelReason,
-          createdAt: job.createdAt,
-        },
-        null,
-        2,
-      ),
+      content: JSON.stringify(turnMeta, null, 2),
     },
   ]);
 }
 
 /** Copy prior job files into a new job workspace (follow-ups). */
 export async function copyWorkspaceFromJob(
-  from: Pick<CodingJob, "accountId" | "id">,
-  to: Pick<CodingJob, "accountId" | "id">,
+  from: WorkspaceJob,
+  to: WorkspaceJob,
 ): Promise<number> {
   const listed = await listWorkspaceFiles(from);
   const files: ExtractedFile[] = [];
@@ -132,7 +170,7 @@ export async function copyWorkspaceFromJob(
 }
 
 export async function writeWorkspaceFiles(
-  job: Pick<CodingJob, "accountId" | "id">,
+  job: WorkspaceJob,
   files: ExtractedFile[],
 ): Promise<WorkspaceFileInfo[]> {
   const written: WorkspaceFileInfo[] = [];
@@ -205,7 +243,7 @@ export async function materializeWorkspaceFromResult(
 }
 
 export async function listWorkspaceFiles(
-  job: Pick<CodingJob, "accountId" | "id">,
+  job: WorkspaceJob,
 ): Promise<WorkspaceFileInfo[]> {
   if (s3 && WORKSPACE_S3_BUCKET) {
     const prefix = `${workspacePrefix(job)}/`;
@@ -260,7 +298,7 @@ async function walkLocal(
 }
 
 export async function readWorkspaceFile(
-  job: Pick<CodingJob, "accountId" | "id">,
+  job: WorkspaceJob,
   relPath: string,
 ): Promise<string | null> {
   const rel = normalizePath(relPath);
@@ -292,7 +330,7 @@ export async function readWorkspaceFile(
 }
 
 export async function buildWorkspaceZip(
-  job: Pick<CodingJob, "accountId" | "id">,
+  job: WorkspaceJob,
 ): Promise<Buffer> {
   const files = await listWorkspaceFiles(job);
   const zip = new JSZip();
@@ -308,7 +346,7 @@ export async function buildWorkspaceZip(
 }
 
 export async function clearWorkspace(
-  job: Pick<CodingJob, "accountId" | "id">,
+  job: WorkspaceJob,
 ): Promise<void> {
   if (s3 && WORKSPACE_S3_BUCKET) {
     const files = await listWorkspaceFiles(job);

@@ -12,6 +12,7 @@ async function main() {
     id: "11111111-2222-3333-4444-555555555555",
     accountId: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
     prompt: "Build a hello world CLI",
+    projectId: null,
     repoHint: null,
     parentJobId: null,
     context: null,

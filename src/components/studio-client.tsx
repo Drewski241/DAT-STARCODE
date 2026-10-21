@@ -18,8 +18,16 @@ type Account = {
   credits: number;
 };
 
+type Project = {
+  id: string;
+  title: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
 type Job = {
   id: string;
+  projectId?: string | null;
   prompt: string;
   repoHint: string | null;
   modelRequested?: string;
@@ -40,14 +48,16 @@ type WorkspaceFile = { path: string; size: number };
 export function StudioClient() {
   const router = useRouter();
   const [account, setAccount] = useState<Account | null>(null);
+  const [projects, setProjects] = useState<Project[]>([]);
+  const [projectId, setProjectId] = useState<string | null>(null);
   const [jobs, setJobs] = useState<Job[]>([]);
   const [prompt, setPrompt] = useState(
-    "Add a typed CLI flag --dry-run that prints the planned agent steps without executing them.",
+    "Build a small playable browser game I can open from the workspace zip.",
   );
   const [repoHint, setRepoHint] = useState("");
-  const [continueFromSelected, setContinueFromSelected] = useState(true);
   const [modelId, setModelId] = useState(DEFAULT_MODEL_ID);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [newProjectTitle, setNewProjectTitle] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [authed, setAuthed] = useState<boolean | null>(null);
@@ -63,8 +73,11 @@ export function StudioClient() {
     // is being claimed/written.
     let res: Response | null = null;
     let data: { account?: Account; jobs?: Job[]; error?: string } = {};
+    const jobsUrl = projectId
+      ? `/api/jobs?projectId=${encodeURIComponent(projectId)}`
+      : "/api/jobs";
     for (let i = 0; i < 4; i++) {
-      res = await fetch("/api/jobs", { credentials: "same-origin" });
+      res = await fetch(jobsUrl, { credentials: "same-origin" });
       data = await res.json();
       if (res.status !== 401) break;
       await new Promise((r) => window.setTimeout(r, 250));
@@ -90,7 +103,16 @@ export function StudioClient() {
       setJobs(data.jobs ?? []);
       if (!selectedId && data.jobs?.[0]) setSelectedId(data.jobs[0].id);
     }
-  }, [selectedId, router]);
+
+    const pref = await fetch("/api/projects", { credentials: "same-origin" });
+    if (pref.ok) {
+      const pdata = await pref.json();
+      setProjects(pdata.projects ?? []);
+      if (!projectId && pdata.projects?.[0]) {
+        setProjectId(pdata.projects[0].id);
+      }
+    }
+  }, [selectedId, router, projectId]);
 
   useEffect(() => {
     void refresh();
@@ -136,10 +158,54 @@ export function StudioClient() {
     setPreviewContent(data.content);
   }
 
+  async function createProject() {
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/projects", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title: newProjectTitle.trim() || undefined,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Could not create project");
+      setNewProjectTitle("");
+      setProjectId(data.project.id);
+      setSelectedId(null);
+      setJobs([]);
+      await refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Create project failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function submitJob() {
     setBusy(true);
     setError(null);
     try {
+      let activeProjectId = projectId;
+      if (!activeProjectId) {
+        const created = await fetch("/api/projects", {
+          method: "POST",
+          credentials: "same-origin",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            title: prompt.trim().slice(0, 48) || "New project",
+          }),
+        });
+        const pdata = await created.json();
+        if (!created.ok) {
+          throw new Error(pdata.error ?? "Could not create project");
+        }
+        activeProjectId = pdata.project.id as string;
+        setProjectId(activeProjectId);
+      }
+
       const res = await fetch("/api/jobs", {
         method: "POST",
         credentials: "same-origin",
@@ -148,11 +214,7 @@ export function StudioClient() {
           prompt,
           repoHint,
           model: modelId,
-          continueFromJobId: (() => {
-            if (!continueFromSelected || !selectedId) return null;
-            const parent = jobs.find((j) => j.id === selectedId);
-            return parent?.status === "completed" ? parent.id : null;
-          })(),
+          projectId: activeProjectId,
         }),
       });
       const data = await res.json();
@@ -160,6 +222,7 @@ export function StudioClient() {
       setAccount(data.account);
       setSelectedId(data.job.id);
       setPanel("workspace");
+      setPrompt("");
       // Optional demo fallback — only when explicitly enabled.
       if (process.env.NEXT_PUBLIC_USE_INLINE_WORKER === "1") {
         void fetch("/api/worker/inline", { method: "POST" });
@@ -207,13 +270,54 @@ export function StudioClient() {
               Coding studio
             </p>
             <h1 className="mt-2 font-display text-4xl tracking-tight md:text-5xl">
-              Dispatch a job
+              Project agent
             </h1>
             <p className="mt-3 text-sm leading-relaxed text-steel-300">
-              Describe the change you want. Each job gets a working directory
-              you can browse and download. Cost: {CREDITS_PER_JOB} credits —
-              buy more by burning DAT.
+              Work in a persistent project. Each message is a turn — the agent
+              can list, read, edit, and run commands in the same workspace.
+              Cost: {CREDITS_PER_JOB} credits per turn.
             </p>
+
+            <label className="mt-8 block font-mono text-[11px] uppercase tracking-widest text-steel-400">
+              Project
+            </label>
+            <div className="mt-2 flex flex-wrap gap-2">
+              {projects.map((p) => (
+                <button
+                  key={p.id}
+                  type="button"
+                  onClick={() => {
+                    setProjectId(p.id);
+                    setSelectedId(null);
+                  }}
+                  className={cn(
+                    "rounded-none border px-3 py-2 font-mono text-[11px] uppercase tracking-widest transition",
+                    projectId === p.id
+                      ? "border-copper-400 bg-copper-900/50 text-copper-100"
+                      : "border-copper-800/60 text-steel-400 hover:border-copper-600 hover:text-copper-200",
+                  )}
+                >
+                  {p.title.slice(0, 28)}
+                </button>
+              ))}
+            </div>
+            <div className="mt-3 flex flex-wrap gap-2">
+              <Input
+                value={newProjectTitle}
+                onChange={(e) => setNewProjectTitle(e.target.value)}
+                placeholder="New project name"
+                className="max-w-xs rounded-none border-copper-800/50 bg-ink-900/80 font-mono text-sm"
+              />
+              <Button
+                type="button"
+                variant="outline"
+                disabled={busy}
+                onClick={() => void createProject()}
+                className="rounded-none border-copper-700 font-mono text-xs uppercase tracking-widest text-copper-100"
+              >
+                New project
+              </Button>
+            </div>
 
             <label className="mt-8 block font-mono text-[11px] uppercase tracking-widest text-steel-400">
               Model
@@ -261,18 +365,10 @@ export function StudioClient() {
               className="mt-2 rounded-none border-copper-800/50 bg-ink-900/80 font-mono text-sm"
             />
 
-            <label className="mt-5 flex cursor-pointer items-start gap-2 font-mono text-[11px] text-steel-400">
-              <input
-                type="checkbox"
-                className="mt-0.5"
-                checked={continueFromSelected}
-                onChange={(e) => setContinueFromSelected(e.target.checked)}
-              />
-              <span>
-                Continue from selected job (pass prior prompt, result, and files
-                so follow-ups like “how do I play?” know the game you just built)
-              </span>
-            </label>
+            <p className="mt-4 font-mono text-[11px] text-steel-500">
+              Turns in this project share one workspace. Ask follow-ups like
+              “how do I play?” or “add a score” without starting over.
+            </p>
 
             <div className="mt-6 flex flex-wrap items-center gap-3">
               <Button
@@ -281,7 +377,7 @@ export function StudioClient() {
                 disabled={busy}
                 className="rounded-none bg-copper-500 font-mono text-xs uppercase tracking-widest text-ink-950 hover:bg-copper-400"
               >
-                {busy ? "Queuing…" : `Run · ${CREDITS_PER_JOB} cr`}
+                {busy ? "Queuing…" : `Send turn · ${CREDITS_PER_JOB} cr`}
               </Button>
               <Link
                 href="/#pay"

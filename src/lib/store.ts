@@ -11,6 +11,7 @@ import type {
   AccountSource,
   CodingJob,
   PaymentIntent,
+  Project,
   StoreSnapshot,
 } from "@/lib/types";
 import { CREDITS_PER_JOB, DAT_ASSET_ID } from "@/lib/config";
@@ -55,6 +56,7 @@ const emptyStore = (): StoreSnapshot => ({
   accounts: [],
   payments: [],
   jobs: [],
+  projects: [],
 });
 
 let writeChain: Promise<void> = Promise.resolve();
@@ -479,14 +481,96 @@ export async function confirmPayment(input: {
 }
 
 function normalizeJob(job: CodingJob): CodingJob {
+  const projectId = job.projectId ?? null;
+  const workspaceId =
+    job.workspaceId ??
+    (projectId
+      ? `${job.accountId}/projects/${projectId}`
+      : `${job.accountId}/${job.id}`);
   return {
     ...job,
+    projectId,
     parentJobId: job.parentJobId ?? null,
     context: job.context ?? null,
-    workspaceId: job.workspaceId ?? `${job.accountId}/${job.id}`,
+    workspaceId,
     workspaceFileCount:
       typeof job.workspaceFileCount === "number" ? job.workspaceFileCount : 0,
   };
+}
+
+function normalizeProject(p: Project): Project {
+  return { ...p, title: p.title || "Untitled project" };
+}
+
+export async function listProjects(accountId: string) {
+  const store = await readStore();
+  const projects = store.projects ?? [];
+  return projects
+    .filter((p) => p.accountId === accountId)
+    .map(normalizeProject)
+    .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+}
+
+export async function getProject(projectId: string) {
+  const store = await readStore();
+  const found = (store.projects ?? []).find((p) => p.id === projectId) ?? null;
+  return found ? normalizeProject(found) : null;
+}
+
+export async function createProject(input: {
+  accountId: string;
+  title?: string | null;
+  accountSeed?: Account | null;
+}) {
+  return mutate((store) => {
+    if (!store.projects) store.projects = [];
+    ensureAccount(
+      store,
+      input.accountSeed ?? {
+        id: input.accountId,
+        username: null,
+        email: null,
+        passwordHash: null,
+        pokerPlayerId: null,
+        source: "local",
+        walletAddress: null,
+        credits: 0,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      },
+    );
+    const now = new Date().toISOString();
+    const title =
+      input.title?.trim() ||
+      `Project ${now.slice(0, 10)} ${now.slice(11, 16)}`;
+    const project: Project = {
+      id: randomUUID(),
+      accountId: input.accountId,
+      title,
+      createdAt: now,
+      updatedAt: now,
+    };
+    store.projects.push(project);
+    return normalizeProject(project);
+  });
+}
+
+export async function touchProject(projectId: string) {
+  return mutate((store) => {
+    if (!store.projects) store.projects = [];
+    const project = store.projects.find((p) => p.id === projectId);
+    if (!project) return null;
+    project.updatedAt = new Date().toISOString();
+    return normalizeProject(project);
+  });
+}
+
+export async function listJobsForProject(projectId: string) {
+  const store = await readStore();
+  return store.jobs
+    .filter((j) => j.projectId === projectId)
+    .map(normalizeJob)
+    .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
 }
 
 export async function listJobs(accountId: string) {
@@ -533,6 +617,7 @@ export async function enqueueJob(input: {
   accountId: string;
   prompt: string;
   repoHint?: string | null;
+  projectId?: string | null;
   parentJobId?: string | null;
   context?: string | null;
   modelRequested?: string | null;
@@ -552,13 +637,26 @@ export async function enqueueJob(input: {
         `Need ${CREDITS_PER_JOB} credits; balance is ${account.credits}`,
       );
     }
+    const projectId = input.projectId?.trim() || null;
+    if (projectId) {
+      if (!store.projects) store.projects = [];
+      const project = store.projects.find((p) => p.id === projectId);
+      if (!project || project.accountId !== input.accountId) {
+        throw new Error("Project not found");
+      }
+      project.updatedAt = new Date().toISOString();
+    }
     const now = new Date().toISOString();
     account.credits -= CREDITS_PER_JOB;
     account.updatedAt = now;
     const id = randomUUID();
+    const workspaceId = projectId
+      ? `${input.accountId}/projects/${projectId}`
+      : `${input.accountId}/${id}`;
     const job: CodingJob = {
       id,
       accountId: input.accountId,
+      projectId,
       prompt: input.prompt.trim(),
       repoHint: input.repoHint?.trim() || null,
       parentJobId: input.parentJobId?.trim() || null,
@@ -571,7 +669,7 @@ export async function enqueueJob(input: {
       result: null,
       error: null,
       workerId: null,
-      workspaceId: `${input.accountId}/${id}`,
+      workspaceId,
       workspaceFileCount: 0,
       createdAt: now,
       updatedAt: now,

@@ -57,7 +57,7 @@ Open [http://localhost:43127](http://localhost:43127).
 
 1. **Sign in** at `/account` — DAT username / DAT password (shared DAT account), or create a new DAT STARCODER account. Password reset uses the shared DAT email reset flow.
 2. **Buy credits (live Sage burn)** — set `NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID`, Connect Sage, then Burn DAT. Sage sends DAT to the Chia burn address; credits are granted after you approve the send.
-3. **Studio** — pick a model (**Auto**, Coder 7B/14B, Qwen 7B, Llama 3.1 8B) and enqueue a job.
+3. **Studio** — create a **project**, pick a model, and send turns. Turns share one workspace; the worker runs a tool-using agent loop (list/read/write/run).
 4. **Live worker** (GPU box):
 
 ```bash

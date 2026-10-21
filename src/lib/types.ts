@@ -40,9 +40,19 @@ export interface PaymentIntent {
   confirmedAt: string | null;
 }
 
+export interface Project {
+  id: string;
+  accountId: string;
+  title: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface CodingJob {
   id: string;
   accountId: string;
+  /** Persistent project this turn belongs to (shared workspace). */
+  projectId: string | null;
   prompt: string;
   repoHint: string | null;
   /** Prior job this continues from (follow-up prompts). */
@@ -57,7 +67,7 @@ export interface CodingJob {
   result: string | null;
   error: string | null;
   workerId: string | null;
-  /** Relative workspace key: `{accountId}/{jobId}` */
+  /** Relative workspace key under account: `projects/{id}` or `{jobId}` */
   workspaceId: string | null;
   workspaceFileCount: number;
   createdAt: string;
@@ -69,4 +79,5 @@ export interface StoreSnapshot {
   accounts: Account[];
   payments: PaymentIntent[];
   jobs: CodingJob[];
+  projects: Project[];
 }

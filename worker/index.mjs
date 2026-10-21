@@ -9,7 +9,10 @@
  *   OLLAMA_URL               http://127.0.0.1:11434
  *   OLLAMA_MODEL             fallback if a job has no modelResolved
  *   POLL_MS                  default 4000
+ *   AGENT_MAX_STEPS          default 12
  */
+
+import { runAgentJob } from "./agent.mjs";
 
 const API_BASE = (
   process.env.DAT_STARCODER_API_BASE ||
@@ -42,13 +45,34 @@ async function claim() {
   return data.job;
 }
 
-async function complete(job, { result, error }) {
+async function workspaceAction(job, action, files) {
+  const res = await fetch(`${API_BASE}/api/worker/workspace`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-worker-key": WORKER_KEY,
+    },
+    body: JSON.stringify({
+      jobId: job.id,
+      workerId: WORKER_ID,
+      action,
+      files,
+    }),
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`workspace ${action} ${res.status}: ${text}`);
+  }
+  return res.json();
+}
+
+async function complete(job, { result, error, files }) {
   const payload = {
     jobId: job.id,
     workerId: WORKER_ID,
     result,
     error,
-    // Helps the API recreate the row if store.json lost a concurrent write.
+    files,
     snapshot: job,
   };
   let lastErr;
@@ -70,114 +94,8 @@ async function complete(job, { result, error }) {
   throw lastErr;
 }
 
-const HOW_TO_RUN_RULES = [
-  "Always include a section titled exactly: ## How to run / play",
-  "Write it for a non-technical user. Numbered steps only. Do not stop at \"download the zip\".",
-  "Cover, in order:",
-  "1) In DAT STARCODER Studio, open the job Workspace tab and click Download zip (or say where the files already are).",
-  "2) Unzip the file on their computer (Downloads is fine).",
-  "3) Exactly which file to open or which command to run (e.g. double-click index.html, or open Terminal in that folder and run a command).",
-  "4) If the project needs a local server, give the exact command for Mac/Linux and for Windows when relevant.",
-  "5) How to play / use it: controls, goal, win/lose, and what they should see first.",
-  "6) Common problems (blank page, wrong folder, blocked file) with one-line fixes.",
-  "Never say only \"download the zip\" without the steps after download.",
-];
-
-function systemPromptFor(job, model) {
-  const coding = /coder/i.test(model);
-  const prior = job.context
-    ? [
-        "",
-        "The user is continuing from a prior job. Use this context — they are",
-        "referring to that project/game/code unless they clearly change topics.",
-        "If they ask how to play/run/use it, walk them through post-download steps",
-        "using the prior files (do not invent a different project).",
-        "",
-        job.context,
-        "",
-      ]
-    : [];
-  if (coding) {
-    return [
-      "You are DAT STARCODER, a careful coding agent.",
-      "Return a short plan, then the full file contents customers can download.",
-      "For every file you create or change, use this exact shape:",
-      "",
-      "### File: path/to/file.ext",
-      "```",
-      "// full file contents",
-      "```",
-      "",
-      "Prefer real relative paths (src/..., lib/..., tests/...). Do not use placeholders.",
-      ...HOW_TO_RUN_RULES,
-      job.repoHint ? `Repo/path hint: ${job.repoHint}` : "",
-      ...prior,
-      "User request:",
-      job.prompt,
-    ]
-      .filter(Boolean)
-      .join("\n");
-  }
-  return [
-    "You are DAT STARCODER, a helpful assistant.",
-    "Answer clearly and accurately. Use markdown when useful.",
-    "If you produce code the user should keep, emit each file as:",
-    "### File: path/to/file.ext",
-    "followed by a fenced code block with the full contents.",
-    ...HOW_TO_RUN_RULES,
-    ...prior,
-    "User request:",
-    job.prompt,
-  ].join("\n");
-}
-
-async function runWithOllama(job) {
-  const model = job.modelResolved || OLLAMA_MODEL;
-  const prompt = systemPromptFor(job, model);
-
-  try {
-    const res = await fetch(`${OLLAMA_URL}/api/generate`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        model,
-        prompt,
-        stream: false,
-      }),
-    });
-    if (!res.ok) {
-      const body = await res.text();
-      throw new Error(`Ollama ${res.status}: ${body.slice(0, 200)}`);
-    }
-    const data = await res.json();
-    const header = [
-      `Model: ${job.modelRequested || "auto"} → ${model}`,
-      job.modelReason ? `Reason: ${job.modelReason}` : "",
-      "",
-    ]
-      .filter(Boolean)
-      .join("\n");
-    return `${header}${data.response || "(empty Ollama response)"}`;
-  } catch (err) {
-    const reason = err instanceof Error ? err.message : String(err);
-    return [
-      `# Offline fallback (Ollama unreachable: ${reason})`,
-      "",
-      `Model target: ${model}`,
-      "",
-      "## Request",
-      job.prompt,
-      "",
-      "## Suggested next step",
-      `1. ollama pull ${model}`,
-      "2. Confirm Ollama is running on OLLAMA_URL.",
-      "3. Restart this worker.",
-    ].join("\n");
-  }
-}
-
 async function loop() {
-  console.log(`[dat-starcoder-worker] ${WORKER_ID} → ${API_BASE}`);
+  console.log(`[dat-starcoder-worker] ${WORKER_ID} → ${API_BASE} (agent loop)`);
   for (;;) {
     try {
       const job = await claim();
@@ -187,11 +105,23 @@ async function loop() {
       }
       const model = job.modelResolved || OLLAMA_MODEL;
       console.log(
-        `[dat-starcoder-worker] claimed ${job.id} model=${model}`,
+        `[dat-starcoder-worker] claimed ${job.id} model=${model}` +
+          (job.projectId ? ` project=${job.projectId.slice(0, 8)}` : ""),
       );
-      const result = await runWithOllama(job);
-      await complete(job, { result });
-      console.log(`[dat-starcoder-worker] completed ${job.id}`);
+
+      const { result, files } = await runAgentJob({
+        job,
+        ollamaUrl: OLLAMA_URL,
+        model,
+        pullWorkspace: (j) => workspaceAction(j, "pull"),
+        pushWorkspace: (j, f) => workspaceAction(j, "push", f),
+        log: console.log,
+      });
+
+      await complete(job, { result, files });
+      console.log(
+        `[dat-starcoder-worker] completed ${job.id} files=${files.length}`,
+      );
     } catch (err) {
       console.error("[dat-starcoder-worker]", err);
       await sleep(POLL_MS);

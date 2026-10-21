@@ -3,17 +3,28 @@ import { toPublicAccount } from "@/lib/account-public";
 import { buildContinueContext } from "@/lib/job-context";
 import { resolveModel } from "@/lib/models";
 import { requireRegisteredAccount } from "@/lib/require-auth";
-import { enqueueJob, listJobs, setJobWorkspaceFileCount } from "@/lib/store";
 import {
-  copyWorkspaceFromJob,
-  initWorkspace,
-  listWorkspaceFiles,
-} from "@/lib/workspace";
+  getProject,
+  enqueueJob,
+  listJobs,
+  listJobsForProject,
+  setJobWorkspaceFileCount,
+} from "@/lib/store";
+import { initWorkspace, listWorkspaceFiles } from "@/lib/workspace";
 
-export async function GET() {
+export async function GET(req: NextRequest) {
   const auth = await requireRegisteredAccount();
   if ("error" in auth) return auth.error;
-  const jobs = await listJobs(auth.account.id);
+  const projectId = req.nextUrl.searchParams.get("projectId");
+  const jobs = projectId
+    ? await listJobsForProject(projectId)
+    : await listJobs(auth.account.id);
+  if (projectId) {
+    const project = await getProject(projectId);
+    if (!project || project.accountId !== auth.account.id) {
+      return NextResponse.json({ error: "Project not found" }, { status: 404 });
+    }
+  }
   return NextResponse.json({
     account: toPublicAccount(auth.account),
     jobs,
@@ -28,6 +39,7 @@ export async function POST(req: NextRequest) {
     prompt?: string;
     repoHint?: string;
     model?: string;
+    projectId?: string | null;
     continueFromJobId?: string | null;
   };
 
@@ -38,18 +50,39 @@ export async function POST(req: NextRequest) {
     );
   }
 
+  let projectId = body.projectId?.trim() || null;
+  if (projectId) {
+    const project = await getProject(projectId);
+    if (!project || project.accountId !== auth.account.id) {
+      return NextResponse.json({ error: "Project not found" }, { status: 404 });
+    }
+  }
+
   const resolved = resolveModel(body.model, body.prompt);
 
   let parentJobId: string | null = null;
   let context: string | null = null;
-  if (body.continueFromJobId?.trim()) {
-    const built = await buildContinueContext(
-      body.continueFromJobId.trim(),
-      auth.account.id,
-    );
+
+  // Prefer explicit continue; otherwise last completed turn in the project.
+  const continueId = body.continueFromJobId?.trim() || null;
+  if (continueId) {
+    const built = await buildContinueContext(continueId, auth.account.id);
     if (built) {
       parentJobId = built.parent.id;
       context = built.context;
+      if (!projectId && built.parent.projectId) {
+        projectId = built.parent.projectId;
+      }
+    }
+  } else if (projectId) {
+    const prior = await listJobsForProject(projectId);
+    const lastDone = [...prior].reverse().find((j) => j.status === "completed");
+    if (lastDone) {
+      const built = await buildContinueContext(lastDone.id, auth.account.id);
+      if (built) {
+        parentJobId = built.parent.id;
+        context = built.context;
+      }
     }
   }
 
@@ -58,6 +91,7 @@ export async function POST(req: NextRequest) {
       accountId: auth.account.id,
       prompt: body.prompt,
       repoHint: body.repoHint,
+      projectId,
       parentJobId,
       context,
       modelRequested: resolved.requested,
@@ -67,12 +101,6 @@ export async function POST(req: NextRequest) {
     });
 
     await initWorkspace(result.job);
-    if (parentJobId) {
-      const parent = await buildContinueContext(parentJobId, auth.account.id);
-      if (parent) {
-        await copyWorkspaceFromJob(parent.parent, result.job);
-      }
-    }
     const seeded = await listWorkspaceFiles(result.job);
     const job =
       seeded.length > 0

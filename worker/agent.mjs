@@ -1,0 +1,324 @@
+/**
+ * Tool-using agent loop for DAT STARCODER worker.
+ * Operates on a local workspace synced from/to the API.
+ */
+import { promises as fs } from "fs";
+import path from "path";
+import { spawn } from "child_process";
+import os from "os";
+
+const MAX_STEPS = Number(process.env.AGENT_MAX_STEPS || 12);
+const RUN_TIMEOUT_MS = Number(process.env.AGENT_RUN_TIMEOUT_MS || 20000);
+const MAX_FILE_BYTES = 200_000;
+
+const HOW_TO_RUN = `
+Always end your final answer with a section titled exactly: ## How to run / play
+Write numbered steps for a non-technical user. Include: download zip from Studio
+Workspace (if needed), unzip, which file to open or command to run, controls/usage,
+and common fixes. Never stop at only "download the zip".
+`.trim();
+
+function safeRel(p) {
+  const n = String(p || "")
+    .replace(/\\/g, "/")
+    .replace(/^\/+/, "")
+    .replace(/\/+/g, "/");
+  if (!n || n.includes("..") || n.startsWith("/")) return null;
+  if (!/^[A-Za-z0-9_./@+-]+$/.test(n)) return null;
+  return n;
+}
+
+async function listTree(root, dir = root, out = []) {
+  const entries = await fs.readdir(dir, { withFileTypes: true });
+  for (const e of entries) {
+    const full = path.join(dir, e.name);
+    if (e.isDirectory()) {
+      if (e.name === "node_modules" || e.name === ".git") continue;
+      await listTree(root, full, out);
+    } else if (e.isFile()) {
+      out.push(path.relative(root, full).replace(/\\/g, "/"));
+    }
+  }
+  return out.sort();
+}
+
+async function toolList(root) {
+  const files = await listTree(root);
+  return files.length ? files.join("\n") : "(empty workspace)";
+}
+
+async function toolRead(root, rel) {
+  const safe = safeRel(rel);
+  if (!safe) return "ERROR: invalid path";
+  const full = path.join(root, safe);
+  try {
+    const buf = await fs.readFile(full);
+    if (buf.length > MAX_FILE_BYTES) {
+      return `ERROR: file too large (${buf.length} bytes)`;
+    }
+    return buf.toString("utf8");
+  } catch {
+    return `ERROR: cannot read ${safe}`;
+  }
+}
+
+async function toolWrite(root, rel, content) {
+  const safe = safeRel(rel);
+  if (!safe) return "ERROR: invalid path";
+  const full = path.join(root, safe);
+  await fs.mkdir(path.dirname(full), { recursive: true });
+  const text = String(content ?? "");
+  if (Buffer.byteLength(text, "utf8") > MAX_FILE_BYTES) {
+    return "ERROR: content too large";
+  }
+  await fs.writeFile(full, text, "utf8");
+  return `OK wrote ${safe} (${Buffer.byteLength(text, "utf8")} bytes)`;
+}
+
+function runCommand(root, command) {
+  return new Promise((resolve) => {
+    const child = spawn(command, {
+      cwd: root,
+      shell: true,
+      env: {
+        ...process.env,
+        PATH: process.env.PATH,
+        HOME: process.env.HOME,
+      },
+    });
+    let stdout = "";
+    let stderr = "";
+    const timer = setTimeout(() => {
+      child.kill("SIGKILL");
+      resolve(
+        `ERROR: timed out after ${RUN_TIMEOUT_MS}ms\n${stdout}\n${stderr}`.slice(
+          0,
+          8000,
+        ),
+      );
+    }, RUN_TIMEOUT_MS);
+    child.stdout.on("data", (d) => {
+      stdout += d.toString();
+    });
+    child.stderr.on("data", (d) => {
+      stderr += d.toString();
+    });
+    child.on("close", (code) => {
+      clearTimeout(timer);
+      resolve(
+        `exit ${code}\n${stdout}${stderr ? `\nSTDERR:\n${stderr}` : ""}`.slice(
+          0,
+          8000,
+        ),
+      );
+    });
+  });
+}
+
+function parseAction(text) {
+  const raw = String(text || "").trim();
+  // Prefer fenced json
+  const fence = raw.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  const candidate = fence ? fence[1].trim() : raw;
+  // Find first JSON object
+  const start = candidate.indexOf("{");
+  const end = candidate.lastIndexOf("}");
+  if (start >= 0 && end > start) {
+    try {
+      return JSON.parse(candidate.slice(start, end + 1));
+    } catch {
+      /* fall through */
+    }
+  }
+  // DONE: message
+  const done = raw.match(/^DONE:\s*([\s\S]+)/i);
+  if (done) return { done: true, message: done[1].trim() };
+  return null;
+}
+
+function agentSystem(job) {
+  return [
+    "You are DAT STARCODER, a robust coding agent with tools.",
+    "You work inside a real project workspace on disk.",
+    "On every turn respond with ONLY one JSON object (optionally in a ```json fence):",
+    "",
+    '1) Call a tool: {"thought":"...","tool":"list_files"|"read_file"|"write_file"|"run","args":{...}}',
+    '   - list_files args: {}',
+    '   - read_file args: {"path":"relative/path"}',
+    '   - write_file args: {"path":"relative/path","content":"full file contents"}',
+    '   - run args: {"command":"shell command in the workspace"}',
+    "",
+    '2) Finish: {"done":true,"message":"markdown answer for the user"}',
+    "",
+    "Rules:",
+    "- Explore with list_files/read_file before editing when files may already exist.",
+    "- Prefer small, working changes. Write complete files when creating them.",
+    "- Use run to install/build/test when helpful (keep commands short).",
+    "- For games/apps, make something runnable (often index.html).",
+    HOW_TO_RUN,
+    job.projectId ? `Project id: ${job.projectId}` : "",
+    job.context ? `\nPrior context:\n${job.context}\n` : "",
+    "",
+    "User request:",
+    job.prompt,
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+async function ollamaChat(ollamaUrl, model, messages) {
+  const res = await fetch(`${ollamaUrl}/api/chat`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      model,
+      messages,
+      stream: false,
+      options: { temperature: 0.2 },
+    }),
+  });
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`Ollama chat ${res.status}: ${body.slice(0, 200)}`);
+  }
+  const data = await res.json();
+  return data.message?.content || "";
+}
+
+async function collectLocalFiles(root) {
+  const paths = await listTree(root);
+  const files = [];
+  for (const rel of paths) {
+    if (rel.startsWith("turns/")) continue;
+    try {
+      const content = await fs.readFile(path.join(root, rel), "utf8");
+      if (Buffer.byteLength(content, "utf8") > MAX_FILE_BYTES) continue;
+      files.push({ path: rel, content });
+    } catch {
+      /* skip */
+    }
+  }
+  return files;
+}
+
+/**
+ * @returns {{ result: string, files: {path:string,content:string}[] }}
+ */
+export async function runAgentJob({
+  job,
+  ollamaUrl,
+  model,
+  pullWorkspace,
+  pushWorkspace,
+  log = console.log,
+}) {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "starcoder-"));
+  try {
+    const pulled = await pullWorkspace(job);
+    for (const f of pulled.files || []) {
+      const safe = safeRel(f.path);
+      if (!safe) continue;
+      const full = path.join(root, safe);
+      await fs.mkdir(path.dirname(full), { recursive: true });
+      await fs.writeFile(full, f.content ?? "", "utf8");
+    }
+
+    const messages = [{ role: "system", content: agentSystem(job) }];
+    let finalMessage = "";
+
+    for (let step = 0; step < MAX_STEPS; step++) {
+      log(`[agent] step ${step + 1}/${MAX_STEPS} job=${job.id.slice(0, 8)}`);
+      let content;
+      try {
+        content = await ollamaChat(ollamaUrl, model, messages);
+      } catch (err) {
+        finalMessage = [
+          `# Agent error`,
+          "",
+          err instanceof Error ? err.message : String(err),
+          "",
+          "## How to run / play",
+          "1. Open Studio → Workspace → Download zip if files exist.",
+          "2. Retry the job after confirming Ollama is running.",
+        ].join("\n");
+        break;
+      }
+
+      messages.push({ role: "assistant", content });
+      const action = parseAction(content);
+
+      if (!action) {
+        messages.push({
+          role: "user",
+          content:
+            'Could not parse JSON. Reply with only one JSON object, e.g. {"tool":"list_files","args":{}} or {"done":true,"message":"..."}',
+        });
+        continue;
+      }
+
+      if (action.done) {
+        finalMessage = String(action.message || content);
+        break;
+      }
+
+      const tool = action.tool;
+      const args = action.args || {};
+      let observation = "";
+      if (tool === "list_files") {
+        observation = await toolList(root);
+      } else if (tool === "read_file") {
+        observation = await toolRead(root, args.path);
+      } else if (tool === "write_file") {
+        observation = await toolWrite(root, args.path, args.content);
+      } else if (tool === "run") {
+        observation = await runCommand(root, String(args.command || "true"));
+      } else {
+        observation = `ERROR: unknown tool ${tool}`;
+      }
+
+      messages.push({
+        role: "user",
+        content: `OBSERVATION:\n${observation}`,
+      });
+    }
+
+    if (!finalMessage) {
+      finalMessage = [
+        "# Reached step limit",
+        "",
+        "I made partial progress in the workspace. Download the zip and continue with another prompt.",
+        "",
+        "## How to run / play",
+        "1. Studio → this job → Workspace → Download zip.",
+        "2. Unzip and open the main file (often index.html) or follow README.md.",
+      ].join("\n");
+    }
+
+    if (!/## How to run \/ play/i.test(finalMessage)) {
+      finalMessage += [
+        "",
+        "## How to run / play",
+        "1. In Studio open Workspace → Download zip.",
+        "2. Unzip the folder.",
+        "3. Open index.html (or follow README.md) to run/play.",
+      ].join("\n");
+    }
+
+    const files = await collectLocalFiles(root);
+    await pushWorkspace(job, files);
+
+    const header = [
+      `Model: ${job.modelRequested || "auto"} → ${model}`,
+      job.modelReason ? `Reason: ${job.modelReason}` : "",
+      job.projectId ? `Project: ${job.projectId}` : "",
+      "Mode: tool agent loop",
+      "",
+    ]
+      .filter(Boolean)
+      .join("\n");
+
+    return { result: `${header}${finalMessage}`, files };
+  } finally {
+    await fs.rm(root, { recursive: true, force: true }).catch(() => undefined);
+  }
+}
