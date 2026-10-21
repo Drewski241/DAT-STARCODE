@@ -3,6 +3,7 @@ import path from "path";
 import { randomUUID } from "crypto";
 import {
   GetObjectCommand,
+  ListObjectsV2Command,
   PutObjectCommand,
   S3Client,
 } from "@aws-sdk/client-s3";
@@ -89,6 +90,15 @@ function isOptimisticLockError(err: unknown): boolean {
 
 type StoreRead = { store: StoreSnapshot; etag?: string };
 
+function isAwsHosted() {
+  return Boolean(
+    process.env.AWS_EXECUTION_ENV ||
+      process.env.AWS_REGION ||
+      process.env.AMPLIFY_APP_ID ||
+      process.env.AWS_APP_ID,
+  );
+}
+
 async function readStoreWithMeta(): Promise<StoreRead> {
   if (s3 && STORE_S3_BUCKET) {
     try {
@@ -106,17 +116,18 @@ async function readStoreWithMeta(): Promise<StoreRead> {
       };
     } catch (err) {
       if (isMissingS3Object(err)) return { store: emptyStore() };
-      const name = err instanceof Error ? err.name : "";
-      const msg = err instanceof Error ? err.message : "";
-      if (
-        name === "CredentialsProviderError" ||
-        /could not load credentials|Missing credentials/i.test(msg)
-      ) {
-        // fall through to local file
-      } else if (process.env.AWS_EXECUTION_ENV || process.env.AWS_REGION) {
-        throw err;
-      }
+      // Never fall back to ephemeral local disk when S3 is configured —
+      // that made Amplify claim() see an empty store while the studio
+      // (another instance) still showed queued jobs.
+      throw err;
     }
+  }
+
+  // Local demo only (no STORE/WORKSPACE S3 bucket).
+  if (isAwsHosted()) {
+    throw new Error(
+      "STORE_S3_BUCKET / WORKSPACE_S3_BUCKET is required on Amplify",
+    );
   }
 
   try {
@@ -206,6 +217,51 @@ async function loadJobRecord(jobId: string): Promise<CodingJob | null> {
     return normalizeJob(JSON.parse(raw) as CodingJob);
   } catch {
     return null;
+  }
+}
+
+/** List recent job sidecar IDs (S3 or local) so claim can recover orphans. */
+async function listJobSidecarIds(limit = 80): Promise<string[]> {
+  if (s3 && STORE_S3_BUCKET) {
+    const res = await s3.send(
+      new ListObjectsV2Command({
+        Bucket: STORE_S3_BUCKET,
+        Prefix: "store/jobs/",
+        MaxKeys: Math.min(Math.max(limit * 2, limit), 200),
+      }),
+    );
+    const objs = [...(res.Contents ?? [])].sort((a, b) => {
+      const at = a.LastModified?.getTime() ?? 0;
+      const bt = b.LastModified?.getTime() ?? 0;
+      return bt - at;
+    });
+    const ids: string[] = [];
+    for (const obj of objs) {
+      const key = obj.Key ?? "";
+      const m = /^store\/jobs\/([^/]+)\.json$/.exec(key);
+      if (m) ids.push(m[1]);
+      if (ids.length >= limit) break;
+    }
+    return ids;
+  }
+  try {
+    const dir = path.join(DATA_DIR, "jobs");
+    const names = await fs.readdir(dir);
+    const stats = await Promise.all(
+      names
+        .filter((n) => n.endsWith(".json"))
+        .map(async (n) => {
+          const full = path.join(dir, n);
+          const st = await fs.stat(full);
+          return { id: n.replace(/\.json$/, ""), mtime: st.mtimeMs };
+        }),
+    );
+    return stats
+      .sort((a, b) => b.mtime - a.mtime)
+      .slice(0, limit)
+      .map((s) => s.id);
+  } catch {
+    return [];
   }
 }
 
@@ -592,15 +648,20 @@ export async function listJobs(accountId: string) {
   for (const j of store.jobs) {
     if (j.accountId === accountId) byId.set(j.id, normalizeJob(j));
   }
-  // Merge sidecars, preferring the newer updatedAt (avoid stale queued UI).
-  for (const j of store.jobs) {
-    if (j.accountId !== accountId) continue;
-    const side = await loadJobRecord(j.id);
-    if (side && side.accountId === accountId) {
+  // Merge sidecars (including orphans missing from store.jobs).
+  const sidecarIds = await listJobSidecarIds(60);
+  const ids = new Set<string>([
+    ...[...byId.keys()],
+    ...sidecarIds,
+  ]);
+  await Promise.all(
+    [...ids].map(async (id) => {
+      const side = await loadJobRecord(id);
+      if (!side || side.accountId !== accountId) return;
       const prev = byId.get(side.id);
       byId.set(side.id, prev ? pickNewerJob(prev, side) : side);
-    }
-  }
+    }),
+  );
   return [...byId.values()].sort((a, b) =>
     b.createdAt.localeCompare(a.createdAt),
   );
@@ -698,7 +759,7 @@ export async function enqueueJob(input: {
   return result;
 }
 
-const STALE_CLAIM_MS = Number(process.env.STALE_JOB_CLAIM_MS || 90_000);
+const STALE_CLAIM_MS = Number(process.env.STALE_JOB_CLAIM_MS || 45_000);
 
 function isClaimable(job: CodingJob, nowMs: number): boolean {
   if (job.status === "queued") return true;
@@ -711,33 +772,57 @@ function isClaimable(job: CodingJob, nowMs: number): boolean {
 /**
  * Claim the next job. Prefers `queued`; also reclaims `claimed`/`running`
  * jobs whose updatedAt is older than STALE_JOB_CLAIM_MS (dead worker).
- * Reconciles store.json rows with newer per-job sidecars first so a store
- * race cannot hide a still-queued job from the worker.
+ * Reconciles store.json with per-job sidecars (including orphan sidecars
+ * missing from store.jobs) so Amplify races cannot hide queued work.
  */
 export async function claimNextJob(workerId: string) {
   const snapshot = await readStore();
-  const active = snapshot.jobs.filter(
-    (j) =>
-      j.status === "queued" ||
-      j.status === "claimed" ||
-      j.status === "running",
-  );
+  const knownIds = new Set(snapshot.jobs.map((j) => j.id));
+  const sidecarIds = await listJobSidecarIds();
+  const loadIds = new Set<string>([
+    ...snapshot.jobs
+      .filter(
+        (j) =>
+          j.status === "queued" ||
+          j.status === "claimed" ||
+          j.status === "running",
+      )
+      .map((j) => j.id),
+    ...sidecarIds.filter((id) => !knownIds.has(id)),
+  ]);
+  // Also reload sidecars for every known active-looking row.
+  for (const id of sidecarIds) loadIds.add(id);
+
   const sides = new Map<string, CodingJob>();
   await Promise.all(
-    active.map(async (j) => {
-      const side = await loadJobRecord(j.id);
-      if (side) sides.set(j.id, side);
+    [...loadIds].slice(0, 100).map(async (id) => {
+      const side = await loadJobRecord(id);
+      if (side) sides.set(id, side);
     }),
   );
 
   const job = await mutate((store) => {
     const nowMs = Date.now();
-    for (const row of store.jobs) {
-      const side = sides.get(row.id);
-      if (!side) continue;
-      const newer = pickNewerJob(normalizeJob(row), side);
-      if (newer.updatedAt !== row.updatedAt || newer.status !== row.status) {
-        Object.assign(row, newer);
+    // Rehydrate / refresh from sidecars.
+    for (const side of sides.values()) {
+      if (
+        side.status !== "queued" &&
+        side.status !== "claimed" &&
+        side.status !== "running"
+      ) {
+        continue;
+      }
+      const idx = store.jobs.findIndex((j) => j.id === side.id);
+      if (idx < 0) {
+        store.jobs.push({ ...side });
+        continue;
+      }
+      const newer = pickNewerJob(normalizeJob(store.jobs[idx]), side);
+      if (
+        newer.updatedAt !== store.jobs[idx].updatedAt ||
+        newer.status !== store.jobs[idx].status
+      ) {
+        store.jobs[idx] = { ...newer };
       }
     }
     // Prefer true queued jobs; otherwise reclaim stale claimed/running.
@@ -762,6 +847,59 @@ export async function claimNextJob(workerId: string) {
   });
   if (job) await saveJobRecord(job);
   return job;
+}
+
+/** Worker-facing queue snapshot for diagnosing stuck jobs. */
+export async function getWorkerQueueSnapshot() {
+  const store = await readStore();
+  const nowMs = Date.now();
+  const sidecarIds = await listJobSidecarIds(40);
+  const sides = (
+    await Promise.all(sidecarIds.map((id) => loadJobRecord(id)))
+  ).filter((j): j is CodingJob => Boolean(j));
+
+  const summarize = (j: CodingJob) => {
+    const updated = Date.parse(j.updatedAt || j.createdAt);
+    const ageMs = Number.isFinite(updated) ? nowMs - updated : null;
+    return {
+      id: j.id,
+      status: j.status,
+      workerId: j.workerId,
+      modelResolved: j.modelResolved,
+      updatedAt: j.updatedAt,
+      ageMs,
+      claimable: isClaimable(j, nowMs),
+      prompt: j.prompt.slice(0, 80),
+    };
+  };
+
+  const byStatus: Record<string, number> = {};
+  for (const j of store.jobs) {
+    byStatus[j.status] = (byStatus[j.status] || 0) + 1;
+  }
+
+  return {
+    storeJobCount: store.jobs.length,
+    byStatus,
+    storeBackend: STORE_S3_BUCKET ? "s3" : "local",
+    staleClaimMs: STALE_CLAIM_MS,
+    activeInStore: store.jobs
+      .filter(
+        (j) =>
+          j.status === "queued" ||
+          j.status === "claimed" ||
+          j.status === "running",
+      )
+      .map(summarize),
+    sidecarActive: sides
+      .filter(
+        (j) =>
+          j.status === "queued" ||
+          j.status === "claimed" ||
+          j.status === "running",
+      )
+      .map(summarize),
+  };
 }
 
 export async function markJobRunning(jobId: string, workerId: string) {

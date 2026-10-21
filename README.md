@@ -82,7 +82,7 @@ ollama pull llama3.1:8b
 
 **Auto** routing: coding-like prompts (including “build a … game”) → `qwen2.5-coder:7b`; otherwise → `llama3.1:8b`. Routing is re-evaluated when a job is claimed so queued jobs pick up heuristic fixes.
 
-If a worker dies mid-job, `claimed`/`running` jobs older than `STALE_JOB_CLAIM_MS` (default 90s) are reclaimed by the next worker poll.
+If a worker dies mid-job, `claimed`/`running` jobs older than `STALE_JOB_CLAIM_MS` (default 45s) are reclaimed by the next worker poll. `GET /api/worker/queue` (worker key) dumps store vs sidecar queue state for debugging.
 
 ## DAT + Sage (live burns)
 
@@ -163,6 +163,7 @@ Local demo uses `.data/store.json` and `.data/workspaces/`. Wire Amplify to Dyna
 | `GET /api/jobs/:id/workspace/file?path=` | browser | read one file |
 | `GET /api/jobs/:id/workspace/download` | browser | zip download |
 | `POST /api/worker/claim` | worker | claim next job (`x-worker-key`) |
+| `GET /api/worker/queue` | worker | debug store vs sidecar queue snapshot |
 | `POST /api/worker/complete` | worker | post result (+ materialize files) |
 
 ## Next upgrades
