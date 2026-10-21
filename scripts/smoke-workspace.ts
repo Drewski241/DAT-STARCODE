@@ -13,6 +13,8 @@ async function main() {
     accountId: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
     prompt: "Build a hello world CLI",
     repoHint: null,
+    parentJobId: null,
+    context: null,
     modelRequested: "auto",
     modelResolved: "qwen2.5-coder:7b",
     modelReason: "test",
