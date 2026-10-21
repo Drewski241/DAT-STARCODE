@@ -80,7 +80,9 @@ ollama pull llama3.1:8b
 # ollama pull qwen2.5:7b
 ```
 
-**Auto** routing: coding-like prompts → `qwen2.5-coder:7b`; otherwise → `llama3.1:8b`.
+**Auto** routing: coding-like prompts (including “build a … game”) → `qwen2.5-coder:7b`; otherwise → `llama3.1:8b`. Routing is re-evaluated when a job is claimed so queued jobs pick up heuristic fixes.
+
+If a worker dies mid-job, `claimed`/`running` jobs older than `STALE_JOB_CLAIM_MS` (default 90s) are reclaimed by the next worker poll.
 
 ## DAT + Sage (live burns)
 
@@ -153,7 +155,10 @@ Local demo uses `.data/store.json` and `.data/workspaces/`. Wire Amplify to Dyna
 | `GET /api/session` | browser | create/load credit account |
 | `POST /api/payments/intent` | browser | start DAT pack (burn destination) |
 | `POST /api/payments/confirm` | browser | credit after burn (demo or tx id) |
-| `POST /api/jobs` | browser | enqueue coding job (creates workspace) |
+| `GET/POST /api/projects` | browser | list / create persistent projects |
+| `GET /api/projects/:id` | browser | project + its turns |
+| `POST /api/jobs` | browser | enqueue a turn (`projectId` shares workspace) |
+| `POST /api/worker/workspace` | worker | pull/push workspace files for the agent loop |
 | `GET /api/jobs/:id/workspace` | browser | list workspace files |
 | `GET /api/jobs/:id/workspace/file?path=` | browser | read one file |
 | `GET /api/jobs/:id/workspace/download` | browser | zip download |

@@ -56,7 +56,7 @@ export const DEFAULT_CODING_MODEL = "qwen2.5-coder:7b";
 export const DEFAULT_GENERAL_MODEL = "llama3.1:8b";
 
 const CODING_HINT =
-  /\b(code|coding|function|bug|fix|refactor|implement|typescript|javascript|python|rust|go\b|api|endpoint|class|module|commit|diff|pr\b|pull request|compile|lint|test|unit test|css|html|sql|docker|kubernetes|cli|script|repo|github|stack trace|error:|npm|cargo|pytest)\b/i;
+  /\b(code|coding|function|bug|fix|refactor|implement|typescript|javascript|python|rust|go\b|api|endpoint|class|module|commit|diff|pr\b|pull request|compile|lint|test|unit test|css|html|sql|docker|kubernetes|cli|script|repo|github|stack trace|error:|npm|cargo|pytest|build|game|app|website|page|component|ui|frontend|backend|playable|browser|canvas|sprite|unicorn|bubbles?|jump|platformer|make me|create a|write a)\b/i;
 
 /**
  * Resolve Auto (or an explicit id) to an Ollama model tag.

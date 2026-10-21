@@ -16,6 +16,7 @@ import type {
 } from "@/lib/types";
 import { CREDITS_PER_JOB, DAT_ASSET_ID } from "@/lib/config";
 import { creditsForDat } from "@/lib/economy";
+import { resolveModel } from "@/lib/models";
 import { hashPassword, verifyPassword } from "@/lib/password";
 
 const DATA_DIR =
@@ -565,12 +566,24 @@ export async function touchProject(projectId: string) {
   });
 }
 
+function pickNewerJob(a: CodingJob, b: CodingJob): CodingJob {
+  return a.updatedAt >= b.updatedAt ? a : b;
+}
+
+async function mergeJobWithSidecar(job: CodingJob): Promise<CodingJob> {
+  const side = await loadJobRecord(job.id);
+  if (!side) return normalizeJob(job);
+  return pickNewerJob(normalizeJob(job), side);
+}
+
 export async function listJobsForProject(projectId: string) {
   const store = await readStore();
-  return store.jobs
-    .filter((j) => j.projectId === projectId)
-    .map(normalizeJob)
-    .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+  const jobs = await Promise.all(
+    store.jobs
+      .filter((j) => j.projectId === projectId)
+      .map((j) => mergeJobWithSidecar(j)),
+  );
+  return jobs.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
 }
 
 export async function listJobs(accountId: string) {
@@ -579,11 +592,14 @@ export async function listJobs(accountId: string) {
   for (const j of store.jobs) {
     if (j.accountId === accountId) byId.set(j.id, normalizeJob(j));
   }
-  // Sidecars win when the main store lost a concurrent update.
+  // Merge sidecars, preferring the newer updatedAt (avoid stale queued UI).
   for (const j of store.jobs) {
     if (j.accountId !== accountId) continue;
     const side = await loadJobRecord(j.id);
-    if (side && side.accountId === accountId) byId.set(side.id, side);
+    if (side && side.accountId === accountId) {
+      const prev = byId.get(side.id);
+      byId.set(side.id, prev ? pickNewerJob(prev, side) : side);
+    }
   }
   return [...byId.values()].sort((a, b) =>
     b.createdAt.localeCompare(a.createdAt),
@@ -682,14 +698,66 @@ export async function enqueueJob(input: {
   return result;
 }
 
+const STALE_CLAIM_MS = Number(process.env.STALE_JOB_CLAIM_MS || 90_000);
+
+function isClaimable(job: CodingJob, nowMs: number): boolean {
+  if (job.status === "queued") return true;
+  if (job.status !== "claimed" && job.status !== "running") return false;
+  const updated = Date.parse(job.updatedAt || job.createdAt);
+  if (!Number.isFinite(updated)) return true;
+  return nowMs - updated >= STALE_CLAIM_MS;
+}
+
+/**
+ * Claim the next job. Prefers `queued`; also reclaims `claimed`/`running`
+ * jobs whose updatedAt is older than STALE_JOB_CLAIM_MS (dead worker).
+ * Reconciles store.json rows with newer per-job sidecars first so a store
+ * race cannot hide a still-queued job from the worker.
+ */
 export async function claimNextJob(workerId: string) {
+  const snapshot = await readStore();
+  const active = snapshot.jobs.filter(
+    (j) =>
+      j.status === "queued" ||
+      j.status === "claimed" ||
+      j.status === "running",
+  );
+  const sides = new Map<string, CodingJob>();
+  await Promise.all(
+    active.map(async (j) => {
+      const side = await loadJobRecord(j.id);
+      if (side) sides.set(j.id, side);
+    }),
+  );
+
   const job = await mutate((store) => {
-    const next = store.jobs.find((j) => j.status === "queued");
+    const nowMs = Date.now();
+    for (const row of store.jobs) {
+      const side = sides.get(row.id);
+      if (!side) continue;
+      const newer = pickNewerJob(normalizeJob(row), side);
+      if (newer.updatedAt !== row.updatedAt || newer.status !== row.status) {
+        Object.assign(row, newer);
+      }
+    }
+    // Prefer true queued jobs; otherwise reclaim stale claimed/running.
+    const next =
+      store.jobs.find((j) => j.status === "queued") ??
+      store.jobs.find((j) => isClaimable(j, nowMs));
     if (!next) return null;
     const now = new Date().toISOString();
     next.status = "claimed";
     next.workerId = workerId;
     next.updatedAt = now;
+    next.error = null;
+    // Re-run Auto routing at claim time so queued jobs pick up
+    // improved coding-hint heuristics (e.g. "build a … game").
+    const requested = (next.modelRequested || "auto").trim() || "auto";
+    if (requested === "auto") {
+      const routed = resolveModel("auto", next.prompt);
+      next.modelResolved = routed.resolved;
+      next.modelReason = routed.reason;
+    }
     return next;
   });
   if (job) await saveJobRecord(job);
