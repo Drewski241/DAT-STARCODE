@@ -6,10 +6,10 @@ import { ACCOUNT_COOKIE } from "@/lib/config";
 const SESSION_COOKIE = "dat_starcoder_session";
 
 function secretKey() {
+  // Never fall back to WORKER_API_KEY — rotating the worker key was
+  // invalidating sessions and causing login bounce storms.
   const secret =
-    process.env.AUTH_SECRET ??
-    process.env.WORKER_API_KEY ??
-    "dev-auth-secret-change-me";
+    process.env.AUTH_SECRET?.trim() || "dev-auth-secret-change-me";
   return new TextEncoder().encode(secret);
 }
 

@@ -56,18 +56,25 @@ export function StudioClient() {
   const [panel, setPanel] = useState<"output" | "workspace">("output");
 
   const refresh = useCallback(async () => {
-    const res = await fetch("/api/jobs", { credentials: "same-origin" });
-    const data = await res.json();
-    if (res.status === 401) {
+    // Retry briefly — Amplify/S3 can return a transient 401 right after login.
+    let res: Response | null = null;
+    let data: { account?: Account; jobs?: Job[]; error?: string } = {};
+    for (let i = 0; i < 4; i++) {
+      res = await fetch("/api/jobs", { credentials: "same-origin" });
+      data = await res.json();
+      if (res.status !== 401) break;
+      await new Promise((r) => window.setTimeout(r, 200));
+    }
+    if (!res || res.status === 401) {
       setAuthed(false);
       router.replace("/account");
       return;
     }
     if (res.ok) {
       setAuthed(true);
-      setAccount(data.account);
-      setJobs(data.jobs);
-      if (!selectedId && data.jobs[0]) setSelectedId(data.jobs[0].id);
+      setAccount(data.account ?? null);
+      setJobs(data.jobs ?? []);
+      if (!selectedId && data.jobs?.[0]) setSelectedId(data.jobs[0].id);
     }
   }, [selectedId, router]);
 

@@ -73,7 +73,20 @@ function isMissingS3Object(err: unknown): boolean {
   );
 }
 
-async function readStore(): Promise<StoreSnapshot> {
+function isOptimisticLockError(err: unknown): boolean {
+  if (!err || typeof err !== "object") return false;
+  const e = err as { name?: string; $metadata?: { httpStatusCode?: number } };
+  return (
+    e.name === "PreconditionFailed" ||
+    e.name === "ConditionalRequestConflict" ||
+    e.name === "412" ||
+    e.$metadata?.httpStatusCode === 412
+  );
+}
+
+type StoreRead = { store: StoreSnapshot; etag?: string };
+
+async function readStoreWithMeta(): Promise<StoreRead> {
   if (s3 && STORE_S3_BUCKET) {
     try {
       const res = await s3.send(
@@ -83,18 +96,20 @@ async function readStore(): Promise<StoreSnapshot> {
         }),
       );
       const raw = await res.Body?.transformToString();
-      if (!raw) return emptyStore();
-      return JSON.parse(raw) as StoreSnapshot;
+      if (!raw) return { store: emptyStore(), etag: res.ETag };
+      return {
+        store: JSON.parse(raw) as StoreSnapshot,
+        etag: res.ETag,
+      };
     } catch (err) {
-      if (isMissingS3Object(err)) return emptyStore();
-      // Local demos without AWS creds fall back to the file store.
+      if (isMissingS3Object(err)) return { store: emptyStore() };
       const name = err instanceof Error ? err.name : "";
       const msg = err instanceof Error ? err.message : "";
       if (
         name === "CredentialsProviderError" ||
         /could not load credentials|Missing credentials/i.test(msg)
       ) {
-        // fall through
+        // fall through to local file
       } else if (process.env.AWS_EXECUTION_ENV || process.env.AWS_REGION) {
         throw err;
       }
@@ -103,13 +118,18 @@ async function readStore(): Promise<StoreSnapshot> {
 
   try {
     const raw = await fs.readFile(STORE_PATH, "utf8");
-    return JSON.parse(raw) as StoreSnapshot;
+    return { store: JSON.parse(raw) as StoreSnapshot };
   } catch {
-    return emptyStore();
+    return { store: emptyStore() };
   }
 }
 
-async function writeStore(store: StoreSnapshot) {
+async function readStore(): Promise<StoreSnapshot> {
+  const { store } = await readStoreWithMeta();
+  return store;
+}
+
+async function writeStore(store: StoreSnapshot, etag?: string) {
   const body = JSON.stringify(store, null, 2);
 
   if (s3 && STORE_S3_BUCKET) {
@@ -119,6 +139,9 @@ async function writeStore(store: StoreSnapshot) {
         Key: STORE_S3_KEY,
         Body: body,
         ContentType: "application/json",
+        ...(etag
+          ? { IfMatch: etag.replaceAll('"', "") }
+          : { IfNoneMatch: "*" }),
       }),
     );
     return;
@@ -132,10 +155,23 @@ async function writeStore(store: StoreSnapshot) {
 
 function mutate<T>(fn: (store: StoreSnapshot) => T): Promise<T> {
   const run = writeChain.then(async () => {
-    const store = await readStore();
-    const result = fn(store);
-    await writeStore(store);
-    return result;
+    const maxAttempts = STORE_S3_BUCKET ? 8 : 1;
+    let lastErr: unknown;
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      const { store, etag } = await readStoreWithMeta();
+      try {
+        const result = fn(store);
+        await writeStore(store, etag);
+        return result;
+      } catch (err) {
+        lastErr = err;
+        if (isOptimisticLockError(err)) continue;
+        throw err;
+      }
+    }
+    throw lastErr instanceof Error
+      ? lastErr
+      : new Error("Store write conflict; retry");
   });
   writeChain = run.then(
     () => undefined,
