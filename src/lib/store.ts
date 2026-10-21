@@ -21,6 +21,8 @@ import { resolveModel } from "@/lib/models";
 import { hashPassword, verifyPassword } from "@/lib/password";
 import {
   awsRegion,
+  clearWorkspaceBucketCache,
+  formatAwsError,
   peekWorkspaceBucketEnv,
   resolveWorkspaceBucket,
 } from "@/lib/s3-bucket";
@@ -121,18 +123,20 @@ async function readStoreWithMeta(): Promise<StoreRead> {
       };
     } catch (err) {
       if (isMissingS3Object(err)) return { store: emptyStore() };
+      clearWorkspaceBucketCache();
       // Never fall back to ephemeral local disk when S3 is configured —
       // that made Amplify claim() see an empty store while the studio
       // (another instance) still showed queued jobs.
-      throw err;
+      throw new Error(`store S3 read failed: ${formatAwsError(err)}`);
     }
   }
 
   // Local demo only — Amplify must resolve a bucket via env, SSM, or convention.
   if (isAwsHosted()) {
+    const resolved = await resolveWorkspaceBucket();
     const peek = peekWorkspaceBucketEnv();
     throw new Error(
-      `Could not resolve workspace S3 bucket on Amplify (env store=${peek.store} workspace=${peek.workspace}). Set WORKSPACE_S3_BUCKET or ensure SSM /dat-starcoder/workspace-s3-bucket exists and the Amplify role can read it.`,
+      `Could not resolve workspace S3 bucket on Amplify (env store=${peek.store}/${peek.storeLen} workspace=${peek.workspace}/${peek.workspaceLen} source=${resolved.source}). ${resolved.error || "Set WORKSPACE_S3_BUCKET or grant Amplify s3+ssm on the workspace bucket."}`,
     );
   }
 

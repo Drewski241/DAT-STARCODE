@@ -38,8 +38,10 @@ async function claim() {
     body: JSON.stringify({ workerId: WORKER_ID }),
   });
   if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`claim ${res.status}: ${text}`);
+    const text = (await res.text()).trim();
+    throw new Error(
+      `claim ${res.status}: ${text || "(empty body — check Amplify logs)"}`,
+    );
   }
   const data = await res.json();
   return data.job;

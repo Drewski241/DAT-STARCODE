@@ -1,5 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getWorkerApiKey } from "@/lib/config";
+import {
+  formatAwsError,
+  peekWorkspaceBucketEnv,
+  resolveWorkspaceBucket,
+} from "@/lib/s3-bucket";
 import { getWorkerQueueSnapshot } from "@/lib/store";
 
 function authorize(req: NextRequest) {
@@ -16,7 +21,15 @@ export async function GET(req: NextRequest) {
     const snapshot = await getWorkerQueueSnapshot();
     return NextResponse.json(snapshot);
   } catch (err) {
-    const message = err instanceof Error ? err.message : "Queue read failed";
-    return NextResponse.json({ error: message }, { status: 500 });
+    const resolved = await resolveWorkspaceBucket();
+    return NextResponse.json(
+      {
+        error: formatAwsError(err),
+        storeBucketSource: resolved.source,
+        storeBucketError: resolved.error ?? null,
+        envPeek: peekWorkspaceBucketEnv(),
+      },
+      { status: 500 },
+    );
   }
 }
