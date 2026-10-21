@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
@@ -50,7 +50,8 @@ export function StudioClient() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [authed, setAuthed] = useState<boolean | null>(null);
-  const [authFails, setAuthFails] = useState(0);
+  const authedRef = useRef<boolean | null>(null);
+  const [sessionWarning, setSessionWarning] = useState<string | null>(null);
   const [workspaceFiles, setWorkspaceFiles] = useState<WorkspaceFile[]>([]);
   const [previewPath, setPreviewPath] = useState<string | null>(null);
   const [previewContent, setPreviewContent] = useState<string | null>(null);
@@ -68,20 +69,22 @@ export function StudioClient() {
       await new Promise((r) => window.setTimeout(r, 250));
     }
     if (!res || res.status === 401) {
-      setAuthFails((n) => {
-        const next = n + 1;
-        // Only kick to login after sustained failures, not one blip mid-job.
-        if (next >= 5) {
-          setAuthed(false);
-          router.replace("/account");
-        }
-        return next;
-      });
+      // Never kick mid-typing. Only force login on the initial load.
+      if (authedRef.current !== true) {
+        setAuthed(false);
+        authedRef.current = false;
+        router.replace("/account");
+      } else {
+        setSessionWarning(
+          "Connection blip — still signed in. Retrying in the background…",
+        );
+      }
       return;
     }
     if (res.ok) {
-      setAuthFails(0);
+      setSessionWarning(null);
       setAuthed(true);
+      authedRef.current = true;
       setAccount(data.account ?? null);
       setJobs(data.jobs ?? []);
       if (!selectedId && data.jobs?.[0]) setSelectedId(data.jobs[0].id);
@@ -90,7 +93,7 @@ export function StudioClient() {
 
   useEffect(() => {
     void refresh();
-    const t = setInterval(() => void refresh(), 2500);
+    const t = setInterval(() => void refresh(), 4000);
     return () => clearInterval(t);
   }, [refresh]);
 
@@ -182,6 +185,11 @@ export function StudioClient() {
       />
       <div className="relative z-10">
         <SiteHeader credits={account?.credits} />
+        {sessionWarning && (
+          <p className="mx-auto max-w-6xl px-5 pt-3 font-mono text-xs text-copper-300 md:px-10">
+            {sessionWarning}
+          </p>
+        )}
 
         <main className="mx-auto grid max-w-6xl gap-8 px-5 pb-16 pt-4 md:grid-cols-[1fr_1.2fr] md:px-10">
           <section>

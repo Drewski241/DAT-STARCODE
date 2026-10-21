@@ -5,6 +5,12 @@ import { ACCOUNT_COOKIE } from "@/lib/config";
 
 const SESSION_COOKIE = "dat_starcoder_session";
 
+export type SessionClaims = {
+  accountId: string;
+  username: string | null;
+  credits: number;
+};
+
 function secretKey() {
   // Never fall back to WORKER_API_KEY — rotating the worker key was
   // invalidating sessions and causing login bounce storms.
@@ -13,28 +19,46 @@ function secretKey() {
   return new TextEncoder().encode(secret);
 }
 
-export async function createSessionToken(accountId: string) {
-  return new SignJWT({ sub: accountId })
+export async function createSessionToken(input: {
+  accountId: string;
+  username?: string | null;
+  credits?: number;
+}) {
+  return new SignJWT({
+    sub: input.accountId,
+    username: input.username ?? null,
+    credits: input.credits ?? 0,
+  })
     .setProtectedHeader({ alg: "HS256" })
     .setIssuedAt()
     .setExpirationTime("30d")
     .sign(secretKey());
 }
 
-export async function readSessionAccountId(): Promise<string | null> {
+export async function readSession(): Promise<SessionClaims | null> {
   const jar = await cookies();
   const token = jar.get(SESSION_COOKIE)?.value;
   if (!token) return null;
   try {
     const { payload } = await jwtVerify(token, secretKey());
-    return typeof payload.sub === "string" ? payload.sub : null;
+    if (typeof payload.sub !== "string") return null;
+    return {
+      accountId: payload.sub,
+      username:
+        typeof payload.username === "string" ? payload.username : null,
+      credits: typeof payload.credits === "number" ? payload.credits : 0,
+    };
   } catch {
     return null;
   }
 }
 
+export async function readSessionAccountId(): Promise<string | null> {
+  const session = await readSession();
+  return session?.accountId ?? null;
+}
+
 function cookieSecure() {
-  // Amplify serves HTTPS; without Secure the browser may drop the session.
   return (
     process.env.NODE_ENV === "production" ||
     process.env.COOKIE_SECURE === "1"

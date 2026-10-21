@@ -21,7 +21,11 @@ export async function POST(req: NextRequest) {
       password: body.password,
       email: body.email,
     });
-    const token = await createSessionToken(account.id);
+    const token = await createSessionToken({
+      accountId: account.id,
+      username: account.username,
+      credits: account.credits,
+    });
     const res = NextResponse.json({ account: toPublicAccount(account) });
     return attachSession(res, token, account.id);
   } catch (err) {

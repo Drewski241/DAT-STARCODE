@@ -34,7 +34,11 @@ export async function POST(req: NextRequest) {
 
     if (!preferPoker && local?.passwordHash) {
       const account = await loginLocalAccount({ username, password });
-      const token = await createSessionToken(account.id);
+      const token = await createSessionToken({
+        accountId: account.id,
+        username: account.username,
+        credits: account.credits,
+      });
       const res = NextResponse.json({
         account: toPublicAccount(account),
         via: "local",
@@ -50,7 +54,11 @@ export async function POST(req: NextRequest) {
         pokerPlayerId: poker.playerId,
         sageAddress: poker.sageAddress,
       });
-      const token = await createSessionToken(account.id);
+      const token = await createSessionToken({
+        accountId: account.id,
+        username: account.username,
+        credits: account.credits,
+      });
       const res = NextResponse.json({
         account: toPublicAccount(account),
         via: "spirit-poker",
@@ -60,7 +68,11 @@ export async function POST(req: NextRequest) {
       // Fall back to local if poker rejected but local exists
       if (local?.passwordHash) {
         const account = await loginLocalAccount({ username, password });
-        const token = await createSessionToken(account.id);
+        const token = await createSessionToken({
+          accountId: account.id,
+          username: account.username,
+          credits: account.credits,
+        });
         const res = NextResponse.json({
           account: toPublicAccount(account),
           via: "local",
