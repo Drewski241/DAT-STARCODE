@@ -76,10 +76,14 @@ Pull the models you want users to select (Auto needs both a coder and a general 
 ```bash
 ollama pull qwen2.5-coder:7b
 ollama pull llama3.1:8b
-# optional:
+# optional (stronger coding — recommended for ChiaLisp / hard tasks):
 # ollama pull qwen2.5-coder:14b
 # ollama pull qwen2.5:7b
 ```
+
+The worker **preflights** the selected Ollama tag before running (`ollama list`). If Studio picks `qwen2.5-coder:14b` and it is not pulled, the job fails immediately with pull instructions instead of burning agent steps.
+
+**Niche domains:** prompts that mention `.clsp` / ChiaLisp load `worker/playbooks/chialisp.md` into the agent system prompt, raise the step budget (`AGENT_HARD_TASK_STEPS`, default 20), and **verify** written `.clsp` files (must start with `(mod`, reject Common Lisp stubs). Failed verification is called out in the job result.
 
 **Auto** routing: coding-like prompts (including “build a … game”) → `qwen2.5-coder:7b`; otherwise → `llama3.1:8b`. Routing is re-evaluated when a job is claimed so queued jobs pick up heuristic fixes.
 
