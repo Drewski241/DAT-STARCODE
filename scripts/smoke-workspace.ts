@@ -14,6 +14,7 @@ async function main() {
     prompt: "Build a hello world CLI",
     projectId: null,
     repoHint: null,
+    githubUrl: null,
     parentJobId: null,
     context: null,
     modelRequested: "auto",

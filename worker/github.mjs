@@ -49,6 +49,117 @@ function authedRemoteUrl(owner, name, token) {
   return `https://x-access-token:${token}@github.com/${owner}/${name}.git`;
 }
 
+/** Public clone (no token) for the paste-URL path. */
+export async function preparePublicGithubWorkspace(root, githubClone, job) {
+  const branch = `dat-starcoder/${job.id.slice(0, 8)}`;
+  const remote = githubClone.httpsUrl;
+  const env = {
+    ...process.env,
+    GIT_TERMINAL_PROMPT: "0",
+    GIT_ASKPASS: "echo",
+  };
+
+  const entries = await fs.readdir(root).catch(() => []);
+  const hasGit = entries.includes(".git");
+
+  if (!hasGit) {
+    const cloneDir = `${root}__clone`;
+    await fs.rm(cloneDir, { recursive: true, force: true }).catch(() => undefined);
+    const cloned = await run(
+      "git",
+      [
+        "clone",
+        "--depth",
+        "1",
+        "--branch",
+        githubClone.defaultBranch || "main",
+        remote,
+        cloneDir,
+      ],
+      { env, timeoutMs: 180_000 },
+    );
+    if (cloned.code !== 0) {
+      const retry = await run("git", ["clone", "--depth", "1", remote, cloneDir], {
+        env,
+        timeoutMs: 180_000,
+      });
+      if (retry.code !== 0) {
+        throw new Error(
+          `git clone failed: ${retry.stderr || cloned.stderr || retry.stdout}`,
+        );
+      }
+    }
+
+    if (entries.length === 0) {
+      await fs.rm(root, { recursive: true, force: true }).catch(() => undefined);
+      await fs.rename(cloneDir, root);
+    } else {
+      await fs.cp(path.join(cloneDir, ".git"), path.join(root, ".git"), {
+        recursive: true,
+      });
+      const clonedFiles = await listFiles(cloneDir);
+      for (const rel of clonedFiles) {
+        const dest = path.join(root, rel);
+        try {
+          await fs.access(dest);
+        } catch {
+          await fs.mkdir(path.dirname(dest), { recursive: true });
+          await fs.copyFile(path.join(cloneDir, rel), dest);
+        }
+      }
+      await fs.rm(cloneDir, { recursive: true, force: true }).catch(() => undefined);
+    }
+  }
+
+  await run("git", ["remote", "set-url", "origin", remote], { cwd: root, env });
+  await run("git", ["config", "user.email", "agent@datstarcoder.com"], {
+    cwd: root,
+    env,
+  });
+  await run("git", ["config", "user.name", "DAT STARCODER"], {
+    cwd: root,
+    env,
+  });
+
+  const co = await run("git", ["checkout", "-B", branch], { cwd: root, env });
+  if (co.code !== 0) {
+    throw new Error(`git checkout failed: ${co.stderr || co.stdout}`);
+  }
+
+  return { branch };
+}
+
+/** Terminal commands the user runs on their machine (no worker push). */
+export function formatPushCommands({ githubClone, branch, job }) {
+  const fullName = githubClone.fullName;
+  const httpsUrl = `https://github.com/${fullName}.git`;
+  const base = githubClone.defaultBranch || "main";
+  const subject = `dat-starcoder: ${job.prompt}`.slice(0, 72).replace(/"/g, '\\"');
+  const title = `[DAT STARCODER] ${job.prompt}`.slice(0, 80).replace(/"/g, '\\"');
+
+  return [
+    "## Push to GitHub",
+    "",
+    `Repo: \`${fullName}\` · branch: \`${branch}\` · base: \`${base}\``,
+    "",
+    "1. In Studio open **Workspace → Download zip** and unzip it.",
+    "2. On your machine (you already have git / GitHub access):",
+    "",
+    "```bash",
+    `git clone ${httpsUrl}`,
+    `cd ${githubClone.name}`,
+    `git checkout -b ${branch}`,
+    "# Copy the unzipped Studio files into this folder (keep .git)",
+    "git add -A",
+    `git commit -m "${subject}"`,
+    "git push -u origin HEAD",
+    `gh pr create --base ${base} --title "${title}" --body "DAT STARCODER job ${job.id}"`,
+    "```",
+    "",
+    "If you already have a local clone of this repo, skip `git clone` — checkout the branch, copy the zip over it, then add / commit / push / `gh pr create`.",
+  ].join("\n");
+}
+
 export async function prepareGithubWorkspace(root, github, job) {
   const branch = `dat-starcoder/${job.id.slice(0, 8)}`;
   const remote = authedRemoteUrl(github.owner, github.name, github.token);

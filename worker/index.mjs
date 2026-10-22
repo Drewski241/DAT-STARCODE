@@ -46,7 +46,11 @@ async function claim() {
     );
   }
   const data = await res.json();
-  return { job: data.job, github: data.github || null };
+  return {
+    job: data.job,
+    github: data.github || null,
+    githubClone: data.githubClone || null,
+  };
 }
 
 async function workspacePost(job, action, files) {
@@ -171,11 +175,15 @@ async function loop() {
         continue;
       }
       const github = claimed.github;
+      const githubClone = claimed.githubClone;
       const model = job.modelResolved || OLLAMA_MODEL;
+      const repoLabel = github?.repoFullName || githubClone?.fullName;
       console.log(
         `[dat-starcoder-worker] claimed ${job.id} model=${model}` +
           (job.projectId ? ` project=${job.projectId.slice(0, 8)}` : "") +
-          (github ? ` github=${github.repoFullName}` : ""),
+          (repoLabel
+            ? ` github=${repoLabel}${github ? "" : " (commands)"}`
+            : ""),
       );
 
       const { result, files, githubBranch, githubPrUrl } = await runAgentJob({
@@ -183,6 +191,7 @@ async function loop() {
         ollamaUrl: OLLAMA_URL,
         model,
         github,
+        githubClone,
         pullWorkspace: (j) => workspaceAction(j, "pull"),
         pushWorkspace: (j, f) => workspaceAction(j, "push", f),
         log: console.log,

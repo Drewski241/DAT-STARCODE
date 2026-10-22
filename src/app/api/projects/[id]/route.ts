@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { toPublicAccount } from "@/lib/account-public";
-import { parseRepoFullName } from "@/lib/github";
+import {
+  normalizeGithubUrl,
+  parseGithubRepoInput,
+  parseRepoFullName,
+} from "@/lib/github";
 import { requireRegisteredAccount } from "@/lib/require-auth";
 import {
   getProject,
@@ -37,12 +41,32 @@ export async function PATCH(
 
   const { id } = await ctx.params;
   const body = (await req.json().catch(() => ({}))) as {
+    githubUrl?: string | null;
     githubRepo?: string | null;
     githubDefaultBranch?: string | null;
     githubOpenPr?: boolean;
   };
 
-  let githubRepo = body.githubRepo ?? null;
+  let githubUrl: string | null | undefined = undefined;
+  if (body.githubUrl !== undefined) {
+    if (body.githubUrl === null || body.githubUrl === "") {
+      githubUrl = null;
+    } else {
+      const normalized = normalizeGithubUrl(body.githubUrl);
+      if (!normalized) {
+        return NextResponse.json(
+          {
+            error:
+              "githubUrl must be https://github.com/owner/repo or owner/repo",
+          },
+          { status: 400 },
+        );
+      }
+      githubUrl = normalized;
+    }
+  }
+
+  let githubRepo = body.githubRepo;
   if (typeof githubRepo === "string") {
     githubRepo = githubRepo.trim() || null;
   }
@@ -56,9 +80,18 @@ export async function PATCH(
     }
   }
 
+  // Pasting a URL also fills githubRepo for downstream helpers.
+  if (githubUrl) {
+    const parsed = parseGithubRepoInput(githubUrl);
+    if (parsed && githubRepo === undefined) {
+      githubRepo = parsed.fullName;
+    }
+  }
+
   try {
     const project = await updateProjectGithub(id, auth.account.id, {
-      githubRepo,
+      githubUrl,
+      githubRepo: githubRepo === undefined ? undefined : githubRepo,
       githubDefaultBranch: body.githubDefaultBranch,
       githubOpenPr: body.githubOpenPr,
     });

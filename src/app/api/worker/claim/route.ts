@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getWorkerApiKey } from "@/lib/config";
-import { buildGithubJobContext } from "@/lib/github";
+import {
+  buildGithubCloneHint,
+  buildGithubJobContext,
+} from "@/lib/github";
 import { formatAwsError } from "@/lib/s3-bucket";
 import {
   claimNextJob,
@@ -31,12 +34,15 @@ export async function POST(req: NextRequest) {
     await markJobRunning(job.id, body.workerId);
 
     let github = null;
+    let githubClone = null;
     try {
       const account = await getAccount(job.accountId);
       const project = job.projectId ? await getProject(job.projectId) : null;
       if (account) {
         github = buildGithubJobContext(account, project);
       }
+      // Manual URL path (no OAuth) — worker clones public repos + prints push cmds.
+      githubClone = buildGithubCloneHint(project, job.githubUrl);
     } catch (err) {
       console.error("[worker/claim] github context", err);
     }
@@ -44,6 +50,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({
       job: { ...job, status: "running" },
       github,
+      githubClone,
     });
   } catch (err) {
     const message = formatAwsError(err);

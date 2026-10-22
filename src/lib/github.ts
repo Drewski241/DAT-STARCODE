@@ -202,6 +202,69 @@ export function parseRepoFullName(fullName: string): {
   return { owner: m[1], name: m[2] };
 }
 
+/** Accepts owner/name or https://github.com/owner/repo(.git) */
+export function parseGithubRepoInput(raw: string): {
+  owner: string;
+  name: string;
+  httpsUrl: string;
+  fullName: string;
+} | null {
+  const trimmed = raw.trim().replace(/\/+$/, "");
+  if (!trimmed) return null;
+
+  let owner = "";
+  let name = "";
+  const urlMatch = trimmed.match(
+    /^(?:https?:\/\/)?(?:www\.)?github\.com\/([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+?)(?:\.git)?(?:\/.*)?$/i,
+  );
+  if (urlMatch) {
+    owner = urlMatch[1];
+    name = urlMatch[2];
+  } else {
+    const simple = parseRepoFullName(trimmed);
+    if (!simple) return null;
+    owner = simple.owner;
+    name = simple.name;
+  }
+  if (!owner || !name) return null;
+  return {
+    owner,
+    name,
+    fullName: `${owner}/${name}`,
+    httpsUrl: `https://github.com/${owner}/${name}.git`,
+  };
+}
+
+export function normalizeGithubUrl(raw: string | null | undefined): string | null {
+  if (!raw?.trim()) return null;
+  const parsed = parseGithubRepoInput(raw);
+  return parsed ? `https://github.com/${parsed.fullName}` : null;
+}
+
+/** Clone hint for the worker when the user pasted a URL (no OAuth token). */
+export function buildGithubCloneHint(
+  project: Project | null,
+  jobGithubUrl?: string | null,
+): {
+  httpsUrl: string;
+  fullName: string;
+  owner: string;
+  name: string;
+  defaultBranch: string;
+} | null {
+  const raw = jobGithubUrl || project?.githubUrl || project?.githubRepo;
+  if (!raw) return null;
+  const parsed = parseGithubRepoInput(raw);
+  if (!parsed) return null;
+  return {
+    httpsUrl: parsed.httpsUrl,
+    fullName: parsed.fullName,
+    owner: parsed.owner,
+    name: parsed.name,
+    defaultBranch: project?.githubDefaultBranch || "main",
+  };
+}
+
 /** Build worker-facing GitHub context for a claimed job (token decrypted). */
 export function buildGithubJobContext(
   account: Account,

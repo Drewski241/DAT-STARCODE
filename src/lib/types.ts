@@ -51,10 +51,15 @@ export interface Project {
   id: string;
   accountId: string;
   title: string;
-  /** Linked GitHub repo as owner/name */
+  /**
+   * Public GitHub repo the user pasted (URL or owner/name).
+   * Worker may clone it; user pushes with terminal commands (no OAuth required).
+   */
+  githubUrl: string | null;
+  /** Linked GitHub repo as owner/name (OAuth auto-PR path) */
   githubRepo: string | null;
   githubDefaultBranch: string | null;
-  /** When true (default), worker opens a PR after a successful turn */
+  /** When true (default), worker opens a PR after a successful turn (OAuth only) */
   githubOpenPr: boolean;
   createdAt: string;
   updatedAt: string;
@@ -67,6 +72,8 @@ export interface CodingJob {
   projectId: string | null;
   prompt: string;
   repoHint: string | null;
+  /** Copied from project at enqueue — https://github.com/owner/repo */
+  githubUrl: string | null;
   /** Prior job this continues from (follow-up prompts). */
   parentJobId: string | null;
   /** Extra context injected for the worker (prior result / files). */
