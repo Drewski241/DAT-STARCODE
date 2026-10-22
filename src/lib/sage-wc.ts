@@ -13,30 +13,77 @@ import { sageOptionalNamespaces, sageRequiredNamespaces } from "@/lib/sage";
 
 const CHAIN = "chia:mainnet";
 const SESSION_KEY = "dat-starcoder-wc-session";
+const INIT_TIMEOUT_MS = 20_000;
+const CONNECT_TIMEOUT_MS = 25_000;
 
 let clientPromise: Promise<InstanceType<typeof SignClient>> | null = null;
 let activeSession: SessionTypes.Struct | null = null;
 
 function requireProjectId() {
-  if (!WALLETCONNECT_PROJECT_ID) {
+  const id = WALLETCONNECT_PROJECT_ID?.trim();
+  if (!id) {
     throw new Error(
-      "Set NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID in .env (from cloud.walletconnect.com), then restart the dev server.",
+      "Set NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID in Amplify (from cloud.walletconnect.com), redeploy, then Connect Sage again.",
     );
   }
-  return WALLETCONNECT_PROJECT_ID;
+  return id;
+}
+
+function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(
+        new Error(
+          `${label} timed out after ${Math.round(ms / 1000)}s. Check your network, disable VPN blockers for wss://relay.walletconnect.com, confirm the WalletConnect project id, then try again.`,
+        ),
+      );
+    }, ms);
+    promise.then(
+      (v) => {
+        clearTimeout(timer);
+        resolve(v);
+      },
+      (err) => {
+        clearTimeout(timer);
+        reject(err);
+      },
+    );
+  });
+}
+
+/** Drop cached client so the next connect gets a fresh relay socket. */
+export async function resetSageWalletConnect() {
+  activeSession = null;
+  clientPromise = null;
+  if (typeof window !== "undefined") {
+    window.sessionStorage.removeItem(SESSION_KEY);
+  }
 }
 
 async function getClient() {
   if (!clientPromise) {
     const projectId = requireProjectId();
-    clientPromise = SignClient.init({
-      projectId,
-      metadata: {
-        name: APP_NAME,
-        description: "Burn DAT for coding credits — permanently out of circulation",
-        url: typeof window !== "undefined" ? window.location.origin : "https://localhost",
-        icons: [],
-      },
+    clientPromise = withTimeout(
+      SignClient.init({
+        projectId,
+        // Explicit relay — some environments fail open-ended discovery.
+        relayUrl: "wss://relay.walletconnect.com",
+        metadata: {
+          name: APP_NAME,
+          description:
+            "Burn DAT for coding credits — permanently out of circulation",
+          url:
+            typeof window !== "undefined"
+              ? window.location.origin
+              : "https://datstarcoder.com",
+          icons: ["https://datstarcoder.com/favicon.ico"],
+        },
+      }),
+      INIT_TIMEOUT_MS,
+      "WalletConnect relay connect",
+    ).catch((err) => {
+      clientPromise = null;
+      throw err;
     });
   }
   return clientPromise;
@@ -58,16 +105,20 @@ function saveSession(session: SessionTypes.Struct | null) {
 
 export async function restoreSageSession(): Promise<SessionTypes.Struct | null> {
   if (typeof window === "undefined") return null;
-  if (!WALLETCONNECT_PROJECT_ID) return null;
-  const client = await getClient();
-  const topic = window.sessionStorage.getItem(SESSION_KEY);
-  const sessions = client.session.getAll();
-  const found =
-    (topic ? sessions.find((s) => s.topic === topic) : undefined) ??
-    sessions[sessions.length - 1] ??
-    null;
-  saveSession(found);
-  return found;
+  if (!WALLETCONNECT_PROJECT_ID?.trim()) return null;
+  try {
+    const client = await getClient();
+    const topic = window.sessionStorage.getItem(SESSION_KEY);
+    const sessions = client.session.getAll();
+    const found =
+      (topic ? sessions.find((s) => s.topic === topic) : undefined) ??
+      sessions[sessions.length - 1] ??
+      null;
+    saveSession(found);
+    return found;
+  } catch {
+    return null;
+  }
 }
 
 export type SageConnectResult = {
@@ -77,12 +128,39 @@ export type SageConnectResult = {
 
 /** Start WalletConnect pairing — show `uri` as a QR for Sage to scan. */
 export async function connectSageWallet(): Promise<SageConnectResult> {
-  const client = await getClient();
-  const { uri, approval } = await client.connect({
-    requiredNamespaces: sageRequiredNamespaces(),
-    optionalNamespaces: sageOptionalNamespaces(),
-  });
-  if (!uri) throw new Error("WalletConnect did not return a pairing URI");
+  // Always start clean — a half-open relay from a prior attempt hangs forever.
+  await resetSageWalletConnect();
+
+  let client: InstanceType<typeof SignClient>;
+  try {
+    client = await getClient();
+  } catch (err) {
+    await resetSageWalletConnect();
+    throw err;
+  }
+
+  let uri: string | undefined;
+  let approval: () => Promise<SessionTypes.Struct>;
+  try {
+    const connected = await withTimeout(
+      client.connect({
+        requiredNamespaces: sageRequiredNamespaces(),
+        optionalNamespaces: sageOptionalNamespaces(),
+      }),
+      CONNECT_TIMEOUT_MS,
+      "WalletConnect pairing",
+    );
+    uri = connected.uri;
+    approval = connected.approval;
+  } catch (err) {
+    await resetSageWalletConnect();
+    throw err;
+  }
+
+  if (!uri) {
+    await resetSageWalletConnect();
+    throw new Error("WalletConnect did not return a pairing URI");
+  }
 
   const approvalPromise = approval().then(async (session) => {
     saveSession(session);
@@ -94,9 +172,8 @@ export async function connectSageWallet(): Promise<SageConnectResult> {
 }
 
 export async function disconnectSageWallet() {
-  // Safe when WalletConnect project id is missing — still clear local session.
-  if (!WALLETCONNECT_PROJECT_ID) {
-    saveSession(null);
+  if (!WALLETCONNECT_PROJECT_ID?.trim()) {
+    await resetSageWalletConnect();
     return;
   }
   try {
@@ -115,7 +192,7 @@ export async function disconnectSageWallet() {
   } catch {
     // init / restore failed — still drop local handle
   }
-  saveSession(null);
+  await resetSageWalletConnect();
 }
 
 async function requestAddress(session: SessionTypes.Struct) {
@@ -129,8 +206,7 @@ async function requestAddress(session: SessionTypes.Struct) {
     },
   })) as { address?: string } | string;
 
-  const address =
-    typeof result === "string" ? result : result?.address;
+  const address = typeof result === "string" ? result : result?.address;
   if (!address || typeof address !== "string") {
     throw new Error("Sage did not return a receive address");
   }
@@ -212,5 +288,5 @@ export async function burnDatWithSage(input: BurnDatParams): Promise<{
 }
 
 export function hasWalletConnectProjectId() {
-  return Boolean(WALLETCONNECT_PROJECT_ID);
+  return Boolean(WALLETCONNECT_PROJECT_ID?.trim());
 }
