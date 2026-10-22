@@ -20,12 +20,19 @@ export interface Account {
   source: AccountSource;
   walletAddress: string | null;
   credits: number;
+  /** GitHub login when OAuth-connected */
+  githubLogin: string | null;
+  /** AES-GCM packed access token — never send to the browser */
+  githubTokenEnc: string | null;
+  githubConnectedAt: string | null;
   createdAt: string;
   updatedAt: string;
 }
 
-/** Public account shape returned to the browser (no password hash). */
-export type PublicAccount = Omit<Account, "passwordHash">;
+/** Public account shape returned to the browser (no password / token secrets). */
+export type PublicAccount = Omit<Account, "passwordHash" | "githubTokenEnc"> & {
+  githubConnected: boolean;
+};
 
 export interface PaymentIntent {
   id: string;
@@ -44,6 +51,11 @@ export interface Project {
   id: string;
   accountId: string;
   title: string;
+  /** Linked GitHub repo as owner/name */
+  githubRepo: string | null;
+  githubDefaultBranch: string | null;
+  /** When true (default), worker opens a PR after a successful turn */
+  githubOpenPr: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -70,6 +82,10 @@ export interface CodingJob {
   /** Relative workspace key under account: `projects/{id}` or `{jobId}` */
   workspaceId: string | null;
   workspaceFileCount: number;
+  /** Branch the worker pushed for this turn (GitHub-linked projects). */
+  githubBranch: string | null;
+  /** Pull request URL opened by the worker, if any. */
+  githubPrUrl: string | null;
   createdAt: string;
   updatedAt: string;
   completedAt: string | null;

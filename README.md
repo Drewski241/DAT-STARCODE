@@ -58,7 +58,8 @@ Open [http://localhost:43127](http://localhost:43127).
 1. **Sign in** at `/account` — DAT username / DAT password (shared DAT account), or create a new DAT STARCODER account. Password reset uses the shared DAT email reset flow.
 2. **Buy credits (live Sage burn)** — set `NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID`, Connect Sage, then Burn DAT. Sage sends DAT to the Chia burn address; credits are granted after you approve the send.
 3. **Studio** — create a **project**, pick a model, and send turns. Turns share one workspace; the worker runs a tool-using agent loop (list/read/write/run).
-4. **Live worker** (GPU box):
+4. **GitHub (optional)** — set `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET` ([setup](docs/github-oauth-setup.md)), Connect GitHub in Studio, create/link a playground repo; the worker clones, branches, and opens a PR.
+5. **Live worker** (GPU box):
 
 ```bash
 DISABLE_INLINE_WORKER=1 npm run dev   # website terminal
@@ -130,6 +131,7 @@ Then set Amplify env vars (from stack outputs):
 | `COOKIE_DOMAIN` | `.datstarcoder.com` when using the custom domain (apex + www) |
 | ~~`AWS_REGION`~~ | **Do not set** — Amplify reserves `AWS_*` and injects the region itself |
 | `NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID` | WalletConnect project id |
+| `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET` | OAuth App for Studio → Connect GitHub → worker PRs ([setup](docs/github-oauth-setup.md)) |
 | `ALLOW_DEMO_PAYMENTS` | `1` only for invite-only tester credits |
 
 **Amplify SSR must be able to call S3.** If `/api/worker/queue` reports `CredentialsProviderError`, the compute has no AWS credentials:

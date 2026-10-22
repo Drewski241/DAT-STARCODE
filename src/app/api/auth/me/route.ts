@@ -23,6 +23,9 @@ export async function GET() {
         source: "local",
         walletAddress: null,
         credits: session.credits,
+        githubLogin: null,
+        githubTokenEnc: null,
+        githubConnectedAt: null,
         createdAt: now,
         updatedAt: now,
       } satisfies Account;

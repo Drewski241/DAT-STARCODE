@@ -46,7 +46,7 @@ async function claim() {
     );
   }
   const data = await res.json();
-  return data.job;
+  return { job: data.job, github: data.github || null };
 }
 
 async function workspacePost(job, action, files) {
@@ -129,7 +129,7 @@ async function workspaceAction(job, action, files) {
   return workspacePost(job, action, files);
 }
 
-async function complete(job, { result, error }) {
+async function complete(job, { result, error, githubBranch, githubPrUrl }) {
   // Files are already on S3 via chunked workspace push — omit them here so
   // complete does not hit the same Amplify body limit. Server still writes RESULT.md.
   const payload = {
@@ -137,8 +137,10 @@ async function complete(job, { result, error }) {
     workerId: WORKER_ID,
     result,
     error,
+    githubBranch: githubBranch || null,
+    githubPrUrl: githubPrUrl || null,
     snapshot: job,
-  }
+  };
   let lastErr;
   for (let attempt = 0; attempt < 4; attempt++) {
     const res = await fetch(`${API_BASE}/api/worker/complete`, {
@@ -162,29 +164,34 @@ async function loop() {
   console.log(`[dat-starcoder-worker] ${WORKER_ID} → ${API_BASE} (agent loop)`);
   for (;;) {
     try {
-      const job = await claim();
+      const claimed = await claim();
+      const job = claimed?.job;
       if (!job) {
         await sleep(POLL_MS);
         continue;
       }
+      const github = claimed.github;
       const model = job.modelResolved || OLLAMA_MODEL;
       console.log(
         `[dat-starcoder-worker] claimed ${job.id} model=${model}` +
-          (job.projectId ? ` project=${job.projectId.slice(0, 8)}` : ""),
+          (job.projectId ? ` project=${job.projectId.slice(0, 8)}` : "") +
+          (github ? ` github=${github.repoFullName}` : ""),
       );
 
-      const { result, files } = await runAgentJob({
+      const { result, files, githubBranch, githubPrUrl } = await runAgentJob({
         job,
         ollamaUrl: OLLAMA_URL,
         model,
+        github,
         pullWorkspace: (j) => workspaceAction(j, "pull"),
         pushWorkspace: (j, f) => workspaceAction(j, "push", f),
         log: console.log,
       });
 
-      await complete(job, { result });
+      await complete(job, { result, githubBranch, githubPrUrl });
       console.log(
-        `[dat-starcoder-worker] completed ${job.id} files=${files.length}`,
+        `[dat-starcoder-worker] completed ${job.id} files=${files.length}` +
+          (githubPrUrl ? ` pr=${githubPrUrl}` : ""),
       );
     } catch (err) {
       console.error("[dat-starcoder-worker]", err);

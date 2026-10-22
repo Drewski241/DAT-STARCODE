@@ -6,6 +6,7 @@ import { promises as fs } from "fs";
 import path from "path";
 import { spawn } from "child_process";
 import os from "os";
+import { commitPushAndOpenPr, prepareGithubWorkspace } from "./github.mjs";
 
 const MAX_STEPS = Number(process.env.AGENT_MAX_STEPS || 12);
 const RUN_TIMEOUT_MS = Number(process.env.AGENT_RUN_TIMEOUT_MS || 20000);
@@ -153,10 +154,13 @@ function parseAction(text) {
   return null;
 }
 
-function agentSystem(job) {
+function agentSystem(job, github) {
   return [
     "You are DAT STARCODER, a robust coding agent with tools.",
     "You work inside a real project workspace on disk.",
+    github
+      ? `This workspace is a clone of GitHub repo ${github.repoFullName}. After you finish, the worker will commit, push a branch, and open a pull request automatically — focus on making good file changes.`
+      : "This workspace syncs to Studio download zip (no GitHub repo linked).",
     "On every turn respond with ONLY one JSON object (optionally in a ```json fence):",
     "",
     '1) Call a tool: {"thought":"...","tool":"list_files"|"read_file"|"write_file"|"run","args":{...}}',
@@ -174,8 +178,10 @@ function agentSystem(job) {
     "- Never use sudo, su, passwd, or other interactive/privileged commands.",
     "- Prefer static HTML/JS games/apps that need no system packages when possible.",
     "- For games/apps, make something runnable (often index.html).",
+    "- Do not commit or push yourself; the worker handles git/PR.",
     HOW_TO_RUN,
     job.projectId ? `Project id: ${job.projectId}` : "",
+    github ? `GitHub repo: ${github.repoFullName} (base ${github.defaultBranch})` : "",
     job.context ? `\nPrior context:\n${job.context}\n` : "",
     "",
     "User request:",
@@ -226,7 +232,7 @@ async function collectLocalFiles(root) {
 }
 
 /**
- * @returns {{ result: string, files: {path:string,content:string}[] }}
+ * @returns {{ result: string, files: {path:string,content:string}[], githubBranch?: string|null, githubPrUrl?: string|null }}
  */
 export async function runAgentJob({
   job,
@@ -234,9 +240,12 @@ export async function runAgentJob({
   model,
   pullWorkspace,
   pushWorkspace,
+  github = null,
   log = console.log,
 }) {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "starcoder-"));
+  let githubBranch = null;
+  let githubPrUrl = null;
   try {
     const pulled = await pullWorkspace(job);
     for (const f of pulled.files || []) {
@@ -247,7 +256,22 @@ export async function runAgentJob({
       await fs.writeFile(full, f.content ?? "", "utf8");
     }
 
-    const messages = [{ role: "system", content: agentSystem(job) }];
+    if (github) {
+      log(
+        `[agent] github prepare ${github.repoFullName} base=${github.defaultBranch}`,
+      );
+      try {
+        const prepared = await prepareGithubWorkspace(root, github, job);
+        githubBranch = prepared.branch;
+        log(`[agent] github branch ${githubBranch}`);
+      } catch (err) {
+        log(
+          `[agent] github prepare failed: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    }
+
+    const messages = [{ role: "system", content: agentSystem(job, github) }];
     let finalMessage = "";
 
     for (let step = 0; step < MAX_STEPS; step++) {
@@ -331,17 +355,48 @@ export async function runAgentJob({
     const files = await collectLocalFiles(root);
     await pushWorkspace(job, files);
 
+    if (github && githubBranch) {
+      try {
+        log(`[agent] github commit/push/PR on ${githubBranch}`);
+        const shipped = await commitPushAndOpenPr(
+          root,
+          github,
+          job,
+          githubBranch,
+        );
+        githubBranch = shipped.branch;
+        githubPrUrl = shipped.prUrl;
+        if (shipped.note) log(`[agent] github: ${shipped.note}`);
+        if (githubPrUrl) {
+          finalMessage += `\n\n## Pull request\n\n${githubPrUrl}\n`;
+        } else if (githubBranch) {
+          finalMessage += `\n\n## GitHub branch\n\n\`${githubBranch}\` pushed to ${github.repoFullName}.\n`;
+        }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        log(`[agent] github ship failed: ${msg}`);
+        finalMessage += `\n\n## GitHub\n\nPush/PR failed: ${msg}\n`;
+      }
+    }
+
     const header = [
       `Model: ${job.modelRequested || "auto"} → ${model}`,
       job.modelReason ? `Reason: ${job.modelReason}` : "",
       job.projectId ? `Project: ${job.projectId}` : "",
+      github ? `GitHub: ${github.repoFullName}` : "",
+      githubPrUrl ? `PR: ${githubPrUrl}` : githubBranch ? `Branch: ${githubBranch}` : "",
       "Mode: tool agent loop",
       "",
     ]
       .filter(Boolean)
       .join("\n");
 
-    return { result: `${header}${finalMessage}`, files };
+    return {
+      result: `${header}${finalMessage}`,
+      files,
+      githubBranch,
+      githubPrUrl,
+    };
   } finally {
     await fs.rm(root, { recursive: true, force: true }).catch(() => undefined);
   }
