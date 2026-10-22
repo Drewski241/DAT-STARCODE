@@ -94,17 +94,26 @@ export async function connectSageWallet(): Promise<SageConnectResult> {
 }
 
 export async function disconnectSageWallet() {
-  const client = await getClient();
-  const session = activeSession ?? (await restoreSageSession());
-  if (session) {
-    try {
-      await client.disconnect({
-        topic: topicFromSession(session),
-        reason: { code: 6000, message: "User disconnected" },
-      });
-    } catch {
-      // session may already be gone
+  // Safe when WalletConnect project id is missing — still clear local session.
+  if (!WALLETCONNECT_PROJECT_ID) {
+    saveSession(null);
+    return;
+  }
+  try {
+    const client = await getClient();
+    const session = activeSession ?? (await restoreSageSession());
+    if (session) {
+      try {
+        await client.disconnect({
+          topic: topicFromSession(session),
+          reason: { code: 6000, message: "User disconnected" },
+        });
+      } catch {
+        // session may already be gone
+      }
     }
+  } catch {
+    // init / restore failed — still drop local handle
   }
   saveSession(null);
 }
