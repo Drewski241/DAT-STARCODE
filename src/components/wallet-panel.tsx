@@ -14,6 +14,7 @@ import {
   hasWalletConnectProjectId,
   resetSageWalletConnect,
   restoreSageSession,
+  walletConnectDiagnostics,
 } from "@/lib/sage-wc";
 
 type Account = {
@@ -368,15 +369,23 @@ export function WalletPanel({
           </span>{" "}
           in Amplify env (from{" "}
           <a
-            href="https://cloud.walletconnect.com/"
+            href="https://dashboard.reown.com/"
             target="_blank"
             rel="noreferrer"
             className="underline decoration-amber-700 underline-offset-2"
           >
-            cloud.walletconnect.com
+            dashboard.reown.com
           </a>
           ), then a redeploy. Until then Disconnect still clears the saved
           address.
+        </p>
+      )}
+
+      {live && (
+        <p className="mt-3 font-mono text-[10px] leading-relaxed text-steel-600">
+          WC build id {walletConnectDiagnostics().projectIdFingerprint ?? "missing"}{" "}
+          · page {typeof window !== "undefined" ? window.location.origin : ""}
+          . Reown allowlist must include this origin (and www if you use it).
         </p>
       )}
 
