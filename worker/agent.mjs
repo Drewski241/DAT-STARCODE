@@ -6,7 +6,12 @@ import { promises as fs } from "fs";
 import path from "path";
 import { spawn } from "child_process";
 import os from "os";
-import { commitPushAndOpenPr, prepareGithubWorkspace } from "./github.mjs";
+import {
+  commitPushAndOpenPr,
+  formatPushCommands,
+  prepareGithubWorkspace,
+  preparePublicGithubWorkspace,
+} from "./github.mjs";
 
 const MAX_STEPS = Number(process.env.AGENT_MAX_STEPS || 12);
 const RUN_TIMEOUT_MS = Number(process.env.AGENT_RUN_TIMEOUT_MS || 20000);
@@ -154,13 +159,20 @@ function parseAction(text) {
   return null;
 }
 
-function agentSystem(job, github) {
+function agentSystem(job, github, githubClone) {
+  const repoLabel =
+    github?.repoFullName ||
+    githubClone?.fullName ||
+    null;
+  const githubMode = github
+    ? `This workspace is a clone of GitHub repo ${github.repoFullName}. After you finish, the worker will commit, push a branch, and open a pull request automatically — focus on making good file changes.`
+    : githubClone
+      ? `This workspace is a clone of public GitHub repo ${githubClone.fullName}. After you finish, the user will push with terminal commands printed in the result — focus on making good file changes. Do not commit or push yourself.`
+      : "This workspace syncs to Studio download zip (no GitHub repo linked).";
   return [
     "You are DAT STARCODER, a robust coding agent with tools.",
     "You work inside a real project workspace on disk.",
-    github
-      ? `This workspace is a clone of GitHub repo ${github.repoFullName}. After you finish, the worker will commit, push a branch, and open a pull request automatically — focus on making good file changes.`
-      : "This workspace syncs to Studio download zip (no GitHub repo linked).",
+    githubMode,
     "On every turn respond with ONLY one JSON object (optionally in a ```json fence):",
     "",
     '1) Call a tool: {"thought":"...","tool":"list_files"|"read_file"|"write_file"|"run","args":{...}}',
@@ -178,10 +190,12 @@ function agentSystem(job, github) {
     "- Never use sudo, su, passwd, or other interactive/privileged commands.",
     "- Prefer static HTML/JS games/apps that need no system packages when possible.",
     "- For games/apps, make something runnable (often index.html).",
-    "- Do not commit or push yourself; the worker handles git/PR.",
+    "- Do not commit or push yourself; the worker handles git/PR or prints push commands.",
     HOW_TO_RUN,
     job.projectId ? `Project id: ${job.projectId}` : "",
-    github ? `GitHub repo: ${github.repoFullName} (base ${github.defaultBranch})` : "",
+    repoLabel
+      ? `GitHub repo: ${repoLabel} (base ${github?.defaultBranch || githubClone?.defaultBranch || "main"})`
+      : "",
     job.context ? `\nPrior context:\n${job.context}\n` : "",
     "",
     "User request:",
@@ -241,11 +255,14 @@ export async function runAgentJob({
   pullWorkspace,
   pushWorkspace,
   github = null,
+  githubClone = null,
   log = console.log,
 }) {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "starcoder-"));
   let githubBranch = null;
   let githubPrUrl = null;
+  /** @type {"oauth"|"commands"|null} */
+  let githubPath = null;
   try {
     const pulled = await pullWorkspace(job);
     for (const f of pulled.files || []) {
@@ -257,6 +274,7 @@ export async function runAgentJob({
     }
 
     if (github) {
+      githubPath = "oauth";
       log(
         `[agent] github prepare ${github.repoFullName} base=${github.defaultBranch}`,
       );
@@ -269,9 +287,31 @@ export async function runAgentJob({
           `[agent] github prepare failed: ${err instanceof Error ? err.message : String(err)}`,
         );
       }
+    } else if (githubClone) {
+      githubPath = "commands";
+      log(
+        `[agent] github public clone ${githubClone.fullName} base=${githubClone.defaultBranch}`,
+      );
+      try {
+        const prepared = await preparePublicGithubWorkspace(
+          root,
+          githubClone,
+          job,
+        );
+        githubBranch = prepared.branch;
+        log(`[agent] github branch ${githubBranch} (user will push)`);
+      } catch (err) {
+        // Private or missing repo — keep workspace files; still print push cmds.
+        githubBranch = `dat-starcoder/${job.id.slice(0, 8)}`;
+        log(
+          `[agent] github public clone failed (continuing): ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
     }
 
-    const messages = [{ role: "system", content: agentSystem(job, github) }];
+    const messages = [
+      { role: "system", content: agentSystem(job, github, githubClone) },
+    ];
     let finalMessage = "";
 
     for (let step = 0; step < MAX_STEPS; step++) {
@@ -355,7 +395,7 @@ export async function runAgentJob({
     const files = await collectLocalFiles(root);
     await pushWorkspace(job, files);
 
-    if (github && githubBranch) {
+    if (githubPath === "oauth" && github && githubBranch) {
       try {
         log(`[agent] github commit/push/PR on ${githubBranch}`);
         const shipped = await commitPushAndOpenPr(
@@ -377,14 +417,22 @@ export async function runAgentJob({
         log(`[agent] github ship failed: ${msg}`);
         finalMessage += `\n\n## GitHub\n\nPush/PR failed: ${msg}\n`;
       }
+    } else if (githubPath === "commands" && githubClone && githubBranch) {
+      finalMessage += `\n\n${formatPushCommands({ githubClone, branch: githubBranch, job })}\n`;
     }
 
+    const repoName =
+      github?.repoFullName || githubClone?.fullName || null;
     const header = [
       `Model: ${job.modelRequested || "auto"} → ${model}`,
       job.modelReason ? `Reason: ${job.modelReason}` : "",
       job.projectId ? `Project: ${job.projectId}` : "",
-      github ? `GitHub: ${github.repoFullName}` : "",
-      githubPrUrl ? `PR: ${githubPrUrl}` : githubBranch ? `Branch: ${githubBranch}` : "",
+      repoName ? `GitHub: ${repoName}` : "",
+      githubPrUrl
+        ? `PR: ${githubPrUrl}`
+        : githubBranch
+          ? `Branch: ${githubBranch}${githubPath === "commands" ? " (push with commands below)" : ""}`
+          : "",
       "Mode: tool agent loop",
       "",
     ]

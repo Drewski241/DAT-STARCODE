@@ -616,6 +616,7 @@ function normalizeJob(job: CodingJob): CodingJob {
     workspaceId,
     workspaceFileCount:
       typeof job.workspaceFileCount === "number" ? job.workspaceFileCount : 0,
+    githubUrl: job.githubUrl ?? null,
     githubBranch: job.githubBranch ?? null,
     githubPrUrl: job.githubPrUrl ?? null,
   };
@@ -625,6 +626,7 @@ function normalizeProject(p: Project): Project {
   return {
     ...p,
     title: p.title || "Untitled project",
+    githubUrl: p.githubUrl ?? null,
     githubRepo: p.githubRepo ?? null,
     githubDefaultBranch: p.githubDefaultBranch ?? null,
     githubOpenPr: p.githubOpenPr !== false,
@@ -679,6 +681,7 @@ export async function createProject(input: {
       id: randomUUID(),
       accountId: input.accountId,
       title,
+      githubUrl: null,
       githubRepo: null,
       githubDefaultBranch: null,
       githubOpenPr: true,
@@ -704,7 +707,8 @@ export async function updateProjectGithub(
   projectId: string,
   accountId: string,
   input: {
-    githubRepo: string | null;
+    githubUrl?: string | null;
+    githubRepo?: string | null;
     githubDefaultBranch?: string | null;
     githubOpenPr?: boolean;
   },
@@ -715,7 +719,12 @@ export async function updateProjectGithub(
     if (!project || project.accountId !== accountId) {
       throw new Error("Project not found");
     }
-    project.githubRepo = input.githubRepo;
+    if (input.githubUrl !== undefined) {
+      project.githubUrl = input.githubUrl;
+    }
+    if (input.githubRepo !== undefined) {
+      project.githubRepo = input.githubRepo;
+    }
     if (input.githubDefaultBranch !== undefined) {
       project.githubDefaultBranch = input.githubDefaultBranch;
     }
@@ -820,6 +829,7 @@ export async function enqueueJob(input: {
       );
     }
     const projectId = input.projectId?.trim() || null;
+    let projectGithubUrl: string | null = null;
     if (projectId) {
       if (!store.projects) store.projects = [];
       const project = store.projects.find((p) => p.id === projectId);
@@ -827,6 +837,7 @@ export async function enqueueJob(input: {
         throw new Error("Project not found");
       }
       project.updatedAt = new Date().toISOString();
+      projectGithubUrl = project.githubUrl ?? project.githubRepo ?? null;
     }
     const now = new Date().toISOString();
     account.credits -= CREDITS_PER_JOB;
@@ -841,6 +852,7 @@ export async function enqueueJob(input: {
       projectId,
       prompt: input.prompt.trim(),
       repoHint: input.repoHint?.trim() || null,
+      githubUrl: projectGithubUrl,
       parentJobId: input.parentJobId?.trim() || null,
       context: input.context?.trim() || null,
       modelRequested: input.modelRequested?.trim() || "auto",

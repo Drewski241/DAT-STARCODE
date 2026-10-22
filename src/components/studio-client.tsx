@@ -23,6 +23,7 @@ type Account = {
 type Project = {
   id: string;
   title: string;
+  githubUrl?: string | null;
   githubRepo?: string | null;
   githubDefaultBranch?: string | null;
   githubOpenPr?: boolean;
@@ -85,6 +86,7 @@ export function StudioClient() {
   const [githubConfigured, setGithubConfigured] = useState(false);
   const [repos, setRepos] = useState<GithubRepo[]>([]);
   const [repoPick, setRepoPick] = useState("");
+  const [githubUrlDraft, setGithubUrlDraft] = useState("");
 
   const refresh = useCallback(async () => {
     // Retry briefly — Amplify/S3 can return a transient 401 while a job
@@ -172,6 +174,48 @@ export function StudioClient() {
   }, [account?.githubConnected, account?.githubLogin]);
 
   const activeProject = projects.find((p) => p.id === projectId) ?? null;
+
+  useEffect(() => {
+    setGithubUrlDraft(activeProject?.githubUrl || activeProject?.githubRepo || "");
+  }, [activeProject?.id, activeProject?.githubUrl, activeProject?.githubRepo]);
+
+  async function saveGithubUrl(raw: string) {
+    if (!projectId) {
+      setError("Create or select a project before linking a GitHub repo.");
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      const trimmed = raw.trim();
+      const res = await fetch(`/api/projects/${projectId}`, {
+        method: "PATCH",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          githubUrl: trimmed || null,
+          ...(trimmed ? {} : { githubRepo: null }),
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Could not save GitHub URL");
+      setProjects((prev) =>
+        prev.map((p) => (p.id === data.project.id ? data.project : p)),
+      );
+      setGithubUrlDraft(
+        data.project.githubUrl || data.project.githubRepo || "",
+      );
+      setSessionWarning(
+        trimmed
+          ? "GitHub repo saved. After each turn you'll get push commands in the result."
+          : "GitHub repo cleared.",
+      );
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Save GitHub URL failed");
+    } finally {
+      setBusy(false);
+    }
+  }
 
   async function disconnectGithub() {
     setBusy(true);
@@ -430,8 +474,10 @@ export function StudioClient() {
             <p className="mt-3 text-sm leading-relaxed text-steel-300">
               Work in a persistent project. Each message is a turn — the agent
               can list, read, edit, and run commands in the same workspace.
+              Paste a GitHub repo URL to clone it and get terminal push / PR
+              commands when the turn finishes.
               {githubConfigured
-                ? " Connect GitHub to clone your repo, push a branch, and open a pull request."
+                ? " Or connect GitHub for one-click pull requests."
                 : ""}{" "}
               Cost: {CREDITS_PER_JOB} credits per turn.
             </p>
@@ -556,6 +602,49 @@ export function StudioClient() {
                 New project
               </Button>
             </div>
+
+            <label className="mt-8 block font-mono text-[11px] uppercase tracking-widest text-steel-400">
+              GitHub repo URL
+            </label>
+            <div className="mt-2 flex flex-wrap gap-2">
+              <Input
+                value={githubUrlDraft}
+                onChange={(e) => setGithubUrlDraft(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    void saveGithubUrl(githubUrlDraft);
+                  }
+                }}
+                placeholder="https://github.com/owner/repo or owner/repo"
+                disabled={!projectId || busy}
+                className="min-w-[16rem] flex-1 rounded-none border-copper-800/50 bg-ink-900/80 font-mono text-sm"
+              />
+              <Button
+                type="button"
+                variant="outline"
+                disabled={!projectId || busy}
+                onClick={() => void saveGithubUrl(githubUrlDraft)}
+                className="rounded-none border-copper-700 font-mono text-xs uppercase tracking-widest text-copper-100"
+              >
+                Save
+              </Button>
+            </div>
+            <p className="mt-2 font-mono text-[11px] text-steel-500">
+              Public repos are cloned for the agent. After each turn the result
+              includes exact <code className="text-copper-300">git</code> /{" "}
+              <code className="text-copper-300">gh</code> commands to push a
+              branch and open a PR (plus Workspace zip). Private repos: paste
+              the URL anyway — build in Studio, push from your machine.
+            </p>
+            {activeProject?.githubUrl && (
+              <p className="mt-1 font-mono text-[11px] text-steel-400">
+                Linked: {activeProject.githubUrl}
+                {activeProject.githubDefaultBranch
+                  ? ` · base ${activeProject.githubDefaultBranch}`
+                  : ""}
+              </p>
+            )}
 
             <label className="mt-8 block font-mono text-[11px] uppercase tracking-widest text-steel-400">
               Model
