@@ -12,6 +12,7 @@ import {
   disconnectSageWallet,
   getDatBalanceMojos,
   hasWalletConnectProjectId,
+  resetSageWalletConnect,
   restoreSageSession,
 } from "@/lib/sage-wc";
 
@@ -111,11 +112,14 @@ export function WalletPanel({
         return;
       }
 
-      setMessage("Opening WalletConnect — approve the connection in Sage…");
+      setMessage(
+        "Connecting to WalletConnect relay… (QR appears next — usually under 10s)",
+      );
       const { uri, approval } = await connectSageWallet();
       setWcUri(uri);
+      setBusy("awaiting-sage");
       setMessage(
-        "Scan this QR with Sage (WalletConnect), or paste the URI into Sage.",
+        "Scan this QR in Sage (WalletConnect), or copy/paste the URI below. Keep this tab open until Sage approves.",
       );
 
       const { address } = await approval;
@@ -130,7 +134,19 @@ export function WalletPanel({
       setMessage(`Sage connected: ${shortAddress(address)}. Ready to burn DAT.`);
     } catch (err) {
       setWcUri(null);
+      await resetSageWalletConnect().catch(() => undefined);
       setMessage(err instanceof Error ? err.message : "Connect failed");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function cancelConnect() {
+    setBusy("disconnect");
+    try {
+      await resetSageWalletConnect();
+      setWcUri(null);
+      setMessage("Connection cancelled. Click Connect Sage to try again.");
     } finally {
       setBusy(null);
     }
@@ -286,15 +302,27 @@ export function WalletPanel({
         <button
           type="button"
           onClick={() => void connectSage()}
-          disabled={busy === "connect"}
+          disabled={busy === "connect" || busy === "awaiting-sage"}
           className="relative z-20 inline-flex h-12 cursor-pointer items-center rounded-none bg-copper-500 px-5 font-mono text-xs uppercase tracking-widest text-ink-950 transition hover:bg-copper-400 disabled:cursor-wait disabled:opacity-60"
         >
           {busy === "connect"
-            ? "Connecting…"
-            : account?.walletAddress
-              ? "Reconnect Sage"
-              : "Connect Sage"}
+            ? "Connecting relay…"
+            : busy === "awaiting-sage"
+              ? "Waiting for Sage…"
+              : account?.walletAddress
+                ? "Reconnect Sage"
+                : "Connect Sage"}
         </button>
+        {(busy === "connect" || busy === "awaiting-sage" || wcUri) && (
+          <button
+            type="button"
+            onClick={() => void cancelConnect()}
+            disabled={busy === "disconnect"}
+            className="font-mono text-xs uppercase tracking-widest text-rose-300 hover:text-rose-200"
+          >
+            Cancel
+          </button>
+        )}
         {account?.walletAddress && (
           <button
             type="button"
