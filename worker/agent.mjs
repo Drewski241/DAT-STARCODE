@@ -75,16 +75,33 @@ async function toolWrite(root, rel, content) {
   return `OK wrote ${safe} (${Buffer.byteLength(text, "utf8")} bytes)`;
 }
 
+const BLOCKED_RUN =
+  /\b(sudo|pkexec|passwd|su\b|visudo|shutdown|reboot|halt|poweroff)\b/i;
+
 function runCommand(root, command) {
+  const cmd = String(command || "").trim();
+  if (!cmd) {
+    return Promise.resolve("ERROR: empty command");
+  }
+  if (BLOCKED_RUN.test(cmd)) {
+    return Promise.resolve(
+      "ERROR: interactive/privileged commands (sudo, su, passwd, …) are blocked. Use user-level tools only (npm, node, python, …).",
+    );
+  }
   return new Promise((resolve) => {
-    const child = spawn(command, {
+    const child = spawn(cmd, {
       cwd: root,
       shell: true,
       env: {
         ...process.env,
         PATH: process.env.PATH,
         HOME: process.env.HOME,
+        DEBIAN_FRONTEND: "noninteractive",
+        CI: "1",
+        npm_config_fund: "false",
+        npm_config_audit: "false",
       },
+      stdio: ["ignore", "pipe", "pipe"],
     });
     let stdout = "";
     let stderr = "";
@@ -154,6 +171,8 @@ function agentSystem(job) {
     "- Explore with list_files/read_file before editing when files may already exist.",
     "- Prefer small, working changes. Write complete files when creating them.",
     "- Use run to install/build/test when helpful (keep commands short).",
+    "- Never use sudo, su, passwd, or other interactive/privileged commands.",
+    "- Prefer static HTML/JS games/apps that need no system packages when possible.",
     "- For games/apps, make something runnable (often index.html).",
     HOW_TO_RUN,
     job.projectId ? `Project id: ${job.projectId}` : "",
@@ -185,17 +204,22 @@ async function ollamaChat(ollamaUrl, model, messages) {
   return data.message?.content || "";
 }
 
+const SKIP_PUSH_NAME =
+  /(^|\/)(package-lock\.json|yarn\.lock|pnpm-lock\.yaml|\.DS_Store)$/i;
+const SKIP_PUSH_DIR = /(^|\/)(node_modules|dist|build|\.next|coverage|\.git)\//;
+
 async function collectLocalFiles(root) {
   const paths = await listTree(root);
   const files = [];
   for (const rel of paths) {
     if (rel.startsWith("turns/")) continue;
+    if (SKIP_PUSH_NAME.test(rel) || SKIP_PUSH_DIR.test(rel)) continue;
     try {
       const content = await fs.readFile(path.join(root, rel), "utf8");
       if (Buffer.byteLength(content, "utf8") > MAX_FILE_BYTES) continue;
       files.push({ path: rel, content });
     } catch {
-      /* skip */
+      /* skip binary / unreadable */
     }
   }
   return files;

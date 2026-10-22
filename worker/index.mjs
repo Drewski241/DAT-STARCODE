@@ -27,6 +27,8 @@ const OLLAMA_URL = (process.env.OLLAMA_URL || "http://127.0.0.1:11434").replace(
 );
 const OLLAMA_MODEL = process.env.OLLAMA_MODEL || "qwen2.5-coder:7b";
 const POLL_MS = Number(process.env.POLL_MS || 4000);
+/** Amplify/CloudFront reject large JSON bodies with empty 413 — stay under ~4MB. */
+const PUSH_MAX_BYTES = Number(process.env.WORKSPACE_PUSH_MAX_BYTES || 3_500_000);
 
 async function claim() {
   const res = await fetch(`${API_BASE}/api/worker/claim`, {
@@ -47,7 +49,7 @@ async function claim() {
   return data.job;
 }
 
-async function workspaceAction(job, action, files) {
+async function workspacePost(job, action, files) {
   const res = await fetch(`${API_BASE}/api/worker/workspace`, {
     method: "POST",
     headers: {
@@ -68,15 +70,75 @@ async function workspaceAction(job, action, files) {
   return res.json();
 }
 
-async function complete(job, { result, error, files }) {
+function payloadBytes(job, action, files) {
+  return Buffer.byteLength(
+    JSON.stringify({
+      jobId: job.id,
+      workerId: WORKER_ID,
+      action,
+      files,
+    }),
+    "utf8",
+  );
+}
+
+/** Push workspace files in chunks so Amplify does not 413 the request. */
+async function pushWorkspaceChunked(job, files) {
+  const list = Array.isArray(files) ? files : [];
+  if (list.length === 0) {
+    return workspacePost(job, "push", []);
+  }
+
+  let batch = [];
+  let written = 0;
+  let batches = 0;
+
+  const flush = async () => {
+    if (batch.length === 0) return;
+    const result = await workspacePost(job, "push", batch);
+    written += Number(result.written || batch.length);
+    batches += 1;
+    batch = [];
+  };
+
+  for (const file of list) {
+    const alone = payloadBytes(job, "push", [file]);
+    if (alone > PUSH_MAX_BYTES) {
+      console.warn(
+        `[dat-starcoder-worker] skip oversized file ${file.path} (${alone} bytes payload)`,
+      );
+      continue;
+    }
+    const withFile = payloadBytes(job, "push", [...batch, file]);
+    if (batch.length > 0 && withFile > PUSH_MAX_BYTES) {
+      await flush();
+    }
+    batch.push(file);
+  }
+  await flush();
+  console.log(
+    `[dat-starcoder-worker] workspace push ok written≈${written} batches=${batches}`,
+  );
+  return { ok: true, written, batches };
+}
+
+async function workspaceAction(job, action, files) {
+  if (action === "push") {
+    return pushWorkspaceChunked(job, files);
+  }
+  return workspacePost(job, action, files);
+}
+
+async function complete(job, { result, error }) {
+  // Files are already on S3 via chunked workspace push — omit them here so
+  // complete does not hit the same Amplify body limit. Server still writes RESULT.md.
   const payload = {
     jobId: job.id,
     workerId: WORKER_ID,
     result,
     error,
-    files,
     snapshot: job,
-  };
+  }
   let lastErr;
   for (let attempt = 0; attempt < 4; attempt++) {
     const res = await fetch(`${API_BASE}/api/worker/complete`, {
@@ -120,7 +182,7 @@ async function loop() {
         log: console.log,
       });
 
-      await complete(job, { result, files });
+      await complete(job, { result });
       console.log(
         `[dat-starcoder-worker] completed ${job.id} files=${files.length}`,
       );
