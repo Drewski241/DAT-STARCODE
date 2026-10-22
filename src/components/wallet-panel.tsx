@@ -106,7 +106,7 @@ export function WalletPanel({
 
       if (!live) {
         setMessage(
-          "Add NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID to .env (free project at cloud.walletconnect.com), restart npm run dev, then Connect Sage again.",
+          "WalletConnect is not configured on this deploy. In Amplify set NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID (free at cloud.walletconnect.com), redeploy, then Connect Sage again.",
         );
         return;
       }
@@ -138,10 +138,27 @@ export function WalletPanel({
 
   async function disconnect() {
     setBusy("disconnect");
+    setMessage(null);
     try {
-      if (live) await disconnectSageWallet();
+      await disconnectSageWallet();
       setDatBalance(null);
-      setMessage("Sage disconnected.");
+      setWcUri(null);
+      // Always clear the saved linked address so Reconnect is available.
+      const res = await fetch("/api/session", {
+        method: "PATCH",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ unlinkWallet: true }),
+      });
+      const data = await res.json();
+      if (res.ok && data.account) {
+        onAccount(data.account);
+      }
+      setMessage(
+        live
+          ? "Sage disconnected. Click Connect Sage to pair again."
+          : "Wallet unlinked. Set NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID in Amplify, redeploy, then Connect Sage.",
+      );
     } catch (err) {
       setMessage(err instanceof Error ? err.message : "Disconnect failed");
     } finally {
@@ -278,14 +295,14 @@ export function WalletPanel({
               ? "Reconnect Sage"
               : "Connect Sage"}
         </button>
-        {account?.walletAddress && live && (
+        {account?.walletAddress && (
           <button
             type="button"
             onClick={() => void disconnect()}
             disabled={!!busy}
             className="font-mono text-xs uppercase tracking-widest text-steel-400 hover:text-copper-100"
           >
-            Disconnect
+            {busy === "disconnect" ? "Disconnecting…" : "Disconnect"}
           </button>
         )}
         <div className="font-mono text-xs text-steel-400">
@@ -295,6 +312,9 @@ export function WalletPanel({
               <span className="text-copper-200">
                 {shortAddress(account.walletAddress)}
               </span>
+              {!live && (
+                <span className="text-rose-300"> · WalletConnect offline</span>
+              )}
             </span>
           ) : (
             <span>Mode: {sage.mode}</span>
@@ -311,6 +331,26 @@ export function WalletPanel({
           )}
         </div>
       </div>
+
+      {!live && (
+        <p className="mt-4 max-w-3xl border-l-2 border-amber-500/80 bg-ink-900/60 py-3 pl-4 font-mono text-xs leading-relaxed text-amber-100">
+          Live burns need{" "}
+          <span className="text-copper-200">
+            NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID
+          </span>{" "}
+          in Amplify env (from{" "}
+          <a
+            href="https://cloud.walletconnect.com/"
+            target="_blank"
+            rel="noreferrer"
+            className="underline decoration-amber-700 underline-offset-2"
+          >
+            cloud.walletconnect.com
+          </a>
+          ), then a redeploy. Until then Disconnect still clears the saved
+          address.
+        </p>
+      )}
 
       <p className="mt-4 font-mono text-[11px] leading-relaxed text-steel-500">
         Burn address{" "}

@@ -495,6 +495,16 @@ export async function linkWallet(accountId: string, walletAddress: string) {
   });
 }
 
+export async function unlinkWallet(accountId: string) {
+  return mutate((store) => {
+    const account = store.accounts.find((a) => a.id === accountId);
+    if (!account) throw new Error("Account not found");
+    account.walletAddress = null;
+    account.updatedAt = new Date().toISOString();
+    return account;
+  });
+}
+
 export async function getAccount(accountId: string) {
   const store = await readStore();
   const found = store.accounts.find((a) => a.id === accountId) ?? null;
