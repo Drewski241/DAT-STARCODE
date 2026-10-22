@@ -27,6 +27,8 @@ async function main() {
     workspaceId:
       "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee/11111111-2222-3333-4444-555555555555",
     workspaceFileCount: 0,
+    githubBranch: null,
+    githubPrUrl: null,
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
     completedAt: null,

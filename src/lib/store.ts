@@ -315,6 +315,9 @@ function normalizeAccount(raw: Account): Account {
     passwordHash: raw.passwordHash ?? null,
     pokerPlayerId: raw.pokerPlayerId ?? null,
     source: raw.source ?? (raw.username ? "local" : "local"),
+    githubLogin: raw.githubLogin ?? null,
+    githubTokenEnc: raw.githubTokenEnc ?? null,
+    githubConnectedAt: raw.githubConnectedAt ?? null,
   };
 }
 
@@ -334,6 +337,9 @@ export async function getOrCreateAccount(accountId?: string | null) {
       source: "local",
       walletAddress: null,
       credits: 0,
+      githubLogin: null,
+      githubTokenEnc: null,
+      githubConnectedAt: null,
       createdAt: now,
       updatedAt: now,
     };
@@ -381,6 +387,9 @@ export async function registerLocalAccount(input: {
       source: "local",
       walletAddress: null,
       credits: 20,
+      githubLogin: null,
+      githubTokenEnc: null,
+      githubConnectedAt: null,
       createdAt: now,
       updatedAt: now,
     };
@@ -438,10 +447,40 @@ export async function upsertPokerLinkedAccount(input: {
       source: "spirit-poker" satisfies AccountSource,
       walletAddress: input.sageAddress ?? null,
       credits: 20,
+      githubLogin: null,
+      githubTokenEnc: null,
+      githubConnectedAt: null,
       createdAt: now,
       updatedAt: now,
     };
     store.accounts.push(account);
+    return normalizeAccount(account);
+  });
+}
+
+export async function setGithubConnection(
+  accountId: string,
+  input: { login: string; tokenEnc: string },
+) {
+  return mutate((store) => {
+    const account = store.accounts.find((a) => a.id === accountId);
+    if (!account) throw new Error("Account not found");
+    account.githubLogin = input.login;
+    account.githubTokenEnc = input.tokenEnc;
+    account.githubConnectedAt = new Date().toISOString();
+    account.updatedAt = account.githubConnectedAt;
+    return normalizeAccount(account);
+  });
+}
+
+export async function clearGithubConnection(accountId: string) {
+  return mutate((store) => {
+    const account = store.accounts.find((a) => a.id === accountId);
+    if (!account) throw new Error("Account not found");
+    account.githubLogin = null;
+    account.githubTokenEnc = null;
+    account.githubConnectedAt = null;
+    account.updatedAt = new Date().toISOString();
     return normalizeAccount(account);
   });
 }
@@ -567,11 +606,19 @@ function normalizeJob(job: CodingJob): CodingJob {
     workspaceId,
     workspaceFileCount:
       typeof job.workspaceFileCount === "number" ? job.workspaceFileCount : 0,
+    githubBranch: job.githubBranch ?? null,
+    githubPrUrl: job.githubPrUrl ?? null,
   };
 }
 
 function normalizeProject(p: Project): Project {
-  return { ...p, title: p.title || "Untitled project" };
+  return {
+    ...p,
+    title: p.title || "Untitled project",
+    githubRepo: p.githubRepo ?? null,
+    githubDefaultBranch: p.githubDefaultBranch ?? null,
+    githubOpenPr: p.githubOpenPr !== false,
+  };
 }
 
 export async function listProjects(accountId: string) {
@@ -607,6 +654,9 @@ export async function createProject(input: {
         source: "local",
         walletAddress: null,
         credits: 0,
+        githubLogin: null,
+        githubTokenEnc: null,
+        githubConnectedAt: null,
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
       },
@@ -619,6 +669,9 @@ export async function createProject(input: {
       id: randomUUID(),
       accountId: input.accountId,
       title,
+      githubRepo: null,
+      githubDefaultBranch: null,
+      githubOpenPr: true,
       createdAt: now,
       updatedAt: now,
     };
@@ -632,6 +685,33 @@ export async function touchProject(projectId: string) {
     if (!store.projects) store.projects = [];
     const project = store.projects.find((p) => p.id === projectId);
     if (!project) return null;
+    project.updatedAt = new Date().toISOString();
+    return normalizeProject(project);
+  });
+}
+
+export async function updateProjectGithub(
+  projectId: string,
+  accountId: string,
+  input: {
+    githubRepo: string | null;
+    githubDefaultBranch?: string | null;
+    githubOpenPr?: boolean;
+  },
+) {
+  return mutate((store) => {
+    if (!store.projects) store.projects = [];
+    const project = store.projects.find((p) => p.id === projectId);
+    if (!project || project.accountId !== accountId) {
+      throw new Error("Project not found");
+    }
+    project.githubRepo = input.githubRepo;
+    if (input.githubDefaultBranch !== undefined) {
+      project.githubDefaultBranch = input.githubDefaultBranch;
+    }
+    if (typeof input.githubOpenPr === "boolean") {
+      project.githubOpenPr = input.githubOpenPr;
+    }
     project.updatedAt = new Date().toISOString();
     return normalizeProject(project);
   });
@@ -763,6 +843,8 @@ export async function enqueueJob(input: {
       workerId: null,
       workspaceId,
       workspaceFileCount: 0,
+      githubBranch: null,
+      githubPrUrl: null,
       createdAt: now,
       updatedAt: now,
       completedAt: null,
@@ -948,6 +1030,8 @@ export async function completeJob(input: {
   result?: string | null;
   error?: string | null;
   workspaceFileCount?: number;
+  githubBranch?: string | null;
+  githubPrUrl?: string | null;
   /** Claimed job snapshot from the worker — used if store.json lost the row. */
   snapshot?: CodingJob | null;
 }) {
@@ -988,6 +1072,12 @@ export async function completeJob(input: {
       current.error = null;
       if (typeof input.workspaceFileCount === "number") {
         current.workspaceFileCount = input.workspaceFileCount;
+      }
+      if (input.githubBranch !== undefined) {
+        current.githubBranch = input.githubBranch;
+      }
+      if (input.githubPrUrl !== undefined) {
+        current.githubPrUrl = input.githubPrUrl;
       }
     }
     current.updatedAt = now;

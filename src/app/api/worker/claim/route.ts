@@ -1,7 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getWorkerApiKey } from "@/lib/config";
+import { buildGithubJobContext } from "@/lib/github";
 import { formatAwsError } from "@/lib/s3-bucket";
-import { claimNextJob, markJobRunning } from "@/lib/store";
+import {
+  claimNextJob,
+  getAccount,
+  getProject,
+  markJobRunning,
+} from "@/lib/store";
 
 function authorize(req: NextRequest) {
   const key = req.headers.get("x-worker-key")?.trim();
@@ -23,7 +29,22 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ job: null });
     }
     await markJobRunning(job.id, body.workerId);
-    return NextResponse.json({ job: { ...job, status: "running" } });
+
+    let github = null;
+    try {
+      const account = await getAccount(job.accountId);
+      const project = job.projectId ? await getProject(job.projectId) : null;
+      if (account) {
+        github = buildGithubJobContext(account, project);
+      }
+    } catch (err) {
+      console.error("[worker/claim] github context", err);
+    }
+
+    return NextResponse.json({
+      job: { ...job, status: "running" },
+      github,
+    });
   } catch (err) {
     const message = formatAwsError(err);
     console.error("[worker/claim]", message);

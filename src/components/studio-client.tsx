@@ -16,11 +16,16 @@ type Account = {
   username?: string | null;
   walletAddress: string | null;
   credits: number;
+  githubConnected?: boolean;
+  githubLogin?: string | null;
 };
 
 type Project = {
   id: string;
   title: string;
+  githubRepo?: string | null;
+  githubDefaultBranch?: string | null;
+  githubOpenPr?: boolean;
   createdAt: string;
   updatedAt: string;
 };
@@ -39,8 +44,18 @@ type Job = {
   error: string | null;
   workspaceId?: string | null;
   workspaceFileCount?: number;
+  githubBranch?: string | null;
+  githubPrUrl?: string | null;
   createdAt: string;
   completedAt: string | null;
+};
+
+type GithubRepo = {
+  fullName: string;
+  defaultBranch: string;
+  private: boolean;
+  htmlUrl: string;
+  description: string | null;
 };
 
 type WorkspaceFile = { path: string; size: number };
@@ -52,7 +67,7 @@ export function StudioClient() {
   const [projectId, setProjectId] = useState<string | null>(null);
   const [jobs, setJobs] = useState<Job[]>([]);
   const [prompt, setPrompt] = useState(
-    "Build a small playable browser game I can open from the workspace zip.",
+    "Scaffold a TypeScript CLI in this repo with README, package.json, src/index.ts, and a basic test. Make it a solid starter for future DAT STARCODER turns.",
   );
   const [repoHint, setRepoHint] = useState("");
   const [modelId, setModelId] = useState(DEFAULT_MODEL_ID);
@@ -67,6 +82,9 @@ export function StudioClient() {
   const [previewPath, setPreviewPath] = useState<string | null>(null);
   const [previewContent, setPreviewContent] = useState<string | null>(null);
   const [panel, setPanel] = useState<"output" | "workspace">("output");
+  const [githubConfigured, setGithubConfigured] = useState(false);
+  const [repos, setRepos] = useState<GithubRepo[]>([]);
+  const [repoPick, setRepoPick] = useState("");
 
   const refresh = useCallback(async () => {
     // Retry briefly — Amplify/S3 can return a transient 401 while a job
@@ -111,6 +129,14 @@ export function StudioClient() {
       if (!projectId && pdata.projects?.[0]) {
         setProjectId(pdata.projects[0].id);
       }
+      if (pdata.account) setAccount(pdata.account);
+    }
+
+    const gh = await fetch("/api/github/status", { credentials: "same-origin" });
+    if (gh.ok) {
+      const gdata = await gh.json();
+      setGithubConfigured(Boolean(gdata.configured));
+      if (gdata.account) setAccount(gdata.account);
     }
   }, [selectedId, router, projectId]);
 
@@ -119,6 +145,135 @@ export function StudioClient() {
     const t = setInterval(() => void refresh(), 4000);
     return () => clearInterval(t);
   }, [refresh]);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const gh = params.get("github");
+    if (!gh) return;
+    if (gh === "connected") setSessionWarning("GitHub connected.");
+    else if (gh === "denied") setError("GitHub authorization was denied.");
+    else if (gh === "state" || gh === "error") {
+      setError("GitHub connect failed — try again.");
+    }
+    router.replace("/studio");
+  }, [router]);
+
+  useEffect(() => {
+    if (!account?.githubConnected) {
+      setRepos([]);
+      return;
+    }
+    void (async () => {
+      const res = await fetch("/api/github/repos", { credentials: "same-origin" });
+      if (!res.ok) return;
+      const data = await res.json();
+      setRepos(data.repos ?? []);
+    })();
+  }, [account?.githubConnected, account?.githubLogin]);
+
+  const activeProject = projects.find((p) => p.id === projectId) ?? null;
+
+  async function disconnectGithub() {
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/github/disconnect", {
+        method: "POST",
+        credentials: "same-origin",
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Disconnect failed");
+      setAccount(data.account);
+      setRepos([]);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Disconnect failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function linkRepoToProject(fullName: string) {
+    if (!projectId || !fullName) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const repo = repos.find((r) => r.fullName === fullName);
+      const res = await fetch(`/api/projects/${projectId}`, {
+        method: "PATCH",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          githubRepo: fullName,
+          githubDefaultBranch: repo?.defaultBranch || "main",
+          githubOpenPr: true,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Could not link repo");
+      setProjects((prev) =>
+        prev.map((p) => (p.id === data.project.id ? data.project : p)),
+      );
+      setRepoPick(fullName);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Link repo failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function createPlaygroundRepo() {
+    setBusy(true);
+    setError(null);
+    try {
+      let activeProjectId = projectId;
+      if (!activeProjectId) {
+        const created = await fetch("/api/projects", {
+          method: "POST",
+          credentials: "same-origin",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ title: "GitHub playground" }),
+        });
+        const pdata = await created.json();
+        if (!created.ok) {
+          throw new Error(pdata.error ?? "Could not create project");
+        }
+        activeProjectId = pdata.project.id as string;
+        setProjectId(activeProjectId);
+        setProjects((prev) => [pdata.project, ...prev]);
+      }
+
+      const res = await fetch("/api/github/repos", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: `dat-starcoder-playground-${Date.now().toString(36).slice(-5)}`,
+          projectId: activeProjectId,
+          private: false,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Could not create repo");
+      if (data.project) {
+        setProjects((prev) =>
+          prev.map((p) => (p.id === data.project.id ? data.project : p)),
+        );
+      }
+      setRepos((prev) => {
+        const next = [data.repo, ...prev.filter((r) => r.fullName !== data.repo.fullName)];
+        return next;
+      });
+      setRepoPick(data.repo.fullName);
+      setSessionWarning(`Created and linked ${data.repo.fullName}`);
+      setPrompt(
+        "Turn this playground into a real TypeScript project: package.json, src/index.ts, README with How to run, and a small feature I can extend in follow-up turns. Open a clean PR-ready structure.",
+      );
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Create repo failed");
+    } finally {
+      setBusy(false);
+    }
+  }
 
   const loadWorkspace = useCallback(async (jobId: string) => {
     const res = await fetch(`/api/jobs/${jobId}/workspace`, {
@@ -275,8 +430,94 @@ export function StudioClient() {
             <p className="mt-3 text-sm leading-relaxed text-steel-300">
               Work in a persistent project. Each message is a turn — the agent
               can list, read, edit, and run commands in the same workspace.
+              Link GitHub and it will clone, branch, and open a pull request.
               Cost: {CREDITS_PER_JOB} credits per turn.
             </p>
+
+            <div className="mt-8 border border-copper-800/50 bg-ink-900/60 p-4">
+              <p className="font-mono text-[11px] uppercase tracking-widest text-steel-400">
+                GitHub
+              </p>
+              {!githubConfigured ? (
+                <p className="mt-2 font-mono text-xs text-steel-500">
+                  Set <span className="text-copper-300">GITHUB_CLIENT_ID</span>{" "}
+                  and{" "}
+                  <span className="text-copper-300">GITHUB_CLIENT_SECRET</span>{" "}
+                  in Amplify to enable OAuth.
+                </p>
+              ) : !account?.githubConnected ? (
+                <div className="mt-3 flex flex-wrap items-center gap-3">
+                  <Button
+                    type="button"
+                    asChild
+                    className="rounded-none bg-copper-500 font-mono text-xs uppercase tracking-widest text-ink-950 hover:bg-copper-400"
+                  >
+                    <a href="/api/github/connect">Connect GitHub</a>
+                  </Button>
+                  <span className="font-mono text-[11px] text-steel-500">
+                    Grants repo access so the worker can open PRs.
+                  </span>
+                </div>
+              ) : (
+                <div className="mt-3 space-y-3">
+                  <p className="font-mono text-xs text-copper-200">
+                    Connected as @{account.githubLogin}
+                  </p>
+                  <div className="flex flex-wrap gap-2">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      disabled={busy}
+                      onClick={() => void createPlaygroundRepo()}
+                      className="rounded-none border-copper-700 font-mono text-xs uppercase tracking-widest text-copper-100"
+                    >
+                      Create playground repo
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      disabled={busy}
+                      onClick={() => void disconnectGithub()}
+                      className="rounded-none border-copper-800 font-mono text-xs uppercase tracking-widest text-steel-400"
+                    >
+                      Disconnect
+                    </Button>
+                  </div>
+                  {projectId && (
+                    <div>
+                      <label className="block font-mono text-[11px] uppercase tracking-widest text-steel-500">
+                        Link repo to this project
+                      </label>
+                      <div className="mt-2 flex flex-wrap gap-2">
+                        <select
+                          value={repoPick || activeProject?.githubRepo || ""}
+                          onChange={(e) => {
+                            setRepoPick(e.target.value);
+                            void linkRepoToProject(e.target.value);
+                          }}
+                          className="max-w-full rounded-none border border-copper-800/50 bg-ink-950 px-3 py-2 font-mono text-xs text-copper-100"
+                        >
+                          <option value="">Select a repository…</option>
+                          {repos.map((r) => (
+                            <option key={r.fullName} value={r.fullName}>
+                              {r.fullName}
+                              {r.private ? " (private)" : ""}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                      {activeProject?.githubRepo && (
+                        <p className="mt-2 font-mono text-[11px] text-steel-400">
+                          Linked: {activeProject.githubRepo} · base{" "}
+                          {activeProject.githubDefaultBranch || "main"} · PR on
+                          complete
+                        </p>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
 
             <label className="mt-8 block font-mono text-[11px] uppercase tracking-widest text-steel-400">
               Project
@@ -455,6 +696,22 @@ export function StudioClient() {
                   </div>
                   <StatusPill status={selected.status} />
                 </div>
+                {(selected.githubPrUrl || selected.githubBranch) && (
+                  <p className="mt-3 font-mono text-xs text-copper-300">
+                    {selected.githubPrUrl ? (
+                      <a
+                        href={selected.githubPrUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="underline decoration-copper-700 underline-offset-4 hover:text-copper-100"
+                      >
+                        Open pull request
+                      </a>
+                    ) : (
+                      <>Branch {selected.githubBranch}</>
+                    )}
+                  </p>
+                )}
 
                 <div className="mt-4 flex flex-wrap items-center gap-2">
                   <button
