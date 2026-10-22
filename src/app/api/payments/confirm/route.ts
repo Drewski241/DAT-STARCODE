@@ -2,15 +2,35 @@ import { NextRequest, NextResponse } from "next/server";
 import { toPublicAccount } from "@/lib/account-public";
 import { requireRegisteredAccount } from "@/lib/require-auth";
 import {
+  attachSession,
+  createSessionToken,
+} from "@/lib/session";
+import {
   confirmPayment,
+  getAccount,
   getPayment,
   listUsedBurnTxIds,
+  reconcileAccountCredits,
 } from "@/lib/store";
 import { verifyDatBurnOnChain } from "@/lib/verify-burn";
+import type { Account } from "@/lib/types";
 
 const allowDemo =
   process.env.ALLOW_DEMO_PAYMENTS === "1" ||
   process.env.NEXT_PUBLIC_ALLOW_DEMO_PAYMENTS === "1";
+
+async function withRefreshedSession(account: Account, payload: object) {
+  const token = await createSessionToken({
+    accountId: account.id,
+    username: account.username,
+    credits: account.credits,
+  });
+  const res = NextResponse.json({
+    ...payload,
+    account: toPublicAccount(account),
+  });
+  return attachSession(res, token, account.id);
+}
 
 export async function POST(req: NextRequest) {
   const auth = await requireRegisteredAccount();
@@ -45,11 +65,14 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
-  // Already credited — idempotent success.
+  // Already credited — idempotent success (reconcile in case balance drifted).
   if (payment.status === "confirmed" || payment.status === "demo") {
-    return NextResponse.json({
+    const account =
+      (await reconcileAccountCredits(auth.account.id)) ??
+      (await getAccount(auth.account.id)) ??
+      auth.account;
+    return withRefreshedSession(account, {
       payment,
-      account: toPublicAccount(auth.account),
       verified: payment.status === "confirmed",
     });
   }
@@ -61,9 +84,10 @@ export async function POST(req: NextRequest) {
         txId: body.txId,
         demo: true,
       });
-      return NextResponse.json({
+      const account =
+        (await reconcileAccountCredits(result.account.id)) ?? result.account;
+      return withRefreshedSession(account, {
         payment: result.payment,
-        account: toPublicAccount(result.account),
         verified: false,
         demo: true,
       });
@@ -89,10 +113,11 @@ export async function POST(req: NextRequest) {
       txId: verification.coinId,
       demo: false,
     });
+    const account =
+      (await reconcileAccountCredits(result.account.id)) ?? result.account;
 
-    return NextResponse.json({
+    return withRefreshedSession(account, {
       payment: result.payment,
-      account: toPublicAccount(result.account),
       verified: true,
       verification: {
         coinId: verification.coinId,

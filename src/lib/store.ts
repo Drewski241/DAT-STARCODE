@@ -1127,3 +1127,109 @@ export async function getPayments(accountId: string) {
     .filter((p) => p.accountId === accountId)
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 }
+
+/**
+ * Recompute credits from durable ledger rows so Amplify redeploys / store
+ * races cannot silently zero a balance when payments are still on S3.
+ *
+ * expected = signupBonus(20 if registered) + confirmed burns − spent on
+ * non-failed jobs (failed jobs already refunded into account.credits).
+ */
+export async function reconcileAccountCredits(accountId: string) {
+  return mutate((store) => {
+    const account = store.accounts.find((a) => a.id === accountId);
+    if (!account) return null;
+
+    const granted = store.payments
+      .filter(
+        (p) =>
+          p.accountId === accountId &&
+          (p.status === "confirmed" || p.status === "demo"),
+      )
+      .reduce((sum, p) => sum + (p.credits || 0), 0);
+
+    const spent = store.jobs
+      .filter(
+        (j) =>
+          j.accountId === accountId &&
+          (j.status === "queued" ||
+            j.status === "claimed" ||
+            j.status === "running" ||
+            j.status === "completed"),
+      )
+      .reduce((sum, j) => sum + (j.creditsCharged || 0), 0);
+
+    // Local/Spirit signup grants 20 once when the account is registered.
+    const signupBonus = account.username ? 20 : 0;
+    const expected = Math.max(0, signupBonus + granted - spent);
+
+    if (account.credits !== expected) {
+      account.credits = expected;
+      account.updatedAt = new Date().toISOString();
+    }
+    return normalizeAccount(account);
+  });
+}
+
+/** Operator/customer-safe snapshot: is the credit ledger on S3? */
+export async function getStorePersistenceInfo() {
+  const resolved = await resolveWorkspaceBucket();
+  const peek = peekWorkspaceBucketEnv();
+  if (!resolved.bucket) {
+    return {
+      mode: isAwsHosted() ? ("unconfigured" as const) : ("local" as const),
+      ok: !isAwsHosted(),
+      source: resolved.source,
+      error: resolved.error ?? null,
+      envPeek: peek,
+      key: getStoreS3Key(),
+    };
+  }
+  try {
+    const s3 = await getS3();
+    if (!s3) {
+      return {
+        mode: "unconfigured" as const,
+        ok: false,
+        source: resolved.source,
+        error: "bucket resolved but S3 client unavailable",
+        envPeek: peek,
+        key: getStoreS3Key(),
+      };
+    }
+    await s3.client.send(
+      new GetObjectCommand({
+        Bucket: s3.bucket,
+        Key: getStoreS3Key(),
+      }),
+    );
+    return {
+      mode: "s3" as const,
+      ok: true,
+      source: resolved.source,
+      bucketSuffix: s3.bucket.slice(-12),
+      error: null,
+      key: getStoreS3Key(),
+    };
+  } catch (err) {
+    if (isMissingS3Object(err)) {
+      return {
+        mode: "s3" as const,
+        ok: true,
+        source: resolved.source,
+        bucketSuffix: resolved.bucket.slice(-12),
+        error: null,
+        note: "store object not created yet — first write will create it",
+        key: getStoreS3Key(),
+      };
+    }
+    return {
+      mode: "s3" as const,
+      ok: false,
+      source: resolved.source,
+      bucketSuffix: resolved.bucket.slice(-12),
+      error: formatAwsError(err),
+      key: getStoreS3Key(),
+    };
+  }
+}

@@ -430,94 +430,91 @@ export function StudioClient() {
             <p className="mt-3 text-sm leading-relaxed text-steel-300">
               Work in a persistent project. Each message is a turn — the agent
               can list, read, edit, and run commands in the same workspace.
-              Link GitHub and it will clone, branch, and open a pull request.
+              {githubConfigured
+                ? " Connect GitHub to clone your repo, push a branch, and open a pull request."
+                : ""}{" "}
               Cost: {CREDITS_PER_JOB} credits per turn.
             </p>
 
-            <div className="mt-8 border border-copper-800/50 bg-ink-900/60 p-4">
-              <p className="font-mono text-[11px] uppercase tracking-widest text-steel-400">
-                GitHub
-              </p>
-              {!githubConfigured ? (
-                <p className="mt-2 font-mono text-xs text-steel-500">
-                  Set <span className="text-copper-300">GITHUB_CLIENT_ID</span>{" "}
-                  and{" "}
-                  <span className="text-copper-300">GITHUB_CLIENT_SECRET</span>{" "}
-                  in Amplify to enable OAuth.
+            {githubConfigured && (
+              <div className="mt-8 border border-copper-800/50 bg-ink-900/60 p-4">
+                <p className="font-mono text-[11px] uppercase tracking-widest text-steel-400">
+                  GitHub
                 </p>
-              ) : !account?.githubConnected ? (
-                <div className="mt-3 flex flex-wrap items-center gap-3">
-                  <Button
-                    type="button"
-                    asChild
-                    className="rounded-none bg-copper-500 font-mono text-xs uppercase tracking-widest text-ink-950 hover:bg-copper-400"
-                  >
-                    <a href="/api/github/connect">Connect GitHub</a>
-                  </Button>
-                  <span className="font-mono text-[11px] text-steel-500">
-                    Grants repo access so the worker can open PRs.
-                  </span>
-                </div>
-              ) : (
-                <div className="mt-3 space-y-3">
-                  <p className="font-mono text-xs text-copper-200">
-                    Connected as @{account.githubLogin}
-                  </p>
-                  <div className="flex flex-wrap gap-2">
+                {!account?.githubConnected ? (
+                  <div className="mt-3 flex flex-wrap items-center gap-3">
                     <Button
                       type="button"
-                      variant="outline"
-                      disabled={busy}
-                      onClick={() => void createPlaygroundRepo()}
-                      className="rounded-none border-copper-700 font-mono text-xs uppercase tracking-widest text-copper-100"
+                      asChild
+                      className="rounded-none bg-copper-500 font-mono text-xs uppercase tracking-widest text-ink-950 hover:bg-copper-400"
                     >
-                      Create playground repo
+                      <a href="/api/github/connect">Connect GitHub</a>
                     </Button>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      disabled={busy}
-                      onClick={() => void disconnectGithub()}
-                      className="rounded-none border-copper-800 font-mono text-xs uppercase tracking-widest text-steel-400"
-                    >
-                      Disconnect
-                    </Button>
+                    <span className="font-mono text-[11px] text-steel-500">
+                      Link a repo so the agent can open pull requests for you.
+                    </span>
                   </div>
-                  {projectId && (
-                    <div>
-                      <label className="block font-mono text-[11px] uppercase tracking-widest text-steel-500">
-                        Link repo to this project
-                      </label>
-                      <div className="mt-2 flex flex-wrap gap-2">
-                        <select
-                          value={repoPick || activeProject?.githubRepo || ""}
-                          onChange={(e) => {
-                            setRepoPick(e.target.value);
-                            void linkRepoToProject(e.target.value);
-                          }}
-                          className="max-w-full rounded-none border border-copper-800/50 bg-ink-950 px-3 py-2 font-mono text-xs text-copper-100"
-                        >
-                          <option value="">Select a repository…</option>
-                          {repos.map((r) => (
-                            <option key={r.fullName} value={r.fullName}>
-                              {r.fullName}
-                              {r.private ? " (private)" : ""}
-                            </option>
-                          ))}
-                        </select>
-                      </div>
-                      {activeProject?.githubRepo && (
-                        <p className="mt-2 font-mono text-[11px] text-steel-400">
-                          Linked: {activeProject.githubRepo} · base{" "}
-                          {activeProject.githubDefaultBranch || "main"} · PR on
-                          complete
-                        </p>
-                      )}
+                ) : (
+                  <div className="mt-3 space-y-3">
+                    <p className="font-mono text-xs text-copper-200">
+                      Connected as @{account.githubLogin}
+                    </p>
+                    <div className="flex flex-wrap gap-2">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        disabled={busy}
+                        onClick={() => void createPlaygroundRepo()}
+                        className="rounded-none border-copper-700 font-mono text-xs uppercase tracking-widest text-copper-100"
+                      >
+                        Create playground repo
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        disabled={busy}
+                        onClick={() => void disconnectGithub()}
+                        className="rounded-none border-copper-800 font-mono text-xs uppercase tracking-widest text-steel-400"
+                      >
+                        Disconnect
+                      </Button>
                     </div>
-                  )}
-                </div>
-              )}
-            </div>
+                    {projectId && (
+                      <div>
+                        <label className="block font-mono text-[11px] uppercase tracking-widest text-steel-500">
+                          Link repo to this project
+                        </label>
+                        <div className="mt-2 flex flex-wrap gap-2">
+                          <select
+                            value={repoPick || activeProject?.githubRepo || ""}
+                            onChange={(e) => {
+                              setRepoPick(e.target.value);
+                              void linkRepoToProject(e.target.value);
+                            }}
+                            className="max-w-full rounded-none border border-copper-800/50 bg-ink-950 px-3 py-2 font-mono text-xs text-copper-100"
+                          >
+                            <option value="">Select a repository…</option>
+                            {repos.map((r) => (
+                              <option key={r.fullName} value={r.fullName}>
+                                {r.fullName}
+                                {r.private ? " (private)" : ""}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                        {activeProject?.githubRepo && (
+                          <p className="mt-2 font-mono text-[11px] text-steel-400">
+                            Linked: {activeProject.githubRepo} · base{" "}
+                            {activeProject.githubDefaultBranch || "main"} · PR
+                            on complete
+                          </p>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
 
             <label className="mt-8 block font-mono text-[11px] uppercase tracking-widest text-steel-400">
               Project
