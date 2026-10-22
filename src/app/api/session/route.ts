@@ -1,10 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
 import { toPublicAccount } from "@/lib/account-public";
-import { readSessionAccountId } from "@/lib/session";
+import {
+  attachSession,
+  createSessionToken,
+  readSessionAccountId,
+} from "@/lib/session";
 import {
   getAccount,
   isRegisteredAccount,
   linkWallet,
+  reconcileAccountCredits,
   unlinkWallet,
 } from "@/lib/store";
 
@@ -13,11 +18,26 @@ export async function GET() {
   if (!accountId) {
     return NextResponse.json({ account: null });
   }
-  const account = await getAccount(accountId);
+  let account = await getAccount(accountId);
   if (!account || !isRegisteredAccount(account)) {
     return NextResponse.json({ account: null });
   }
-  return NextResponse.json({ account: toPublicAccount(account) });
+
+  // Rebuild balance from payments − jobs when the row drifted (redeploy races).
+  try {
+    const reconciled = await reconcileAccountCredits(accountId);
+    if (reconciled) account = reconciled;
+  } catch {
+    // keep last known account row
+  }
+
+  const token = await createSessionToken({
+    accountId: account.id,
+    username: account.username,
+    credits: account.credits,
+  });
+  const res = NextResponse.json({ account: toPublicAccount(account) });
+  return attachSession(res, token, account.id);
 }
 
 export async function PATCH(req: NextRequest) {
