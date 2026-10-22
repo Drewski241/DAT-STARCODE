@@ -30,6 +30,31 @@ const POLL_MS = Number(process.env.POLL_MS || 4000);
 /** Amplify/CloudFront reject large JSON bodies with empty 413 — stay under ~4MB. */
 const PUSH_MAX_BYTES = Number(process.env.WORKSPACE_PUSH_MAX_BYTES || 3_500_000);
 
+/** Fail fast if Studio selected a model that is not pulled on this box. */
+async function assertOllamaModel(model) {
+  const res = await fetch(`${OLLAMA_URL}/api/tags`);
+  if (!res.ok) {
+    throw new Error(
+      `Ollama not reachable at ${OLLAMA_URL} (tags ${res.status}). Start Ollama, then retry.`,
+    );
+  }
+  const data = await res.json();
+  const names = new Set(
+    (data.models || []).flatMap((m) => {
+      const n = String(m.name || m.model || "");
+      return n ? [n, n.replace(/:latest$/, "")] : [];
+    }),
+  );
+  const want = String(model || "").trim();
+  if (!want) throw new Error("No Ollama model resolved for job");
+  if (names.has(want) || names.has(want.replace(/:latest$/, ""))) return;
+  const available = [...names].filter(Boolean).sort().slice(0, 30).join(", ");
+  throw new Error(
+    `Ollama model '${want}' not found. Run: ollama pull ${want}` +
+      (available ? `\nPulled on this worker: ${available}` : ""),
+  );
+}
+
 async function claim() {
   const res = await fetch(`${API_BASE}/api/worker/claim`, {
     method: "POST",
@@ -185,6 +210,29 @@ async function loop() {
             ? ` github=${repoLabel}${github ? "" : " (commands)"}`
             : ""),
       );
+
+      try {
+        await assertOllamaModel(model);
+      } catch (preflightErr) {
+        const msg =
+          preflightErr instanceof Error
+            ? preflightErr.message
+            : String(preflightErr);
+        console.error(`[dat-starcoder-worker] model preflight: ${msg}`);
+        await complete(job, {
+          result: [
+            "# Agent error",
+            "",
+            msg,
+            "",
+            "## How to run / play",
+            "1. On the worker box run `ollama pull` for the Studio model you selected.",
+            "2. Confirm with `ollama list`, then retry the job.",
+          ].join("\n"),
+          error: msg,
+        });
+        continue;
+      }
 
       const { result, files, githubBranch, githubPrUrl } = await runAgentJob({
         job,

@@ -6,16 +6,21 @@ import { promises as fs } from "fs";
 import path from "path";
 import { spawn } from "child_process";
 import os from "os";
+import { fileURLToPath } from "url";
 import {
   commitPushAndOpenPr,
   formatPushCommands,
   prepareGithubWorkspace,
   preparePublicGithubWorkspace,
 } from "./github.mjs";
+import { verifyWorkspaceFiles, wantsChialisp } from "./verify.mjs";
 
 const MAX_STEPS = Number(process.env.AGENT_MAX_STEPS || 12);
+const HARD_TASK_STEPS = Number(process.env.AGENT_HARD_TASK_STEPS || 20);
 const RUN_TIMEOUT_MS = Number(process.env.AGENT_RUN_TIMEOUT_MS || 20000);
 const MAX_FILE_BYTES = 200_000;
+const PLAYBOOK_MAX_CHARS = 6_000;
+const AGENTS_MD_MAX_CHARS = 4_000;
 
 const HOW_TO_RUN = `
 Always end your final answer with a section titled exactly: ## How to run / play
@@ -23,6 +28,35 @@ Write numbered steps for a non-technical user. Include: download zip from Studio
 Workspace (if needed), unzip, which file to open or command to run, controls/usage,
 and common fixes. Never stop at only "download the zip".
 `.trim();
+
+const QUALITY_RULES = `
+Quality rules:
+- Never claim you deleted or fixed a file unless you verified with list_files / read_file after.
+- If the user asks for ChiaLisp / .clsp: write real ChiaLisp starting with (mod — never Common Lisp.
+- Before {"done":true} on a .clsp task, read_file the puzzle and confirm it has (mod and no defparameter/let*/mapcar.
+`.trim();
+
+async function loadPlaybook(name) {
+  try {
+    const p = path.join(path.dirname(new URL(import.meta.url).pathname), "playbooks", name);
+    const text = await fs.readFile(p, "utf8");
+    return text.slice(0, PLAYBOOK_MAX_CHARS);
+  } catch {
+    return null;
+  }
+}
+
+async function loadRepoAgentsMd(root) {
+  for (const rel of ["AGENTS.md", "agents.md", ".cursorrules"]) {
+    try {
+      const text = await fs.readFile(path.join(root, rel), "utf8");
+      if (text.trim()) return `${rel}:\n${text.slice(0, AGENTS_MD_MAX_CHARS)}`;
+    } catch {
+      /* missing */
+    }
+  }
+  return null;
+}
 
 function safeRel(p) {
   const n = String(p || "")
@@ -159,7 +193,7 @@ function parseAction(text) {
   return null;
 }
 
-function agentSystem(job, github, githubClone) {
+function agentSystem(job, github, githubClone, extras = {}) {
   const repoLabel =
     github?.repoFullName ||
     githubClone?.fullName ||
@@ -191,7 +225,14 @@ function agentSystem(job, github, githubClone) {
     "- Prefer static HTML/JS games/apps that need no system packages when possible.",
     "- For games/apps, make something runnable (often index.html).",
     "- Do not commit or push yourself; the worker handles git/PR or prints push commands.",
+    QUALITY_RULES,
     HOW_TO_RUN,
+    extras.playbook
+      ? `\n## Domain playbook (follow strictly)\n${extras.playbook}\n`
+      : "",
+    extras.agentsMd
+      ? `\n## Repository agent instructions\n${extras.agentsMd}\n`
+      : "",
     job.projectId ? `Project id: ${job.projectId}` : "",
     repoLabel
       ? `GitHub repo: ${repoLabel} (base ${github?.defaultBranch || githubClone?.defaultBranch || "main"})`
@@ -309,13 +350,23 @@ export async function runAgentJob({
       }
     }
 
+    const hardTask = wantsChialisp(job.prompt);
+    const stepLimit = hardTask ? HARD_TASK_STEPS : MAX_STEPS;
+    const playbook = hardTask ? await loadPlaybook("chialisp.md") : null;
+    if (playbook) log(`[agent] loaded chialisp playbook (${playbook.length} chars)`);
+    const agentsMd = await loadRepoAgentsMd(root);
+    if (agentsMd) log(`[agent] loaded repo agent instructions`);
+
     const messages = [
-      { role: "system", content: agentSystem(job, github, githubClone) },
+      {
+        role: "system",
+        content: agentSystem(job, github, githubClone, { playbook, agentsMd }),
+      },
     ];
     let finalMessage = "";
 
-    for (let step = 0; step < MAX_STEPS; step++) {
-      log(`[agent] step ${step + 1}/${MAX_STEPS} job=${job.id.slice(0, 8)}`);
+    for (let step = 0; step < stepLimit; step++) {
+      log(`[agent] step ${step + 1}/${stepLimit} job=${job.id.slice(0, 8)}`);
       let content;
       try {
         content = await ollamaChat(ollamaUrl, model, messages);
@@ -327,7 +378,7 @@ export async function runAgentJob({
           "",
           "## How to run / play",
           "1. Open Studio → Workspace → Download zip if files exist.",
-          "2. Retry the job after confirming Ollama is running.",
+          "2. Retry the job after confirming Ollama is running and the selected model is pulled (`ollama list`).",
         ].join("\n");
         break;
       }
@@ -393,6 +444,29 @@ export async function runAgentJob({
     }
 
     const files = await collectLocalFiles(root);
+    const verification = verifyWorkspaceFiles(files);
+    if (!verification.ok) {
+      log(`[agent] verification failed: ${verification.failures.join("; ")}`);
+      finalMessage += [
+        "",
+        "## Verification failed",
+        "",
+        "DAT STARCODER checked the workspace and rejected these deliverables:",
+        ...verification.failures.map((f) => `- ${f}`),
+        "",
+        "Do not treat this turn as done. Re-run with a fix prompt (or a stronger model).",
+      ].join("\n");
+    } else if (hardTask) {
+      const clsp = files.filter((f) => /\.clsp$/i.test(f.path));
+      if (clsp.length === 0) {
+        finalMessage += [
+          "",
+          "## Verification failed",
+          "",
+          "- Prompt asked for ChiaLisp / .clsp but no `.clsp` file was written.",
+        ].join("\n");
+      }
+    }
     await pushWorkspace(job, files);
 
     if (githubPath === "oauth" && github && githubBranch) {
