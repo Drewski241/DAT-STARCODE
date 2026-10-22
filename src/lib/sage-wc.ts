@@ -13,31 +13,60 @@ import { sageOptionalNamespaces, sageRequiredNamespaces } from "@/lib/sage";
 
 const CHAIN = "chia:mainnet";
 const SESSION_KEY = "dat-starcoder-wc-session";
-const INIT_TIMEOUT_MS = 20_000;
+const INIT_TIMEOUT_MS = 18_000;
 const CONNECT_TIMEOUT_MS = 25_000;
+/** Primary + fallback — some networks block one hostname. */
+const RELAY_URLS = [
+  "wss://relay.walletconnect.com",
+  "wss://relay.walletconnect.org",
+] as const;
 
 let clientPromise: Promise<InstanceType<typeof SignClient>> | null = null;
 let activeSession: SessionTypes.Struct | null = null;
+let activeRelayUrl: string | null = null;
 
 function requireProjectId() {
   const id = WALLETCONNECT_PROJECT_ID?.trim();
   if (!id) {
     throw new Error(
-      "Set NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID in Amplify (from cloud.walletconnect.com), redeploy, then Connect Sage again.",
+      "Set NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID in Amplify (from dashboard.reown.com), redeploy, then Connect Sage again.",
     );
   }
   return id;
 }
 
-function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+export function walletConnectProjectIdFingerprint() {
+  const id = WALLETCONNECT_PROJECT_ID?.trim() || "";
+  if (!id) return null;
+  if (id.length < 8) return `${id.length} chars`;
+  return `${id.slice(0, 4)}…${id.slice(-4)} (${id.length} chars)`;
+}
+
+export function walletConnectDiagnostics() {
+  const origin =
+    typeof window !== "undefined" ? window.location.origin : "(server)";
+  return {
+    origin,
+    projectIdFingerprint: walletConnectProjectIdFingerprint(),
+    relayAttempted: activeRelayUrl,
+  };
+}
+
+function relayTimeoutHelp(label: string, ms: number, projectId: string) {
+  const origin =
+    typeof window !== "undefined" ? window.location.origin : "https://datstarcoder.com";
+  const fp = `${projectId.slice(0, 4)}…${projectId.slice(-4)}`;
+  return [
+    `${label} timed out after ${Math.round(ms / 1000)}s.`,
+    `Origin: ${origin}. Project id in this build: ${fp}.`,
+    "In Reown dashboard → your project → Domains / Allowlist, add BOTH https://datstarcoder.com and https://www.datstarcoder.com (wait ~15 min).",
+    "Then retry on another network (phone hotspot). VPN/adblock often blocks wss://relay.walletconnect.com.",
+  ].join(" ");
+}
+
+function withTimeout<T>(promise: Promise<T>, ms: number, onTimeout: () => Error): Promise<T> {
   return new Promise<T>((resolve, reject) => {
-    const timer = setTimeout(() => {
-      reject(
-        new Error(
-          `${label} timed out after ${Math.round(ms / 1000)}s. Check your network, disable VPN blockers for wss://relay.walletconnect.com, confirm the WalletConnect project id, then try again.`,
-        ),
-      );
-    }, ms);
+    const timer = setTimeout(() => reject(onTimeout()), ms);
     promise.then(
       (v) => {
         clearTimeout(timer);
@@ -55,33 +84,51 @@ function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise
 export async function resetSageWalletConnect() {
   activeSession = null;
   clientPromise = null;
+  activeRelayUrl = null;
   if (typeof window !== "undefined") {
     window.sessionStorage.removeItem(SESSION_KEY);
   }
 }
 
+async function initOnRelay(projectId: string, relayUrl: string) {
+  return withTimeout(
+    SignClient.init({
+      projectId,
+      relayUrl,
+      metadata: {
+        name: APP_NAME,
+        description:
+          "Burn DAT for coding credits — permanently out of circulation",
+        url:
+          typeof window !== "undefined"
+            ? window.location.origin
+            : "https://datstarcoder.com",
+        icons: ["https://datstarcoder.com/favicon.ico"],
+      },
+    }),
+    INIT_TIMEOUT_MS,
+    () => new Error(relayTimeoutHelp("WalletConnect relay connect", INIT_TIMEOUT_MS, projectId)),
+  );
+}
+
 async function getClient() {
   if (!clientPromise) {
     const projectId = requireProjectId();
-    clientPromise = withTimeout(
-      SignClient.init({
-        projectId,
-        // Explicit relay — some environments fail open-ended discovery.
-        relayUrl: "wss://relay.walletconnect.com",
-        metadata: {
-          name: APP_NAME,
-          description:
-            "Burn DAT for coding credits — permanently out of circulation",
-          url:
-            typeof window !== "undefined"
-              ? window.location.origin
-              : "https://datstarcoder.com",
-          icons: ["https://datstarcoder.com/favicon.ico"],
-        },
-      }),
-      INIT_TIMEOUT_MS,
-      "WalletConnect relay connect",
-    ).catch((err) => {
+    clientPromise = (async () => {
+      const errors: string[] = [];
+      for (const relayUrl of RELAY_URLS) {
+        try {
+          const client = await initOnRelay(projectId, relayUrl);
+          activeRelayUrl = relayUrl;
+          return client;
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          errors.push(`${relayUrl}: ${msg}`);
+          activeRelayUrl = null;
+        }
+      }
+      throw new Error(errors[errors.length - 1] || "WalletConnect relay failed");
+    })().catch((err) => {
       clientPromise = null;
       throw err;
     });
@@ -148,7 +195,14 @@ export async function connectSageWallet(): Promise<SageConnectResult> {
         optionalNamespaces: sageOptionalNamespaces(),
       }),
       CONNECT_TIMEOUT_MS,
-      "WalletConnect pairing",
+      () =>
+        new Error(
+          relayTimeoutHelp(
+            "WalletConnect pairing",
+            CONNECT_TIMEOUT_MS,
+            requireProjectId(),
+          ),
+        ),
     );
     uri = connected.uri;
     approval = connected.approval;
