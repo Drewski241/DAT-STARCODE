@@ -16,7 +16,7 @@ import {
 import { verifyWorkspaceFiles, wantsChialisp } from "./verify.mjs";
 
 const MAX_STEPS = Number(process.env.AGENT_MAX_STEPS || 12);
-const HARD_TASK_STEPS = Number(process.env.AGENT_HARD_TASK_STEPS || 20);
+const HARD_TASK_STEPS = Number(process.env.AGENT_HARD_TASK_STEPS || 40);
 const RUN_TIMEOUT_MS = Number(process.env.AGENT_RUN_TIMEOUT_MS || 20000);
 const MAX_FILE_BYTES = 200_000;
 const PLAYBOOK_MAX_CHARS = 6_000;
@@ -38,7 +38,8 @@ Quality rules:
 
 async function loadPlaybook(name) {
   try {
-    const p = path.join(path.dirname(new URL(import.meta.url).pathname), "playbooks", name);
+    const here = path.dirname(fileURLToPath(import.meta.url));
+    const p = path.join(here, "playbooks", name);
     const text = await fs.readFile(p, "utf8");
     return text.slice(0, PLAYBOOK_MAX_CHARS);
   } catch {
@@ -364,8 +365,10 @@ export async function runAgentJob({
       },
     ];
     let finalMessage = "";
+    let stepsUsed = 0;
 
     for (let step = 0; step < stepLimit; step++) {
+      stepsUsed = step + 1;
       log(`[agent] step ${step + 1}/${stepLimit} job=${job.id.slice(0, 8)}`);
       let content;
       try {
@@ -507,6 +510,7 @@ export async function runAgentJob({
         : githubBranch
           ? `Branch: ${githubBranch}${githubPath === "commands" ? " (push with commands below)" : ""}`
           : "",
+      `Steps: ${stepsUsed}/${stepLimit}`,
       "Mode: tool agent loop",
       "",
     ]
@@ -518,6 +522,7 @@ export async function runAgentJob({
       files,
       githubBranch,
       githubPrUrl,
+      stepsUsed,
     };
   } finally {
     await fs.rm(root, { recursive: true, force: true }).catch(() => undefined);

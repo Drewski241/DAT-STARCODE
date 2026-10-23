@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { toPublicAccount } from "@/lib/account-public";
 import { buildContinueContext } from "@/lib/job-context";
+import { priceJob } from "@/lib/job-pricing";
 import { resolveModel } from "@/lib/models";
 import { requireRegisteredAccount } from "@/lib/require-auth";
 import {
@@ -28,6 +29,28 @@ export async function GET(req: NextRequest) {
   return NextResponse.json({
     account: toPublicAccount(auth.account),
     jobs,
+  });
+}
+
+/** Quote credits for a prompt + model without enqueueing. */
+export async function PUT(req: NextRequest) {
+  const auth = await requireRegisteredAccount();
+  if ("error" in auth) return auth.error;
+
+  const body = (await req.json().catch(() => ({}))) as {
+    prompt?: string;
+    model?: string;
+  };
+  const prompt = body.prompt?.trim() || "";
+  const resolved = resolveModel(body.model, prompt || "code");
+  const pricing = priceJob({
+    prompt: prompt || "code task",
+    modelId: resolved.resolved,
+  });
+  return NextResponse.json({
+    account: toPublicAccount(auth.account),
+    pricing,
+    model: resolved,
   });
 }
 
@@ -107,9 +130,14 @@ export async function POST(req: NextRequest) {
         ? await setJobWorkspaceFileCount(result.job.id, seeded.length)
         : result.job;
 
+    const pricing = priceJob({
+      prompt: body.prompt,
+      modelId: resolved.resolved,
+    });
     return NextResponse.json({
       job,
       account: toPublicAccount(result.account),
+      pricing,
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Enqueue failed";
