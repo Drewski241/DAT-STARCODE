@@ -200,6 +200,56 @@ export async function writeWorkspaceFiles(
   return written;
 }
 
+/**
+ * Remove paths from the job/project workspace (S3 or local).
+ * Used when the worker agent deletes files that were previously synced.
+ */
+export async function deleteWorkspaceFiles(
+  job: WorkspaceJob,
+  paths: string[],
+): Promise<string[]> {
+  const deleted: string[] = [];
+  const safe = paths
+    .map((p) => normalizePath(p))
+    .filter((rel) => isSafeWorkspacePath(rel));
+  if (safe.length === 0) return deleted;
+
+  const s3 = await getS3();
+  if (s3) {
+    // DeleteObjects accepts up to 1000 keys per call.
+    for (let i = 0; i < safe.length; i += 1000) {
+      const chunk = safe.slice(i, i + 1000);
+      const res = await s3.client.send(
+        new DeleteObjectsCommand({
+          Bucket: s3.bucket,
+          Delete: {
+            Objects: chunk.map((rel) => ({ Key: s3Key(job, rel) })),
+            Quiet: true,
+          },
+        }),
+      );
+      const failed = new Set(
+        (res.Errors ?? []).map((e) => e.Key).filter(Boolean) as string[],
+      );
+      for (const rel of chunk) {
+        if (!failed.has(s3Key(job, rel))) deleted.push(rel);
+      }
+    }
+    return deleted;
+  }
+
+  for (const rel of safe) {
+    const full = path.join(localRoot(job), rel);
+    try {
+      await fs.rm(full, { force: true });
+      deleted.push(rel);
+    } catch {
+      /* ignore missing */
+    }
+  }
+  return deleted;
+}
+
 export async function materializeWorkspaceFromResult(
   job: CodingJob,
   result: string,

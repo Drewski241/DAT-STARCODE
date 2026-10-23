@@ -32,6 +32,7 @@ and common fixes. Never stop at only "download the zip".
 const QUALITY_RULES = `
 Quality rules:
 - Never claim you deleted or fixed a file unless you verified with list_files / read_file after.
+- rm / unlink of files that were pulled from Studio are synced back (workspace deletes). Prefer real deletes over leaving NOTE stubs.
 - If the user asks for ChiaLisp / .clsp: write real ChiaLisp starting with (mod — never Common Lisp.
 - Before {"done":true} on a .clsp task, read_file the puzzle and confirm it has (mod and no defparameter/let*/mapcar.
 `.trim();
@@ -307,9 +308,12 @@ export async function runAgentJob({
   let githubPath = null;
   try {
     const pulled = await pullWorkspace(job);
+    /** Paths that existed in Studio before this turn — used to detect deletes. */
+    const pulledPaths = [];
     for (const f of pulled.files || []) {
       const safe = safeRel(f.path);
       if (!safe) continue;
+      pulledPaths.push(safe);
       const full = path.join(root, safe);
       await fs.mkdir(path.dirname(full), { recursive: true });
       await fs.writeFile(full, f.content ?? "", "utf8");
@@ -470,7 +474,22 @@ export async function runAgentJob({
         ].join("\n");
       }
     }
-    await pushWorkspace(job, files);
+
+    // Paths that were in Studio at pull but are gone on disk → delete from S3.
+    const deletePaths = [];
+    for (const rel of pulledPaths) {
+      try {
+        await fs.access(path.join(root, rel));
+      } catch {
+        deletePaths.push(rel);
+      }
+    }
+    if (deletePaths.length) {
+      log(
+        `[agent] workspace deletes (${deletePaths.length}): ${deletePaths.slice(0, 12).join(", ")}${deletePaths.length > 12 ? "…" : ""}`,
+      );
+    }
+    await pushWorkspace(job, files, deletePaths);
 
     if (githubPath === "oauth" && github && githubBranch) {
       try {

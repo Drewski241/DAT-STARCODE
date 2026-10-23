@@ -79,7 +79,7 @@ async function claim() {
   };
 }
 
-async function workspacePost(job, action, files) {
+async function workspacePost(job, action, files, deletePaths = []) {
   const res = await fetch(`${API_BASE}/api/worker/workspace`, {
     method: "POST",
     headers: {
@@ -91,6 +91,7 @@ async function workspacePost(job, action, files) {
       workerId: WORKER_ID,
       action,
       files,
+      deletePaths,
     }),
   });
   if (!res.ok) {
@@ -100,24 +101,23 @@ async function workspacePost(job, action, files) {
   return res.json();
 }
 
-function payloadBytes(job, action, files) {
+function payloadBytes(job, action, files, deletePaths = []) {
   return Buffer.byteLength(
     JSON.stringify({
       jobId: job.id,
       workerId: WORKER_ID,
       action,
       files,
+      deletePaths,
     }),
     "utf8",
   );
 }
 
 /** Push workspace files in chunks so Amplify does not 413 the request. */
-async function pushWorkspaceChunked(job, files) {
+async function pushWorkspaceChunked(job, files, deletePaths = []) {
   const list = Array.isArray(files) ? files : [];
-  if (list.length === 0) {
-    return workspacePost(job, "push", []);
-  }
+  const deletes = Array.isArray(deletePaths) ? deletePaths : [];
 
   let batch = [];
   let written = 0;
@@ -125,36 +125,46 @@ async function pushWorkspaceChunked(job, files) {
 
   const flush = async () => {
     if (batch.length === 0) return;
-    const result = await workspacePost(job, "push", batch);
+    const result = await workspacePost(job, "push", batch, []);
     written += Number(result.written || batch.length);
     batches += 1;
     batch = [];
   };
 
   for (const file of list) {
-    const alone = payloadBytes(job, "push", [file]);
+    const alone = payloadBytes(job, "push", [file], []);
     if (alone > PUSH_MAX_BYTES) {
       console.warn(
         `[dat-starcoder-worker] skip oversized file ${file.path} (${alone} bytes payload)`,
       );
       continue;
     }
-    const withFile = payloadBytes(job, "push", [...batch, file]);
+    const withFile = payloadBytes(job, "push", [...batch, file], []);
     if (batch.length > 0 && withFile > PUSH_MAX_BYTES) {
       await flush();
     }
     batch.push(file);
   }
   await flush();
+
+  let deleted = 0;
+  if (deletes.length > 0) {
+    // Deletes are path strings only — usually one small request.
+    const delResult = await workspacePost(job, "push", [], deletes);
+    deleted = Number(delResult.deleted || deletes.length);
+  } else if (list.length === 0) {
+    await workspacePost(job, "push", [], []);
+  }
+
   console.log(
-    `[dat-starcoder-worker] workspace push ok written≈${written} batches=${batches}`,
+    `[dat-starcoder-worker] workspace push ok written≈${written} deleted≈${deleted} batches=${batches}`,
   );
-  return { ok: true, written, batches };
+  return { ok: true, written, deleted, batches };
 }
 
-async function workspaceAction(job, action, files) {
+async function workspaceAction(job, action, files, deletePaths) {
   if (action === "push") {
-    return pushWorkspaceChunked(job, files);
+    return pushWorkspaceChunked(job, files, deletePaths);
   }
   return workspacePost(job, action, files);
 }
@@ -244,7 +254,7 @@ async function loop() {
           github,
           githubClone,
           pullWorkspace: (j) => workspaceAction(j, "pull"),
-          pushWorkspace: (j, f) => workspaceAction(j, "push", f),
+          pushWorkspace: (j, f, dels) => workspaceAction(j, "push", f, dels),
           log: console.log,
         });
 
