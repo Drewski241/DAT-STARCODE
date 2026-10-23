@@ -14,6 +14,17 @@ User goal (even from a short prompt): an on-chain **tournament pool** that takes
 5. If `puzzle_hash` tool / cdv is available: run it and put the hex hash in `docs/MTT_POOL.md` under `## Pool puzzle hash` (or note cdv missing).
 6. Remove stub junk (`pool_coin.py`, fake `.cl`, duplicate sage files) with real `rm`.
 
+## Pool puzzle hash format (required)
+
+```markdown
+## Pool puzzle hash
+
+`aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa`
+```
+
+- Bare 64 hex chars only — **no** `0x` prefix, **no** invented placeholders.
+- Prefer the `puzzle_hash` tool. The worker also auto-documents via cdv when available.
+
 ## First action
 
 Write `PLAN.md` with: Goal / Done when / Files — then implement. Keep user-facing prompts short; you already know the end state.
