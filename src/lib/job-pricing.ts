@@ -1,5 +1,14 @@
-import { CREDITS_PER_JOB } from "@/lib/config";
 import { resolveModel } from "@/lib/models";
+
+/**
+ * Base credits per turn — prefer NEXT_PUBLIC_ so Studio (client) and API agree.
+ * Falls back to CREDITS_PER_JOB then 5.
+ */
+export const CREDITS_PER_JOB_PRICED = Number(
+  process.env.NEXT_PUBLIC_CREDITS_PER_JOB ??
+    process.env.CREDITS_PER_JOB ??
+    5,
+);
 
 /** Extra credits when the prompt looks like a hard niche domain (e.g. ChiaLisp). */
 export const CREDITS_HARD_DOMAIN = Number(
@@ -45,7 +54,7 @@ export function priceJob(input: {
   modelId?: string | null;
 }): JobPriceBreakdown {
   const resolved = resolveModel(input.modelId, input.prompt);
-  const base = CREDITS_PER_JOB;
+  const base = CREDITS_PER_JOB_PRICED;
   const modelMultiplier = modelCreditMultiplier(resolved.resolved);
   const modelCredits = base * modelMultiplier;
   const hardDomain = isHardDomainPrompt(input.prompt);
