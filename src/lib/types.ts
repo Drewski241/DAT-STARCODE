@@ -83,6 +83,8 @@ export interface CodingJob {
   modelReason: string;
   status: JobStatus;
   creditsCharged: number;
+  /** Agent loop steps used (reported by worker; for metering / future refunds). */
+  stepsUsed: number | null;
   result: string | null;
   error: string | null;
   workerId: string | null;

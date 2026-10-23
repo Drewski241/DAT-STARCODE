@@ -15,8 +15,9 @@ import type {
   Project,
   StoreSnapshot,
 } from "@/lib/types";
-import { CREDITS_PER_JOB, DAT_ASSET_ID } from "@/lib/config";
+import { DAT_ASSET_ID } from "@/lib/config";
 import { creditsForDat } from "@/lib/economy";
+import { priceJob } from "@/lib/job-pricing";
 import { resolveModel } from "@/lib/models";
 import { hashPassword, verifyPassword } from "@/lib/password";
 import { awsClientConfig } from "@/lib/aws-creds";
@@ -619,6 +620,7 @@ function normalizeJob(job: CodingJob): CodingJob {
     githubUrl: job.githubUrl ?? null,
     githubBranch: job.githubBranch ?? null,
     githubPrUrl: job.githubPrUrl ?? null,
+    stepsUsed: typeof job.stepsUsed === "number" ? job.stepsUsed : null,
   };
 }
 
@@ -823,9 +825,15 @@ export async function enqueueJob(input: {
       account = ensureAccount(store, input.accountSeed);
     }
     if (!account) throw new Error("Account not found");
-    if (account.credits < CREDITS_PER_JOB) {
+    // Price from the resolved Ollama tag (Auto already picked 7B vs general).
+    const priced = priceJob({
+      prompt: input.prompt,
+      modelId: input.modelResolved,
+    });
+    const charge = priced.total;
+    if (account.credits < charge) {
       throw new Error(
-        `Need ${CREDITS_PER_JOB} credits; balance is ${account.credits}`,
+        `Need ${charge} credits (${priced.lines.join("; ")}); balance is ${account.credits}`,
       );
     }
     const projectId = input.projectId?.trim() || null;
@@ -840,7 +848,7 @@ export async function enqueueJob(input: {
       projectGithubUrl = project.githubUrl ?? project.githubRepo ?? null;
     }
     const now = new Date().toISOString();
-    account.credits -= CREDITS_PER_JOB;
+    account.credits -= charge;
     account.updatedAt = now;
     const id = randomUUID();
     const workspaceId = projectId
@@ -859,7 +867,8 @@ export async function enqueueJob(input: {
       modelResolved: input.modelResolved,
       modelReason: input.modelReason,
       status: "queued",
-      creditsCharged: CREDITS_PER_JOB,
+      creditsCharged: charge,
+      stepsUsed: null,
       result: null,
       error: null,
       workerId: null,
@@ -1054,6 +1063,7 @@ export async function completeJob(input: {
   workspaceFileCount?: number;
   githubBranch?: string | null;
   githubPrUrl?: string | null;
+  stepsUsed?: number | null;
   /** Claimed job snapshot from the worker — used if store.json lost the row. */
   snapshot?: CodingJob | null;
 }) {
@@ -1101,6 +1111,9 @@ export async function completeJob(input: {
       if (input.githubPrUrl !== undefined) {
         current.githubPrUrl = input.githubPrUrl;
       }
+    }
+    if (typeof input.stepsUsed === "number") {
+      current.stepsUsed = input.stepsUsed;
     }
     current.updatedAt = now;
     current.completedAt = now;

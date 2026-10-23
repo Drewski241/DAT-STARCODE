@@ -19,6 +19,7 @@ export async function POST(req: NextRequest) {
     files?: ExtractedFile[];
     githubBranch?: string | null;
     githubPrUrl?: string | null;
+    stepsUsed?: number | null;
     snapshot?: CodingJob | null;
   };
 
@@ -53,6 +54,7 @@ export async function POST(req: NextRequest) {
       workspaceFileCount,
       githubBranch: body.githubBranch,
       githubPrUrl: body.githubPrUrl,
+      stepsUsed: body.stepsUsed,
       snapshot: body.snapshot,
     });
     return NextResponse.json({ job });

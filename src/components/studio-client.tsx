@@ -7,8 +7,8 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
 import { SiteHeader } from "@/components/site-header";
-import { CREDITS_PER_JOB } from "@/lib/config";
-import { DEFAULT_MODEL_ID, MODEL_OPTIONS } from "@/lib/models";
+import { priceJob } from "@/lib/job-pricing";
+import { DEFAULT_MODEL_ID, MODEL_OPTIONS, resolveModel } from "@/lib/models";
 import { cn } from "@/lib/utils";
 
 type Account = {
@@ -436,6 +436,11 @@ export function StudioClient() {
 
   const selected = jobs.find((j) => j.id === selectedId) ?? jobs[0] ?? null;
   const selectedModel = MODEL_OPTIONS.find((m) => m.id === modelId);
+  const resolvedForPrice = resolveModel(modelId, prompt);
+  const turnPrice = priceJob({
+    prompt,
+    modelId: resolvedForPrice.resolved,
+  });
 
   if (authed === false) {
     return (
@@ -479,7 +484,7 @@ export function StudioClient() {
               {githubConfigured
                 ? " Or connect GitHub for one-click pull requests."
                 : ""}{" "}
-              Cost: {CREDITS_PER_JOB} credits per turn.
+              Cost depends on model and task difficulty (shown on Send).
             </p>
 
             {githubConfigured && (
@@ -697,14 +702,28 @@ export function StudioClient() {
               “how do I play?” or “add a score” without starting over.
             </p>
 
-            <div className="mt-6 flex flex-wrap items-center gap-3">
+            <p className="mt-4 font-mono text-[11px] text-steel-400">
+              This turn:{" "}
+              <span className="text-copper-200">{turnPrice.total} credits</span>
+              {turnPrice.hardDomain ? " · hard domain" : ""}
+              {turnPrice.modelMultiplier > 1
+                ? ` · ${resolvedForPrice.resolved} ×${turnPrice.modelMultiplier}`
+                : ""}
+              {account != null && account.credits < turnPrice.total ? (
+                <span className="text-rose-300">
+                  {" "}
+                  · need {turnPrice.total - account.credits} more
+                </span>
+              ) : null}
+            </p>
+            <div className="mt-3 flex flex-wrap items-center gap-3">
               <Button
                 type="button"
                 onClick={submitJob}
-                disabled={busy}
+                disabled={busy || (account != null && account.credits < turnPrice.total)}
                 className="rounded-none bg-copper-500 font-mono text-xs uppercase tracking-widest text-ink-950 hover:bg-copper-400"
               >
-                {busy ? "Queuing…" : `Send turn · ${CREDITS_PER_JOB} cr`}
+                {busy ? "Queuing…" : `Send turn · ${turnPrice.total} cr`}
               </Button>
               <Link
                 href="/#pay"
@@ -742,12 +761,16 @@ export function StudioClient() {
                       <StatusPill status={job.status} />
                     </div>
                     <p className="mt-1 truncate font-mono text-[10px] text-steel-500">
+                      {job.creditsCharged ? `${job.creditsCharged} cr` : ""}
                       {job.modelResolved
-                        ? `${job.modelRequested === "auto" ? "auto → " : ""}${job.modelResolved}`
+                        ? `${job.creditsCharged ? " · " : ""}${job.modelRequested === "auto" ? "auto → " : ""}${job.modelResolved}`
                         : ""}
                       {typeof job.workspaceFileCount === "number" &&
                       job.workspaceFileCount > 0
                         ? ` · ${job.workspaceFileCount} files`
+                        : ""}
+                      {typeof job.stepsUsed === "number"
+                        ? ` · ${job.stepsUsed} steps`
                         : ""}
                     </p>
                   </button>

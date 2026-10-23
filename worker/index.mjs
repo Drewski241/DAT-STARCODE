@@ -10,6 +10,7 @@
  *   OLLAMA_MODEL             fallback if a job has no modelResolved
  *   POLL_MS                  default 4000
  *   AGENT_MAX_STEPS          default 12
+ *   AGENT_HARD_TASK_STEPS    default 40 (ChiaLisp / .clsp prompts)
  */
 
 import { runAgentJob } from "./agent.mjs";
@@ -158,7 +159,7 @@ async function workspaceAction(job, action, files) {
   return workspacePost(job, action, files);
 }
 
-async function complete(job, { result, error, githubBranch, githubPrUrl }) {
+async function complete(job, { result, error, githubBranch, githubPrUrl, stepsUsed }) {
   // Files are already on S3 via chunked workspace push — omit them here so
   // complete does not hit the same Amplify body limit. Server still writes RESULT.md.
   const payload = {
@@ -168,6 +169,7 @@ async function complete(job, { result, error, githubBranch, githubPrUrl }) {
     error,
     githubBranch: githubBranch || null,
     githubPrUrl: githubPrUrl || null,
+    stepsUsed: typeof stepsUsed === "number" ? stepsUsed : null,
     snapshot: job,
   };
   let lastErr;
@@ -234,20 +236,22 @@ async function loop() {
         continue;
       }
 
-      const { result, files, githubBranch, githubPrUrl } = await runAgentJob({
-        job,
-        ollamaUrl: OLLAMA_URL,
-        model,
-        github,
-        githubClone,
-        pullWorkspace: (j) => workspaceAction(j, "pull"),
-        pushWorkspace: (j, f) => workspaceAction(j, "push", f),
-        log: console.log,
-      });
+      const { result, files, githubBranch, githubPrUrl, stepsUsed } =
+        await runAgentJob({
+          job,
+          ollamaUrl: OLLAMA_URL,
+          model,
+          github,
+          githubClone,
+          pullWorkspace: (j) => workspaceAction(j, "pull"),
+          pushWorkspace: (j, f) => workspaceAction(j, "push", f),
+          log: console.log,
+        });
 
-      await complete(job, { result, githubBranch, githubPrUrl });
+      await complete(job, { result, githubBranch, githubPrUrl, stepsUsed });
       console.log(
         `[dat-starcoder-worker] completed ${job.id} files=${files.length}` +
+          (typeof stepsUsed === "number" ? ` steps=${stepsUsed}` : "") +
           (githubPrUrl ? ` pr=${githubPrUrl}` : ""),
       );
     } catch (err) {

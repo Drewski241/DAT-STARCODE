@@ -22,6 +22,7 @@ async function main() {
     modelReason: "test",
     status: "running",
     creditsCharged: 5,
+    stepsUsed: null,
     result: null,
     error: null,
     workerId: "test",
