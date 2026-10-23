@@ -15,6 +15,7 @@ import {
 } from "./github.mjs";
 import { cdvAvailable, puzzleHashWithCdv } from "./cdv.mjs";
 import { inferGoal } from "./goals.mjs";
+import { ensurePuzzleHashDocumented } from "./hash-doc.mjs";
 import { verifyWorkspaceFiles } from "./verify.mjs";
 
 const MAX_STEPS = Number(process.env.AGENT_MAX_STEPS || 12);
@@ -448,6 +449,15 @@ export async function runAgentJob({
         observation = await toolRead(root, args.path);
       } else if (tool === "write_file") {
         observation = await toolWrite(root, args.path, args.content);
+        // Nudge + precompute hash as soon as a .clsp lands (don't burn steps).
+        if (hasCdv && /\.clsp$/i.test(String(args.path || ""))) {
+          const result = await puzzleHashWithCdv(root, String(args.path || ""), {});
+          observation += `\n\nAUTO puzzle_hash:\n${JSON.stringify(result, null, 2)}`;
+          if (result.puzzleHash) {
+            observation +=
+              `\n\nNEXT: write_file docs/MTT_POOL.md with section:\n## Pool puzzle hash\n\n\`${result.puzzleHash}\`\n(no 0x prefix). Then done.`;
+          }
+        }
       } else if (tool === "run") {
         observation = await runCommand(root, String(args.command || "true"));
       } else if (tool === "puzzle_hash") {
@@ -485,6 +495,30 @@ export async function runAgentJob({
         "2. Unzip the folder.",
         "3. Open index.html (or follow README.md) to run/play.",
       ].join("\n");
+    }
+
+    // Deterministic: do not rely on the model to remember puzzle_hash.
+    let hashDoc = null;
+    if (hardTask && hasCdv) {
+      try {
+        hashDoc = await ensurePuzzleHashDocumented(root, { log });
+        if (hashDoc.ok && hashDoc.puzzleHash) {
+          finalMessage += [
+            "",
+            "## Pool puzzle hash",
+            "",
+            `\`${hashDoc.puzzleHash}\``,
+            "",
+            `_(auto-documented from cdv on \`${hashDoc.path}\`)_`,
+          ].join("\n");
+        } else if (hashDoc && !hashDoc.ok) {
+          log(`[agent] hash-doc: ${hashDoc.message}`);
+        }
+      } catch (err) {
+        log(
+          `[agent] hash-doc error: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
     }
 
     const files = await collectLocalFiles(root);

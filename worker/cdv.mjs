@@ -108,20 +108,26 @@ export async function puzzleHashWithCdv(root, relPath, opts = {}) {
     curryOut = `${curry.stdout}\n${curry.stderr}`.trim();
   }
 
-  // Try inspect / hash helpers when present.
+  // Try inspect / hash helpers when present (CLI shapes vary by chia-dev-tools version).
   const inspectTarget = hexBody ? hexPath : safe;
-  const inspect = await run("cdv", ["inspect", "puzzle", inspectTarget], {
-    cwd: root,
-    timeoutMs: 60_000,
-  });
-  const blob = [build.stdout, build.stderr, curryOut, inspect.stdout, inspect.stderr]
+  const inspectCmds = [
+    ["inspect", "puzzle", inspectTarget],
+    ["inspect", "puzzle", "-x", inspectTarget],
+    ["clsp", "hash", safe],
+    ["hash", inspectTarget],
+  ];
+  const inspectBlobs = [];
+  for (const args of inspectCmds) {
+    const inspect = await run("cdv", args, { cwd: root, timeoutMs: 60_000 });
+    inspectBlobs.push(inspect.stdout, inspect.stderr);
+    hashLine = extractPuzzleHash(`${inspect.stdout}\n${inspect.stderr}`) || hashLine;
+    if (hashLine) break;
+  }
+
+  const blob = [build.stdout, build.stderr, curryOut, ...inspectBlobs]
     .filter(Boolean)
     .join("\n");
-
-  const hashMatch =
-    blob.match(/\b([0-9a-fA-F]{64})\b/) ||
-    (hexBody && hexBody.match(/\b([0-9a-fA-F]{64})\b/));
-  if (hashMatch) hashLine = hashMatch[1].toLowerCase();
+  if (!hashLine) hashLine = extractPuzzleHash(blob) || "";
 
   // Fallback: sha256 of hex file bytes is NOT the puzzle hash — only report cdv hashes.
   const ok = build.code === 0 || Boolean(hexBody) || Boolean(hashLine);
@@ -139,4 +145,15 @@ export async function puzzleHashWithCdv(root, relPath, opts = {}) {
       : `cdv failed (build ${build.code}): ${(build.stderr || build.stdout).slice(0, 500)}`,
     log: blob.slice(0, 4000),
   };
+}
+
+/** Prefer labeled puzzle-hash lines over arbitrary 64-hex (e.g. pubkeys in logs). */
+export function extractPuzzleHash(text) {
+  const s = String(text || "");
+  const labeled = s.match(
+    /(?:puzzle\s*hash|treehash|ph)\s*[:=]?\s*(?:0x)?([0-9a-fA-F]{64})\b/i,
+  );
+  if (labeled) return labeled[1].toLowerCase();
+  const m = s.match(/\b([0-9a-fA-F]{64})\b/);
+  return m ? m[1].toLowerCase() : null;
 }
