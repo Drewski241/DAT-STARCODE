@@ -1,8 +1,10 @@
-import { verifyWorkspaceFiles, wantsChialisp } from "./verify.mjs";
 import assert from "node:assert/strict";
+import { verifyWorkspaceFiles, wantsChialisp } from "./verify.mjs";
+import { inferGoal } from "./goals.mjs";
 
 assert.equal(wantsChialisp("write puzzles/mtt_pool.clsp"), true);
-assert.equal(wantsChialisp("fix a typo in README"), false);
+assert.equal(inferGoal("Finish the MTT pool and show the puzzle hash").id, "mtt_pool");
+assert.equal(inferGoal("refactor the typescript API module").id, "coding");
 
 const bad = verifyWorkspaceFiles([
   {
@@ -11,33 +13,42 @@ const bad = verifyWorkspaceFiles([
   },
 ]);
 assert.equal(bad.ok, false);
-assert.ok(bad.failures.some((f) => /start with \(mod/.test(f)));
-assert.ok(bad.failures.some((f) => /Common Lisp/.test(f)));
 
-const stillBad = verifyWorkspaceFiles([
+const dead = verifyWorkspaceFiles([
   {
     path: "puzzles/mtt_pool.clsp",
-    content: `(mod (A)
-  (if (AGG_SIG_ME A sig) (list) (list))
-  (list CREATE_COIN winner_phs[0] 1)
-)`,
+    content: `(mod (A)\n  (list (list 51 0xDEADBEEF 1))\n)`,
   },
 ]);
-assert.equal(stillBad.ok, false);
-assert.ok(stillBad.failures.some((f) => /AGG_SIG_ME/.test(f)));
-assert.ok(stillBad.failures.some((f) => /index syntax/.test(f)));
+assert.equal(dead.ok, false);
+assert.ok(dead.failures.some((f) => /DEADBEEF/.test(f)));
 
-const ok = verifyWorkspaceFiles([
-  {
-    path: "puzzles/mtt_pool.clsp",
-    content: `(mod (BUY_IN AUTHORIZER_PK mode w1 w2 w3)
-  (list
-    (list 50 AUTHORIZER_PK (sha256tree (list w1 w2 w3)))
-    (list 51 w1 (quotient (* BUY_IN 50) 100))
-  )
-)`,
-  },
-]);
-assert.equal(ok.ok, true);
+const needHash = verifyWorkspaceFiles(
+  [
+    {
+      path: "puzzles/mtt_pool.clsp",
+      content: `(mod (POOL_PUZZLE_HASH)\n  (list (list 51 POOL_PUZZLE_HASH 1))\n)`,
+    },
+    { path: "docs/MTT_POOL.md", content: "# hi\n" },
+  ],
+  { requireHash: true, resultText: "done" },
+);
+assert.equal(needHash.ok, false);
+
+const withHash = verifyWorkspaceFiles(
+  [
+    {
+      path: "puzzles/mtt_pool.clsp",
+      content: `(mod (POOL_PUZZLE_HASH)\n  (list (list 51 POOL_PUZZLE_HASH 1))\n)`,
+    },
+    {
+      path: "docs/MTT_POOL.md",
+      content:
+        "## Pool puzzle hash\n\n`aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa`\n",
+    },
+  ],
+  { requireHash: true },
+);
+assert.equal(withHash.ok, true);
 
 console.log("verify.test.mjs ok");

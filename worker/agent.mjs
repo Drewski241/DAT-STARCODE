@@ -13,13 +13,15 @@ import {
   prepareGithubWorkspace,
   preparePublicGithubWorkspace,
 } from "./github.mjs";
-import { verifyWorkspaceFiles, wantsChialisp } from "./verify.mjs";
+import { cdvAvailable, puzzleHashWithCdv } from "./cdv.mjs";
+import { inferGoal } from "./goals.mjs";
+import { verifyWorkspaceFiles } from "./verify.mjs";
 
 const MAX_STEPS = Number(process.env.AGENT_MAX_STEPS || 12);
 const HARD_TASK_STEPS = Number(process.env.AGENT_HARD_TASK_STEPS || 40);
 const RUN_TIMEOUT_MS = Number(process.env.AGENT_RUN_TIMEOUT_MS || 20000);
 const MAX_FILE_BYTES = 200_000;
-const PLAYBOOK_MAX_CHARS = 6_000;
+const PLAYBOOK_MAX_CHARS = 8_000;
 const AGENTS_MD_MAX_CHARS = 4_000;
 
 const HOW_TO_RUN = `
@@ -31,9 +33,12 @@ and common fixes. Never stop at only "download the zip".
 
 const QUALITY_RULES = `
 Quality rules:
+- Infer the user's end goal from a short prompt; use the domain playbook(s) below — do not wait for a novel-length spec.
+- For hard goals: FIRST write_file PLAN.md (Goal / Done when / Files), then implement.
 - Never claim you deleted or fixed a file unless you verified with list_files / read_file after.
 - rm / unlink of files that were pulled from Studio are synced back (workspace deletes). Prefer real deletes over leaving NOTE stubs.
 - If the user asks for ChiaLisp / .clsp: write real ChiaLisp starting with (mod — never Common Lisp.
+- When the puzzle_hash tool is available, use it after writing .clsp and document the hash under ## Pool puzzle hash.
 - Before {"done":true} on a .clsp task, read_file the puzzle and confirm it has (mod and no defparameter/let*/mapcar.
 `.trim();
 
@@ -46,6 +51,16 @@ async function loadPlaybook(name) {
   } catch {
     return null;
   }
+}
+
+async function loadPlaybooks(names) {
+  const chunks = [];
+  for (const name of names || []) {
+    const text = await loadPlaybook(name);
+    if (text) chunks.push(`### ${name}\n${text}`);
+  }
+  const joined = chunks.join("\n\n");
+  return joined ? joined.slice(0, PLAYBOOK_MAX_CHARS) : null;
 }
 
 async function loadRepoAgentsMd(root) {
@@ -211,11 +226,12 @@ function agentSystem(job, github, githubClone, extras = {}) {
     githubMode,
     "On every turn respond with ONLY one JSON object (optionally in a ```json fence):",
     "",
-    '1) Call a tool: {"thought":"...","tool":"list_files"|"read_file"|"write_file"|"run","args":{...}}',
+    '1) Call a tool: {"thought":"...","tool":"list_files"|"read_file"|"write_file"|"run"|"puzzle_hash","args":{...}}',
     '   - list_files args: {}',
     '   - read_file args: {"path":"relative/path"}',
     '   - write_file args: {"path":"relative/path","content":"full file contents"}',
     '   - run args: {"command":"shell command in the workspace"}',
+    '   - puzzle_hash args: {"path":"puzzles/foo.clsp","curryArgs":["optional","cdv","-a","values"]}',
     "",
     '2) Finish: {"done":true,"message":"markdown answer for the user"}',
     "",
@@ -229,6 +245,9 @@ function agentSystem(job, github, githubClone, extras = {}) {
     "- Do not commit or push yourself; the worker handles git/PR or prints push commands.",
     QUALITY_RULES,
     HOW_TO_RUN,
+    extras.goal
+      ? `\n## Inferred goal\n${extras.goal.label} (\`${extras.goal.id}\`)${extras.cdvAvailable ? " · cdv available (use puzzle_hash)" : " · cdv not installed on worker"}\n`
+      : "",
     extras.playbook
       ? `\n## Domain playbook (follow strictly)\n${extras.playbook}\n`
       : "",
@@ -355,17 +374,30 @@ export async function runAgentJob({
       }
     }
 
-    const hardTask = wantsChialisp(job.prompt);
+    const goal = inferGoal(job.prompt);
+    const hardTask = goal.hard;
     const stepLimit = hardTask ? HARD_TASK_STEPS : MAX_STEPS;
-    const playbook = hardTask ? await loadPlaybook("chialisp.md") : null;
-    if (playbook) log(`[agent] loaded chialisp playbook (${playbook.length} chars)`);
+    const playbook = await loadPlaybooks(goal.playbooks);
+    const hasCdv = goal.wantCdv ? await cdvAvailable() : false;
+    if (playbook) {
+      log(
+        `[agent] goal=${goal.id} playbooks=${goal.playbooks.join(",") || "-"} (${playbook.length} chars) cdv=${hasCdv}`,
+      );
+    } else {
+      log(`[agent] goal=${goal.id}`);
+    }
     const agentsMd = await loadRepoAgentsMd(root);
     if (agentsMd) log(`[agent] loaded repo agent instructions`);
 
     const messages = [
       {
         role: "system",
-        content: agentSystem(job, github, githubClone, { playbook, agentsMd }),
+        content: agentSystem(job, github, githubClone, {
+          playbook,
+          agentsMd,
+          goal,
+          cdvAvailable: hasCdv,
+        }),
       },
     ];
     let finalMessage = "";
@@ -418,6 +450,11 @@ export async function runAgentJob({
         observation = await toolWrite(root, args.path, args.content);
       } else if (tool === "run") {
         observation = await runCommand(root, String(args.command || "true"));
+      } else if (tool === "puzzle_hash") {
+        const result = await puzzleHashWithCdv(root, String(args.path || ""), {
+          curryArgs: args.curryArgs,
+        });
+        observation = JSON.stringify(result, null, 2);
       } else {
         observation = `ERROR: unknown tool ${tool}`;
       }
@@ -451,7 +488,10 @@ export async function runAgentJob({
     }
 
     const files = await collectLocalFiles(root);
-    const verification = verifyWorkspaceFiles(files);
+    const verification = verifyWorkspaceFiles(files, {
+      requireHash: hardTask && hasCdv,
+      resultText: finalMessage,
+    });
     if (!verification.ok) {
       log(`[agent] verification failed: ${verification.failures.join("; ")}`);
       finalMessage += [
@@ -470,9 +510,16 @@ export async function runAgentJob({
           "",
           "## Verification failed",
           "",
-          "- Prompt asked for ChiaLisp / .clsp but no `.clsp` file was written.",
+          "- Hard-domain goal expected a `.clsp` (or ChiaLisp) deliverable, but none was written.",
         ].join("\n");
       }
+    }
+    if (verification.warnings?.length) {
+      finalMessage += [
+        "",
+        "## Verification notes",
+        ...verification.warnings.map((w) => `- ${w}`),
+      ].join("\n");
     }
 
     // Paths that were in Studio at pull but are gone on disk → delete from S3.
@@ -530,6 +577,7 @@ export async function runAgentJob({
           ? `Branch: ${githubBranch}${githubPath === "commands" ? " (push with commands below)" : ""}`
           : "",
       `Steps: ${stepsUsed}/${stepLimit}`,
+      `Goal: ${goal.id}${hasCdv ? " · cdv" : ""}`,
       "Mode: tool agent loop",
       "",
     ]

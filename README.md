@@ -98,7 +98,19 @@ Example: Coder 14B + ChiaLisp prompt → **5×2+10 = 20** credits. Studio shows 
 
 **Workspace deletes:** when the agent `rm`s a file that was pulled from Studio, the worker sends `deletePaths` on push so S3/local storage drops it (otherwise stubs lingered forever across turns).
 
-**Auto** routing: coding-like prompts (including “build a … game”) → `qwen2.5-coder:7b`; otherwise → `llama3.1:8b`. Routing is re-evaluated when a job is claimed so queued jobs pick up heuristic fixes.
+**Goal router:** short prompts are classified (`mtt_pool` / `chialisp` / `coding` / `general`). Hard goals load playbooks under `worker/playbooks/`, require a `PLAN.md` first step, and enable the optional **`puzzle_hash`** tool (`cdv` on the worker).
+
+**cdv (optional, worker box):**
+
+```bash
+pipx install chia-dev-tools   # provides `cdv`
+cdv --help
+# restart npm run worker
+```
+
+When `cdv` is present, ChiaLisp turns must document a 64-char puzzle hash (or verification fails).
+
+**Auto** routing: hard domain (ChiaLisp / MTT) → `qwen2.5-coder:14b`; other coding → `qwen2.5-coder:7b`; otherwise → `llama3.1:8b`. Pull 14B on the worker or hard Auto jobs will 404 at preflight.
 
 If a worker dies mid-job, `claimed`/`running` jobs older than `STALE_JOB_CLAIM_MS` (default 45s) are reclaimed by the next worker poll. `GET /api/worker/queue` (worker key) dumps store vs sidecar queue state for debugging.
 
