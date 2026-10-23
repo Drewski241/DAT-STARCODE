@@ -6,7 +6,8 @@ const COMMON_LISP_BAD =
   /\b(defparameter|defvar|mapcar|progn|setf|getf|loop\s+for)\b|\(let\*/i;
 const INDEX_SYNTAX = /\w+\s*\[\s*\d+\s*\]/;
 const AGG_SIG_AS_IF = /\(\s*if\s*\(\s*AGG_SIG_ME\b/i;
-const HEX64 = /\b[0-9a-fA-F]{64}\b/;
+/** Real puzzle hashes — not `0x` + pubkey (x is a hex digit and caused false positives). */
+const HEX64 = /(?:^|[^0-9a-fA-Fx])([0-9a-fA-F]{64})(?![0-9a-fA-F])/;
 const DEADBEEF = /0xDEADBEEF/i;
 
 /**

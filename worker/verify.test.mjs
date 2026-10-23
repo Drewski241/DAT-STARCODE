@@ -29,7 +29,11 @@ const needHash = verifyWorkspaceFiles(
       path: "puzzles/mtt_pool.clsp",
       content: `(mod (POOL_PUZZLE_HASH)\n  (list (list 51 POOL_PUZZLE_HASH 1))\n)`,
     },
-    { path: "docs/MTT_POOL.md", content: "# hi\n" },
+    {
+      path: "docs/MTT_POOL.md",
+      content:
+        "# hi\nAUTHORIZER_PK: 0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef\n",
+    },
   ],
   { requireHash: true, resultText: "done" },
 );
