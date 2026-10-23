@@ -6,9 +6,22 @@ const COMMON_LISP_BAD =
   /\b(defparameter|defvar|mapcar|progn|setf|getf|loop\s+for)\b|\(let\*/i;
 const INDEX_SYNTAX = /\w+\s*\[\s*\d+\s*\]/;
 const AGG_SIG_AS_IF = /\(\s*if\s*\(\s*AGG_SIG_ME\b/i;
-/** Real puzzle hashes — not `0x` + pubkey (x is a hex digit and caused false positives). */
-const HEX64 = /(?:^|[^0-9a-fA-Fx])([0-9a-fA-F]{64})(?![0-9a-fA-F])/;
 const DEADBEEF = /0xDEADBEEF/i;
+
+/**
+ * Extract a bare 64-char hex puzzle hash from a ## Pool puzzle hash section.
+ * Rejects `0x…` placeholders (x is a hex digit so naive {64} matches lie).
+ */
+export function findBarePuzzleHash(text) {
+  const s = String(text || "");
+  const section = s.match(/##\s*Pool puzzle hash\s*\n([\s\S]{0,500})/i);
+  if (!section) return null;
+  const chunk = section[1].split(/\n##\s+/)[0] || "";
+  // Strip 0x-prefixed tokens so they cannot satisfy the bare-hash check.
+  const scrubbed = chunk.replace(/0x[0-9a-fA-F]+/gi, "OX_STRIPPED");
+  const m = scrubbed.match(/(^|[^0-9a-fA-F])([0-9a-fA-F]{64})([^0-9a-fA-F]|$)/);
+  return m ? m[2].toLowerCase() : null;
+}
 
 /**
  * @param {{ path: string, content: string }[]} files
@@ -51,21 +64,23 @@ export function verifyWorkspaceFiles(files, opts = {}) {
   }
 
   if (clspFiles.length && opts.requireHash) {
-    const corpus = [
-      opts.resultText || "",
-      ...files
-        .filter((f) => /\.(md|ts|js|mjs)$/i.test(f.path))
-        .map((f) => f.content),
-    ].join("\n");
+    const docs = files
+      .filter((f) => /\.md$/i.test(f.path))
+      .map((f) => f.content)
+      .join("\n");
+    const corpus = [opts.resultText || "", docs].join("\n");
     const hasSection = /##\s*Pool puzzle hash/i.test(corpus);
-    const hasHex = HEX64.test(corpus);
-    if (!hasHex && !/cdv not (found|available)|chia-dev-tools/i.test(corpus)) {
+    const bareHash = findBarePuzzleHash(corpus);
+    const cdvMissingNoted = /cdv not (found|available)|chia-dev-tools/i.test(
+      corpus,
+    );
+    if (!hasSection) {
       failures.push(
-        "Wrote .clsp but no 64-char puzzle hash found in docs/result — run puzzle_hash tool (cdv) and document under ## Pool puzzle hash",
+        "Wrote .clsp but missing ## Pool puzzle hash section — run puzzle_hash tool and document the bare hex",
       );
-    } else if (!hasSection && hasHex) {
-      warnings.push(
-        "Puzzle hash found but no ## Pool puzzle hash section — prefer documenting it in docs/MTT_POOL.md",
+    } else if (!bareHash && !cdvMissingNoted) {
+      failures.push(
+        "## Pool puzzle hash must contain a bare 64-char hex from puzzle_hash/cdv (no 0x prefix / no placeholders)",
       );
     }
   }

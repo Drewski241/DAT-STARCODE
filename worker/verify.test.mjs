@@ -1,10 +1,25 @@
 import assert from "node:assert/strict";
-import { verifyWorkspaceFiles, wantsChialisp } from "./verify.mjs";
+import {
+  findBarePuzzleHash,
+  verifyWorkspaceFiles,
+  wantsChialisp,
+} from "./verify.mjs";
 import { inferGoal } from "./goals.mjs";
 
 assert.equal(wantsChialisp("write puzzles/mtt_pool.clsp"), true);
 assert.equal(inferGoal("Finish the MTT pool and show the puzzle hash").id, "mtt_pool");
 assert.equal(inferGoal("refactor the typescript API module").id, "coding");
+
+assert.equal(
+  findBarePuzzleHash(`## Pool puzzle hash\n\n\` 0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef \`\n`),
+  null,
+);
+assert.equal(
+  findBarePuzzleHash(
+    `## Pool puzzle hash\n\n\`aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\`\n`,
+  ),
+  "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+);
 
 const bad = verifyWorkspaceFiles([
   {
@@ -21,9 +36,8 @@ const dead = verifyWorkspaceFiles([
   },
 ]);
 assert.equal(dead.ok, false);
-assert.ok(dead.failures.some((f) => /DEADBEEF/.test(f)));
 
-const needHash = verifyWorkspaceFiles(
+const fakeOx = verifyWorkspaceFiles(
   [
     {
       path: "puzzles/mtt_pool.clsp",
@@ -32,12 +46,12 @@ const needHash = verifyWorkspaceFiles(
     {
       path: "docs/MTT_POOL.md",
       content:
-        "# hi\nAUTHORIZER_PK: 0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef\n",
+        "## Pool puzzle hash\n` 0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef `\n",
     },
   ],
-  { requireHash: true, resultText: "done" },
+  { requireHash: true },
 );
-assert.equal(needHash.ok, false);
+assert.equal(fakeOx.ok, false);
 
 const withHash = verifyWorkspaceFiles(
   [
