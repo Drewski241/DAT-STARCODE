@@ -47,6 +47,7 @@ type Job = {
   workspaceFileCount?: number;
   githubBranch?: string | null;
   githubPrUrl?: string | null;
+  stepsUsed?: number | null;
   createdAt: string;
   completedAt: string | null;
 };
