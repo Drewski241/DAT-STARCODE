@@ -1,0 +1,60 @@
+/**
+ * Goal inference for the on-prem worker (playbook selection).
+ * Keep aligned with src/lib/goals.ts.
+ */
+
+const MTT_HINT =
+  /\b(mtt_pool|mtt\b|tournament\s*pool|pool\s*coin|buy-?ins?\b.*payout|payout.*buy-?ins?|top\s*three|top\s*3)\b/i;
+const CHIALISP_HINT =
+  /\b(\.clsp|chialisp|chia\s*lisp|clvm|pool\s*coin|mtt_pool)\b/i;
+const CODING_HINT =
+  /\b(code|coding|function|bug|fix|refactor|implement|typescript|javascript|python|rust|go\b|api|endpoint|class|module|commit|diff|pr\b|pull request|compile|lint|test|unit test|css|html|sql|docker|cli|script|repo|github|build|game|app|website|component|ui|frontend|backend|puzzle|curry|treehash)\b/i;
+
+/**
+ * @param {string} prompt
+ * @returns {{ id: string, label: string, hard: boolean, playbooks: string[], wantCdv: boolean }}
+ */
+export function inferGoal(prompt) {
+  const text = String(prompt || "");
+  const chia = CHIALISP_HINT.test(text);
+  const mtt = MTT_HINT.test(text);
+
+  if (mtt && (chia || /\bpuzzle|clsp|chia|pool\b/i.test(text))) {
+    return {
+      id: "mtt_pool",
+      label: "MTT pool / tournament coin",
+      hard: true,
+      playbooks: ["chialisp.md", "mtt-pool.md"],
+      wantCdv: true,
+    };
+  }
+  if (chia) {
+    return {
+      id: "chialisp",
+      label: "ChiaLisp / CLVM puzzle",
+      hard: true,
+      playbooks: ["chialisp.md"],
+      wantCdv: true,
+    };
+  }
+  if (CODING_HINT.test(text)) {
+    return {
+      id: "coding",
+      label: "Coding task",
+      hard: false,
+      playbooks: [],
+      wantCdv: false,
+    };
+  }
+  return {
+    id: "general",
+    label: "General",
+    hard: false,
+    playbooks: [],
+    wantCdv: false,
+  };
+}
+
+export function wantsChialisp(prompt) {
+  return inferGoal(prompt).hard;
+}

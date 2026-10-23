@@ -1,4 +1,7 @@
+import { isHardDomainPrompt } from "@/lib/goals";
 import { resolveModel } from "@/lib/models";
+
+export { isHardDomainPrompt } from "@/lib/goals";
 
 /**
  * Base credits per turn — prefer NEXT_PUBLIC_ so Studio (client) and API agree.
@@ -16,16 +19,6 @@ export const CREDITS_HARD_DOMAIN = Number(
     process.env.CREDITS_HARD_DOMAIN ??
     10,
 );
-
-/**
- * Detect prompts that need the ChiaLisp playbook / more agent steps.
- * Keep in sync with worker/verify.mjs `wantsChialisp`.
- */
-export function isHardDomainPrompt(prompt: string): boolean {
-  return /\b(\.clsp|chialisp|chia\s*lisp|clvm|pool\s*coin|mtt_pool)\b/i.test(
-    String(prompt || ""),
-  );
-}
 
 /** Larger / slower coding models cost a multiple of the base job price. */
 export function modelCreditMultiplier(resolvedOllamaTag: string): number {
