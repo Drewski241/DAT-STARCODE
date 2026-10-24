@@ -29,6 +29,10 @@ import { runSecureTreasurySpendFixtures } from "./spend-fixtures.mjs";
 
 const MAX_STEPS = Number(process.env.AGENT_MAX_STEPS || 12);
 const HARD_TASK_STEPS = Number(process.env.AGENT_HARD_TASK_STEPS || 40);
+/** RESULT.md / summary-only polish — keep hard routing but tiny tool budget. */
+const RESULT_ONLY_HINT =
+  /\b(replace\s+result\.md\s+only|result\.md\s+only|do\s+not\s+edit\s+any\s+\.clsp|don'?t\s+edit\s+(any\s+)?\.clsp|summarize\s+the\s+(three\s+)?puzzles)\b/i;
+const RESULT_ONLY_STEPS = Number(process.env.AGENT_RESULT_ONLY_STEPS || 8);
 const RUN_TIMEOUT_MS = Number(process.env.AGENT_RUN_TIMEOUT_MS || 20000);
 const MAX_FILE_BYTES = 200_000;
 const PLAYBOOK_MAX_CHARS = 8_000;
@@ -364,8 +368,11 @@ function agentSystem(job, github, githubClone, extras = {}) {
     "You also help with Windows / macOS / ChromeOS / Linux how-tos and everyday questions.",
     UNBIASED_QNA,
     githubMode,
-    profile === "chialisp"
+    profile === "chialisp" && !extras.resultOnly
       ? "For ChiaLisp/CLVM you MUST call clvm_verify (brun/run) and puzzle_hash (cdv) before finishing. Worker tooling is required — do not claim success if they fail."
+      : "",
+    extras.resultOnly
+      ? "RESULT-ONLY TURN: Do not edit .clsp files. Read RESULT.md / the three puzzle paths if needed, then write_file RESULT.md with a short security summary, then {\"done\":true}. No puzzle_hash, spend_check, or rewrites."
       : "",
     "On every turn respond with ONLY one JSON object (optionally in a ```json fence):",
     "",
@@ -699,15 +706,19 @@ export async function runAgentJob({
     const hardTask = goal.hard;
     const isGeneral = goal.id === "general";
     const isShopping = isGeneral && SHOPPING_HINT.test(job.prompt || "");
+    const resultOnly = RESULT_ONLY_HINT.test(job.prompt || "");
     // Shopping needs a few tool calls + one synthesis — keep budget modest so
     // the model finishes instead of tool-looping until the cap.
-    const stepLimit = hardTask
-      ? HARD_TASK_STEPS
-      : isShopping
-        ? Math.max(MAX_STEPS, 10)
-        : MAX_STEPS;
+    // RESULT-only polish stays hard-domain for model routing but must not burn 40 steps.
+    const stepLimit = resultOnly
+      ? RESULT_ONLY_STEPS
+      : hardTask
+        ? HARD_TASK_STEPS
+        : isShopping
+          ? Math.max(MAX_STEPS, 10)
+          : MAX_STEPS;
 
-    if (!isGeneral && hardTask) {
+    if (!isGeneral && hardTask && !resultOnly) {
       try {
         await seedTemplatesForGoal(root, goal.id, { log });
       } catch (err) {
@@ -715,6 +726,11 @@ export async function runAgentJob({
           `[agent] seed templates: ${err instanceof Error ? err.message : String(err)}`,
         );
       }
+    }
+    if (resultOnly) {
+      log(
+        `[agent] result-only polish — stepLimit=${stepLimit}, skip seed/spend-fixtures`,
+      );
     }
 
     const playbook = await loadPlaybooks(goal.playbooks);
@@ -737,18 +753,19 @@ export async function runAgentJob({
         log(`[agent] tooling: ${line}`);
       }
     }
-    const agentsMd = isGeneral ? null : await loadRepoAgentsMd(root);
+    const agentsMd = isGeneral || resultOnly ? null : await loadRepoAgentsMd(root);
     if (agentsMd) log(`[agent] loaded repo agent instructions`);
 
     const messages = [
       {
         role: "system",
         content: agentSystem(job, github, githubClone, {
-          playbook,
+          playbook: resultOnly ? null : playbook,
           agentsMd,
           goal,
           cdvAvailable: hasCdv,
           tooling,
+          resultOnly,
         }),
       },
     ];
@@ -1112,7 +1129,7 @@ export async function runAgentJob({
 
     // Deterministic: do not rely on the model to remember puzzle_hash.
     let hashDoc = null;
-    if (hardTask && hasCdv) {
+    if (hardTask && hasCdv && !resultOnly) {
       try {
         hashDoc = await ensurePuzzleHashDocumented(root, { log });
         if (hashDoc.ok && hashDoc.puzzleHash) {
@@ -1139,7 +1156,7 @@ export async function runAgentJob({
     // Deterministic fail-closed spend samples for secure treasury (flash / cover / zero).
     /** @type {{ ok: boolean, message: string, results?: any[] }|null} */
     let spendFx = null;
-    if (goal.id === "secure_treasury") {
+    if (goal.id === "secure_treasury" && !resultOnly) {
       try {
         spendFx = await runSecureTreasurySpendFixtures(root, { log });
         log(`[agent] spend-fixtures: ${spendFx.message}`);
@@ -1191,9 +1208,14 @@ export async function runAgentJob({
     if (!isGeneral) {
       const verification = verifyWorkspaceFiles(files, {
         // Always require a documented hash on hard tasks when tooling is mandated.
-        requireHash: hardTask && (hasCdv || requireTooling),
+        // RESULT-only polish: keep hash/secure checks but skip tooling re-probe failures.
+        requireHash: hardTask && (hasCdv || requireTooling || resultOnly),
         resultText: finalMessage,
-        toolingOk: requireTooling ? toolingReady : undefined,
+        toolingOk: resultOnly
+          ? true
+          : requireTooling
+            ? toolingReady
+            : undefined,
         toolingMissing: tooling?.missing,
         strictSingleton:
           goal.id === "secure_treasury" || goal.id === "mtt_pool",
