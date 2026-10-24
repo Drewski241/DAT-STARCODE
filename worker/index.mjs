@@ -68,13 +68,35 @@ async function workspaceAction(job, action, files) {
   return res.json();
 }
 
-async function complete(job, { result, error, files }) {
+async function progress(jobId, { type, message, data }) {
+  try {
+    await fetch(`${API_BASE}/api/worker/progress`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-worker-key": WORKER_KEY,
+      },
+      body: JSON.stringify({
+        jobId,
+        workerId: WORKER_ID,
+        type,
+        message,
+        data: data ?? null,
+      }),
+    });
+  } catch (err) {
+    console.warn("[dat-starcoder-worker] progress failed", err);
+  }
+}
+
+async function complete(job, { result, error, files, toolSteps }) {
   const payload = {
     jobId: job.id,
     workerId: WORKER_ID,
     result,
     error,
     files,
+    toolSteps,
     snapshot: job,
   };
   let lastErr;
@@ -111,18 +133,24 @@ async function loop() {
           (job.projectId ? ` project=${job.projectId.slice(0, 8)}` : ""),
       );
 
-      const { result, files } = await runAgentJob({
+      const { result, files, toolSteps } = await runAgentJob({
         job,
         ollamaUrl: OLLAMA_URL,
         model,
         pullWorkspace: (j) => workspaceAction(j, "pull"),
         pushWorkspace: (j, f) => workspaceAction(j, "push", f),
         log: console.log,
+        onEvent: (e) =>
+          progress(job.id, {
+            type: e.type,
+            message: e.message,
+            data: e.data,
+          }),
       });
 
-      await complete(job, { result, files });
+      await complete(job, { result, files, toolSteps });
       console.log(
-        `[dat-starcoder-worker] completed ${job.id} files=${files.length}`,
+        `[dat-starcoder-worker] completed ${job.id} files=${files.length} tools=${toolSteps}`,
       );
     } catch (err) {
       console.error("[dat-starcoder-worker]", err);

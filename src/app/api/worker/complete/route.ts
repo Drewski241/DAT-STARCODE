@@ -17,6 +17,7 @@ export async function POST(req: NextRequest) {
     result?: string;
     error?: string;
     files?: ExtractedFile[];
+    toolSteps?: number;
     snapshot?: CodingJob | null;
   };
 
@@ -49,6 +50,7 @@ export async function POST(req: NextRequest) {
       result: body.result,
       error: body.error,
       workspaceFileCount,
+      toolSteps: body.toolSteps,
       snapshot: body.snapshot,
     });
     return NextResponse.json({ job });

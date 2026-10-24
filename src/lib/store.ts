@@ -11,6 +11,8 @@ import type {
   Account,
   AccountSource,
   CodingJob,
+  JobEvent,
+  JobEventType,
   PaymentIntent,
   Project,
   StoreSnapshot,
@@ -26,6 +28,7 @@ import {
   peekWorkspaceBucketEnv,
   resolveWorkspaceBucket,
 } from "@/lib/s3-bucket";
+import { clearLiveEvents, pushLiveEvent } from "@/lib/job-live-bus";
 
 const DATA_DIR =
   process.env.DAT_STARCODER_DATA_DIR ??
@@ -567,6 +570,8 @@ function normalizeJob(job: CodingJob): CodingJob {
     workspaceId,
     workspaceFileCount:
       typeof job.workspaceFileCount === "number" ? job.workspaceFileCount : 0,
+    events: Array.isArray(job.events) ? job.events : [],
+    toolSteps: typeof job.toolSteps === "number" ? job.toolSteps : 0,
   };
 }
 
@@ -942,12 +947,60 @@ export async function markJobRunning(jobId: string, workerId: string) {
   return job;
 }
 
+const MAX_JOB_EVENTS = 200;
+
+export async function appendJobEvent(input: {
+  jobId: string;
+  workerId: string;
+  type: JobEventType;
+  message: string;
+  data?: Record<string, unknown> | null;
+}) {
+  const side = await loadJobRecord(input.jobId);
+  const job = await mutate((store) => {
+    let current = store.jobs.find((j) => j.id === input.jobId);
+    if (!current && side) {
+      store.jobs.push({ ...side });
+      current = store.jobs.find((j) => j.id === input.jobId);
+    }
+    if (!current) throw new Error("Job not found");
+    if (current.workerId && current.workerId !== input.workerId) {
+      throw new Error("Worker mismatch");
+    }
+    if (current.status === "completed" || current.status === "failed") {
+      throw new Error("Job already finished");
+    }
+    const now = new Date().toISOString();
+    const event: JobEvent = {
+      id: randomUUID(),
+      t: now,
+      type: input.type,
+      message: String(input.message || "").slice(0, 2000),
+      data: input.data ?? null,
+    };
+    if (!current.events) current.events = [];
+    // Keep durable events for tools/status; tokens stay on the live bus.
+    if (input.type !== "token") {
+      current.events.push(event);
+      if (current.events.length > MAX_JOB_EVENTS) {
+        current.events = current.events.slice(-MAX_JOB_EVENTS);
+      }
+    }
+    pushLiveEvent(current.id, event);
+    current.updatedAt = now;
+    return current;
+  });
+  await saveJobRecord(job);
+  return { job, event: (job.events ?? []).at(-1) ?? null };
+}
+
 export async function completeJob(input: {
   jobId: string;
   workerId: string;
   result?: string | null;
   error?: string | null;
   workspaceFileCount?: number;
+  toolSteps?: number;
   /** Claimed job snapshot from the worker — used if store.json lost the row. */
   snapshot?: CodingJob | null;
 }) {
@@ -974,6 +1027,9 @@ export async function completeJob(input: {
     if (typeof current.workspaceFileCount !== "number") {
       current.workspaceFileCount = 0;
     }
+    if (typeof input.toolSteps === "number") {
+      current.toolSteps = Math.max(0, input.toolSteps);
+    }
     if (input.error) {
       current.status = "failed";
       current.error = input.error;
@@ -994,6 +1050,7 @@ export async function completeJob(input: {
     current.completedAt = now;
     return current;
   });
+  clearLiveEvents(input.jobId);
   await saveJobRecord(job);
   return job;
 }
