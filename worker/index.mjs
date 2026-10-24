@@ -11,9 +11,11 @@
  *   POLL_MS                  default 4000
  *   AGENT_MAX_STEPS          default 12
  *   AGENT_HARD_TASK_STEPS    default 40 (ChiaLisp / .clsp prompts)
+ *   REQUIRE_CHIALISP_TOOLING default 1 — hard .clsp jobs need cdv + clvm_tools
  */
 
 import { runAgentJob } from "./agent.mjs";
+import { probeChialispTooling, toolingFailureLines } from "./tooling.mjs";
 
 const API_BASE = (
   process.env.DAT_STARCODER_API_BASE ||
@@ -223,8 +225,34 @@ async function complete(job, { result, error, githubBranch, githubPrUrl, stepsUs
   throw lastErr;
 }
 
+function sleep(ms) {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
 async function loop() {
   console.log(`[dat-starcoder-worker] ${WORKER_ID} → ${API_BASE} (agent loop)`);
+  try {
+    const tooling = await probeChialispTooling();
+    console.log(
+      `[dat-starcoder-worker] ChiaLisp tooling: cdv=${tooling.cdv} clvm_tools=${tooling.clvmTools} required=${tooling.required}`,
+    );
+    if (!tooling.ok) {
+      for (const line of toolingFailureLines(tooling)) {
+        console.warn(`[dat-starcoder-worker] ${line}`);
+      }
+      if (tooling.required) {
+        console.warn(
+          "[dat-starcoder-worker] Hard-domain ChiaLisp jobs will fail verification until tooling is installed.",
+        );
+      }
+    }
+  } catch (err) {
+    console.warn(
+      "[dat-starcoder-worker] tooling probe failed:",
+      err instanceof Error ? err.message : err,
+    );
+  }
+
   for (;;) {
     try {
       const claimed = await claim();
@@ -323,10 +351,6 @@ async function loop() {
       await sleep(POLL_MS);
     }
   }
-}
-
-function sleep(ms) {
-  return new Promise((r) => setTimeout(r, ms));
 }
 
 loop();

@@ -8,7 +8,9 @@
     "build": "next build",
     "start": "next start -H 0.0.0.0 -p 43127",
     "lint": "next lint",
-    "worker": "node worker/index.mjs"
+    "worker": "node worker/index.mjs",
+    "test:worker": "node worker/verify.test.mjs && node worker/tooling.test.mjs && node worker/hash-doc.test.mjs && node worker/evals/chialisp/run.mjs",
+    "test:chialisp": "node worker/evals/chialisp/run.mjs"
   },
   "dependencies": {
     "@aws-sdk/client-dynamodb": "^3.1152.0",

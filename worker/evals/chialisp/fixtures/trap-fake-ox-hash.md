@@ -1,0 +1,3 @@
+## Pool puzzle hash
+
+`0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef`

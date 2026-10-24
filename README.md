@@ -98,21 +98,24 @@ Example: Coder 14B + ChiaLisp prompt → **5×2+10 = 20** credits. Studio shows 
 
 **Workspace deletes:** when the agent `rm`s a file that was pulled from Studio, the worker sends `deletePaths` on push so S3/local storage drops it (otherwise stubs lingered forever across turns).
 
-**Goal router:** short prompts are classified (`mtt_pool` / `chialisp` / `coding` / `general`). Hard goals load playbooks under `worker/playbooks/`, require a `PLAN.md` first step, and enable the optional **`puzzle_hash`** tool (`cdv` on the worker).
+**Goal router:** short prompts are classified (`mtt_pool` / `chialisp` / `coding` / `general`). Hard goals load playbooks under `worker/playbooks/`, require a `PLAN.md` first step, and enable **`puzzle_hash`** (`cdv`) and **`clvm_verify`**.
 
-**cdv (optional, worker box):**
+**ChiaLisp tooling (required on the worker box for hard `.clsp` jobs):**
 
 ```bash
-pipx install chia-dev-tools   # provides `cdv`
+npm install                   # provides clvm_tools for brun/run
+pipx install chia-dev-tools   # provides `cdv` for puzzle_hash
 cdv --help
 # restart npm run worker
 ```
 
-When `cdv` is present, ChiaLisp turns must document a 64-char puzzle hash (or verification fails).
+Hard-domain ChiaLisp turns fail verification if `cdv` or `clvm_tools` is missing, or if a bare 64-char puzzle hash is not documented. Waive only for demos with `REQUIRE_CHIALISP_TOOLING=0`.
+
+**ChiaLisp evals (offline):** `npm run test:chialisp` runs golden + adversarial fixture checks (Common Lisp traps, fake `0x` hashes, missing tooling). Full worker suite: `npm run test:worker`.
 
 **Auto** routing: niche / hard languages (e.g. ChiaLisp) → `qwen2.5-coder:14b`; other coding → `qwen2.5-coder:7b`; shopping / local research Q&A → `qwen2.5:7b`; otherwise → `llama3.1:8b`. Pull 14B (and Qwen 7B) on the worker or those Auto jobs will 404 at preflight. Routing is re-evaluated when a job is claimed so queued jobs pick up heuristic fixes.
 
-Optional worker agent knobs (see `.env.example`): `AGENT_MAX_STEPS`, `AGENT_ALLOW_SHELL`, `AGENT_REPO_ROOT`. Install `clvm_tools` (via `npm ci`) or put `brun`/`run` on `PATH` for ChiaLisp verification / `clvm_verify`.
+Optional worker agent knobs (see `.env.example`): `AGENT_MAX_STEPS`, `AGENT_ALLOW_SHELL`, `AGENT_REPO_ROOT`, `REQUIRE_CHIALISP_TOOLING`.
 
 If a worker dies mid-job, `claimed`/`running` jobs older than `STALE_JOB_CLAIM_MS` (default 45s) are reclaimed by the next worker poll. `GET /api/worker/queue` (worker key) dumps store vs sidecar queue state for debugging.
 

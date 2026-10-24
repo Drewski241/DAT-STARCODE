@@ -1,6 +1,7 @@
 /**
- * Optional Chia Dev Tools (cdv) integration for the worker.
- * Soft-fails when cdv is not installed.
+ * Chia Dev Tools (cdv) integration for the worker.
+ * puzzleHashWithCdv returns available:false when cdv is missing; hard-domain
+ * jobs treat that as a verification failure via worker/tooling.mjs.
  */
 import { spawn } from "child_process";
 import { promises as fs } from "fs";

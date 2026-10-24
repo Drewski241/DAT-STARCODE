@@ -1,0 +1,5 @@
+; Adversarial: Common Lisp that models sometimes emit instead of ChiaLisp.
+(defparameter *pool* 0)
+(defun settle (winners)
+  (let* ((a (first winners)))
+    (setf *pool* a)))

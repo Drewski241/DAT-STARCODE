@@ -13,12 +13,17 @@ import {
   prepareGithubWorkspace,
   preparePublicGithubWorkspace,
 } from "./github.mjs";
-import { cdvAvailable, puzzleHashWithCdv } from "./cdv.mjs";
+import { puzzleHashWithCdv } from "./cdv.mjs";
 import { inferGoal } from "./goals.mjs";
 import { ensurePuzzleHashDocumented } from "./hash-doc.mjs";
 import { verifyWorkspaceFiles } from "./verify.mjs";
 import { clvmVerify } from "./clvm-verify.mjs";
+import { spendCheck } from "./spend-check.mjs";
 import { retrieveKnowledge, packsForProfile } from "./knowledge.mjs";
+import {
+  probeChialispTooling,
+  toolingFailureLines,
+} from "./tooling.mjs";
 
 const MAX_STEPS = Number(process.env.AGENT_MAX_STEPS || 12);
 const HARD_TASK_STEPS = Number(process.env.AGENT_HARD_TASK_STEPS || 40);
@@ -358,11 +363,11 @@ function agentSystem(job, github, githubClone, extras = {}) {
     UNBIASED_QNA,
     githubMode,
     profile === "chialisp"
-      ? "For ChiaLisp/CLVM, prefer clvm_verify (brun/run) and puzzle_hash (cdv) before finishing."
+      ? "For ChiaLisp/CLVM you MUST call clvm_verify (brun/run) and puzzle_hash (cdv) before finishing. Worker tooling is required — do not claim success if they fail."
       : "",
     "On every turn respond with ONLY one JSON object (optionally in a ```json fence):",
     "",
-    '1) Call a tool: {"thought":"...","tool":"list_files"|"read_file"|"write_file"|"run"|"web_search"|"fetch_url"|"clvm_verify"|"puzzle_hash","args":{...}}',
+    '1) Call a tool: {"thought":"...","tool":"list_files"|"read_file"|"write_file"|"run"|"web_search"|"fetch_url"|"clvm_verify"|"spend_check"|"puzzle_hash","args":{...}}',
     '   - list_files args: {}',
     '   - read_file args: {"path":"relative/path"}',
     '   - write_file args: {"path":"relative/path","content":"full file contents"}',
@@ -370,6 +375,7 @@ function agentSystem(job, github, githubClone, extras = {}) {
     '   - web_search args: {"query":"..."}',
     '   - fetch_url args: {"url":"https://..."}',
     '   - clvm_verify args: {"program":"...","solution":"()","mode":"brun"|"run","expect":"optional"}',
+    '   - spend_check args: {"program":"...","samples":[{"name":"deposit","solution":"(…)","mode":"brun"}]}',
     '   - puzzle_hash args: {"path":"puzzles/foo.clsp","curryArgs":["optional","cdv","-a","values"]}',
     "",
     '2) Finish: {"done":true,"message":"markdown answer for the user"}',
@@ -387,7 +393,15 @@ function agentSystem(job, github, githubClone, extras = {}) {
     HOW_TO_RUN,
     knowledge,
     extras.goal
-      ? `\n## Inferred goal\n${extras.goal.label} (\`${extras.goal.id}\`)${extras.cdvAvailable ? " · cdv available (use puzzle_hash)" : " · cdv not installed on worker"}\n`
+      ? `\n## Inferred goal\n${extras.goal.label} (\`${extras.goal.id}\`)${
+          extras.tooling
+            ? extras.tooling.ok
+              ? " · cdv + clvm_tools ready"
+              : ` · TOOLING MISSING: ${extras.tooling.missing.join(", ")} — install before finishing`
+            : extras.cdvAvailable
+              ? " · cdv available (use puzzle_hash)"
+              : " · cdv not installed on worker"
+        }\n`
       : "",
     extras.playbook
       ? `\n## Domain playbook (follow strictly)\n${extras.playbook}\n`
@@ -688,13 +702,24 @@ export async function runAgentJob({
         ? Math.max(MAX_STEPS, 10)
         : MAX_STEPS;
     const playbook = await loadPlaybooks(goal.playbooks);
-    const hasCdv = goal.wantCdv ? await cdvAvailable() : false;
+    const tooling =
+      goal.wantCdv || hardTask ? await probeChialispTooling() : null;
+    const hasCdv = Boolean(tooling?.cdv);
+    const toolingReady = Boolean(tooling?.ok);
+    const requireTooling = Boolean(
+      hardTask && tooling && tooling.required,
+    );
     if (playbook) {
       log(
-        `[agent] goal=${goal.id} playbooks=${goal.playbooks.join(",") || "-"} (${playbook.length} chars) cdv=${hasCdv}`,
+        `[agent] goal=${goal.id} playbooks=${goal.playbooks.join(",") || "-"} (${playbook.length} chars) cdv=${hasCdv} clvm_tools=${Boolean(tooling?.clvmTools)} requireTooling=${requireTooling}`,
       );
     } else {
       log(`[agent] goal=${goal.id}`);
+    }
+    if (requireTooling && tooling && !tooling.ok) {
+      for (const line of toolingFailureLines(tooling)) {
+        log(`[agent] tooling: ${line}`);
+      }
     }
     const agentsMd = isGeneral ? null : await loadRepoAgentsMd(root);
     if (agentsMd) log(`[agent] loaded repo agent instructions`);
@@ -707,6 +732,7 @@ export async function runAgentJob({
           agentsMd,
           goal,
           cdvAvailable: hasCdv,
+          tooling,
         }),
       },
     ];
@@ -969,6 +995,12 @@ export async function runAgentJob({
       } else if (tool === "clvm_verify") {
         const verified = await clvmVerify(args);
         observation = JSON.stringify(verified);
+      } else if (tool === "spend_check") {
+        const checked = await spendCheck({
+          program: args.program,
+          samples: args.samples,
+        });
+        observation = JSON.stringify(checked, null, 2);
       } else if (tool === "puzzle_hash") {
         const result = await puzzleHashWithCdv(root, String(args.path || ""), {
           curryArgs: args.curryArgs,
@@ -1084,14 +1116,19 @@ export async function runAgentJob({
           `[agent] hash-doc error: ${err instanceof Error ? err.message : String(err)}`,
         );
       }
+    } else if (hardTask && requireTooling && !hasCdv) {
+      log("[agent] hash-doc skipped — cdv required but not available");
     }
 
     // General Q&A should not litter the project workspace with scaffold files.
     const files = isGeneral ? [] : await collectLocalFiles(root);
     if (!isGeneral) {
       const verification = verifyWorkspaceFiles(files, {
-        requireHash: hardTask && hasCdv,
+        // Always require a documented hash on hard tasks when tooling is mandated.
+        requireHash: hardTask && (hasCdv || requireTooling),
         resultText: finalMessage,
+        toolingOk: requireTooling ? toolingReady : undefined,
+        toolingMissing: tooling?.missing,
       });
       if (!verification.ok) {
         log(`[agent] verification failed: ${verification.failures.join("; ")}`);
@@ -1181,7 +1218,7 @@ export async function runAgentJob({
           ? `Branch: ${githubBranch}${githubPath === "commands" ? " (push with commands below)" : ""}`
           : "",
       `Steps: ${stepsUsed}/${stepLimit}`,
-      `Goal: ${goal.id}${hasCdv ? " · cdv" : ""}`,
+      `Goal: ${goal.id}${hasCdv ? " · cdv" : ""}${tooling?.clvmTools ? " · clvm_tools" : ""}${requireTooling && !toolingReady ? " · TOOLING FAIL" : ""}`,
       "Mode: tool agent loop",
       "",
     ]

@@ -66,6 +66,101 @@ CAT2 wraps an inner puzzle; burns send the CAT to an unspendable burn puzzle has
 - Test with clvm_verify (brun/run) before claiming a spend works.`,
   },
   {
+    id: "cl-4",
+    pack: "chialisp",
+    title: "Secure puzzle checklist",
+    keywords: [
+      "security",
+      "secure",
+      "audit",
+      "assert",
+      "announcement",
+      "vulnerability",
+      "exploit",
+    ],
+    text: `Before shipping a puzzle, check:
+1. Every CREATE_COIN destination is curried, signed (AGG_SIG_ME), or derived — never a raw solution atom alone.
+2. Prefer AGG_SIG_ME over AGG_SIG_UNSAFE (UNSAFE is replayable across coins).
+3. Bind identity with ASSERT_MY_COIN_ID / ASSERT_MY_AMOUNT / ASSERT_MY_PUZZLEHASH when lineage matters.
+4. If two spends must cooperate, use announcements (SEND/RECEIVE) or ASSERT_CONCURRENT_SPEND — do not trust “the other side will behave”.
+5. Amounts: use exact ints / quotient remainder patterns; never float math; settle remainder to the last payout.
+6. Fail closed: invalid mode → (x). No silent success paths.
+7. Document curry order and solution atoms; regenerate puzzle hash with cdv after every curry change.`,
+  },
+  {
+    id: "cl-5",
+    pack: "chialisp",
+    title: "Signatures and message binding",
+    keywords: [
+      "agg_sig",
+      "signature",
+      "agg_sig_me",
+      "agg_sig_unsafe",
+      "signed",
+      "message",
+    ],
+    text: `AGG_SIG_ME ties the signature to this coin's id (safer default). AGG_SIG_UNSAFE does not — a signature can be replayed on another coin with the same puzzle if the message is reused.
+Sign a structured message (sha256tree of the critical solution atoms: winners, amounts, mode) — not an empty or attacker-chosen blob.
+Never use (if (AGG_SIG_ME …) …): signatures are emitted conditions, not predicates.`,
+  },
+  {
+    id: "cl-6",
+    pack: "chialisp",
+    title: "Outer puzzles and composition",
+    keywords: [
+      "cat",
+      "cat2",
+      "singleton",
+      "outer",
+      "inner",
+      "tail",
+      "launcher",
+    ],
+    text: `CAT2 / singletons wrap an inner puzzle. Security bugs often live at the boundary: wrong inner puzzle hash, mutable tail assumptions, or trusting outer-layer solution morphing.
+When composing: curry the exact inner puzzle hash you intend; assert amounts at the layer that owns value; do not assume the wallet UI prevents malformed spends.
+Burns: send to the known unspendable burn puzzle hash — never a “burn” address that is still spendable.`,
+  },
+  {
+    id: "cl-7",
+    pack: "chialisp",
+    title: "Common vulnerability patterns",
+    keywords: [
+      "vulnerability",
+      "drain",
+      "injection",
+      "grief",
+      "dust",
+      "fee",
+      "unsigned",
+    ],
+    text: `Patterns that have bitten Chia apps:
+- Unsigned solution injection: attacker supplies winner puzzle hashes / amounts with no AGG_SIG_ME covering them.
+- Missing ASSERT_MY_*: puzzle can be spent as a different coin/amount than intended.
+- Puzzle-hash placeholders (0xDEADBEEF / invented 0x…): funds lock forever or to the wrong party.
+- Fee / dust griefing: allow tiny CREATE_COIN or unconstrained RESERVE_FEE that bricks settlement.
+- Trusting off-chain “count” without binding on-chain lineage (wrong recreation hash).
+Treat every solution atom as attacker-controlled unless signed or curried.`,
+  },
+  {
+    id: "cl-8",
+    pack: "chialisp",
+    title: "Verify before claiming done",
+    keywords: [
+      "clvm_verify",
+      "brun",
+      "cdv",
+      "puzzle_hash",
+      "test",
+      "verify",
+    ],
+    text: `Done means:
+- .clsp starts with (mod and uses f/r (not array index syntax).
+- clvm_verify brun/run succeeds for deposit and settle sample solutions.
+- puzzle_hash/cdv produced a bare 64-hex documented under ## Pool puzzle hash.
+- Security checklist (cl-4) reviewed in PLAN.md or docs.
+Never invent hashes or skip tools when the worker reports tooling missing.`,
+  },
+  {
     id: "ops-nav",
     pack: "ops",
     title: "Cross-platform navigation habits",

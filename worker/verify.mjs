@@ -7,6 +7,10 @@ const COMMON_LISP_BAD =
 const INDEX_SYNTAX = /\w+\s*\[\s*\d+\s*\]/;
 const AGG_SIG_AS_IF = /\(\s*if\s*\(\s*AGG_SIG_ME\b/i;
 const DEADBEEF = /0xDEADBEEF/i;
+const AGG_SIG_UNSAFE = /\bAGG_SIG_UNSAFE\b|\(list\s+49\b/i;
+const HAS_CREATE_COIN = /\bCREATE_COIN\b|\(list\s+51\b/i;
+const HAS_AGG_SIG_ME = /\bAGG_SIG_ME\b|\(list\s+50\b/i;
+const HAS_ASSERT_MY = /\bASSERT_MY_(AMOUNT|PUZZLEHASH|COIN_ID)\b|\(list\s+7[0-3]\b/i;
 
 /**
  * Extract a bare 64-char hex puzzle hash from a ## Pool puzzle hash section.
@@ -25,7 +29,12 @@ export function findBarePuzzleHash(text) {
 
 /**
  * @param {{ path: string, content: string }[]} files
- * @param {{ requireHash?: boolean, resultText?: string }} [opts]
+ * @param {{
+ *   requireHash?: boolean,
+ *   resultText?: string,
+ *   toolingOk?: boolean,
+ *   toolingMissing?: string[],
+ * }} [opts]
  * @returns {{ ok: boolean, failures: string[], warnings: string[] }}
  */
 export function verifyWorkspaceFiles(files, opts = {}) {
@@ -35,7 +44,15 @@ export function verifyWorkspaceFiles(files, opts = {}) {
 
   for (const f of clspFiles) {
     const body = String(f.content || "");
-    const trimmed = body.trimStart();
+    // Skip blank lines and ; comments before the program body.
+    const trimmed = body
+      .split("\n")
+      .filter((line) => {
+        const t = line.trim();
+        return t.length > 0 && !t.startsWith(";");
+      })
+      .join("\n")
+      .trimStart();
     if (!trimmed.startsWith("(mod")) {
       failures.push(
         `${f.path}: ChiaLisp must start with (mod — got: ${trimmed.slice(0, 40).replace(/\n/g, " ")}`,
@@ -61,6 +78,30 @@ export function verifyWorkspaceFiles(files, opts = {}) {
         `${f.path}: still contains 0xDEADBEEF — use curried POOL_PUZZLE_HASH`,
       );
     }
+    if (AGG_SIG_UNSAFE.test(body)) {
+      warnings.push(
+        `${f.path}: uses AGG_SIG_UNSAFE — prefer AGG_SIG_ME unless replay across coins is impossible (document why)`,
+      );
+    }
+    if (
+      HAS_CREATE_COIN.test(body) &&
+      !HAS_AGG_SIG_ME.test(body) &&
+      !HAS_ASSERT_MY.test(body)
+    ) {
+      warnings.push(
+        `${f.path}: CREATE_COIN without AGG_SIG_ME or ASSERT_MY_* — confirm destinations are curried/derived, not attacker-chosen solution atoms`,
+      );
+    }
+  }
+
+  // Hard-domain jobs: missing worker tooling is a hard fail (no "cdv missing" escape).
+  if (opts.toolingOk === false) {
+    const missing = Array.isArray(opts.toolingMissing)
+      ? opts.toolingMissing.join(", ")
+      : "cdv and/or clvm_tools";
+    failures.push(
+      `Worker missing required ChiaLisp tooling (${missing}). Install chia-dev-tools (cdv) and npm deps (clvm_tools), then restart the worker.`,
+    );
   }
 
   if (clspFiles.length && opts.requireHash) {
@@ -71,14 +112,11 @@ export function verifyWorkspaceFiles(files, opts = {}) {
     const corpus = [opts.resultText || "", docs].join("\n");
     const hasSection = /##\s*Pool puzzle hash/i.test(corpus);
     const bareHash = findBarePuzzleHash(corpus);
-    const cdvMissingNoted = /cdv not (found|available)|chia-dev-tools/i.test(
-      corpus,
-    );
     if (!hasSection) {
       failures.push(
         "Wrote .clsp but missing ## Pool puzzle hash section — run puzzle_hash tool and document the bare hex",
       );
-    } else if (!bareHash && !cdvMissingNoted) {
+    } else if (!bareHash) {
       failures.push(
         "## Pool puzzle hash must contain a bare 64-char hex from puzzle_hash/cdv (no 0x prefix / no placeholders)",
       );

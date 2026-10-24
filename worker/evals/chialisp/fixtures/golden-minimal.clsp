@@ -1,0 +1,16 @@
+; Golden: minimal valid ChiaLisp shape (not a full pool).
+(mod (
+  AUTHORIZER_PK
+  DEST_PUZZLE_HASH
+  AMOUNT
+  ; solution
+  mode
+)
+  (if (= mode 1)
+    (list
+      (list 50 AUTHORIZER_PK (sha256tree (list DEST_PUZZLE_HASH AMOUNT)))
+      (list 51 DEST_PUZZLE_HASH AMOUNT)
+    )
+    (x)
+  )
+)

@@ -1,0 +1,4 @@
+; Adversarial: placeholder puzzle hash.
+(mod (AMOUNT)
+  (list (list 51 0xDEADBEEF AMOUNT))
+)

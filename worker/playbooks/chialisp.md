@@ -68,7 +68,19 @@ Notes for a real MTT pool (Mode C):
 - Emit `(list 50 pubkey msg)` for AGG_SIG_ME; do not wrap it in `if`.
 - CREATE_COIN is `(list 51 puzzle_hash amount)`.
 - Before finishing, `read_file` your `.clsp` and confirm it starts with `(mod` and contains no forbidden tokens.
+- Before finishing, run `clvm_verify` (brun/run) and `puzzle_hash` (cdv). Missing worker tooling is a hard failure — never invent hashes or skip verify.
+
+## Security checklist (required for any spendable puzzle)
+
+1. **No unsigned destinations** — every `CREATE_COIN` puzzle hash is curried, signed via `AGG_SIG_ME`, or deterministically derived.
+2. **Prefer `AGG_SIG_ME`** — avoid `AGG_SIG_UNSAFE` unless you document why replay across coins is impossible.
+3. **Bind the coin** — use `ASSERT_MY_AMOUNT` / `ASSERT_MY_PUZZLEHASH` / `ASSERT_MY_COIN_ID` when amount or lineage must not drift.
+4. **Fail closed** — bad mode / overflow / too many deposits → `(x)`, never a partial spend that leaks value.
+5. **Exact amounts** — integer `quotient` math; last payout gets the remainder so mojos cannot vanish or inflate.
+6. **Treat the solution as hostile** — any atom the spender provides can be attacker-chosen unless covered by a signature or curry constant.
+
+Put a short “Security” subsection in `PLAN.md` or the companion docs answering these six points.
 
 ## Docs companion
 
-If asked for `docs/MTT_POOL.md`, document curry order, deposit solution atoms, settle solution atoms, and a numeric example (500 × buy-in → top-3 mojos).
+If asked for `docs/MTT_POOL.md`, document curry order, deposit solution atoms, settle solution atoms, a numeric example (500 × buy-in → top-3 mojos), and the security notes above.

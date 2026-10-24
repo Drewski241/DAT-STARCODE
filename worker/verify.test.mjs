@@ -69,4 +69,28 @@ const withHash = verifyWorkspaceFiles(
 );
 assert.equal(withHash.ok, true);
 
+const toolingMissing = verifyWorkspaceFiles(
+  [
+    {
+      path: "puzzles/mtt_pool.clsp",
+      content: `(mod (POOL_PUZZLE_HASH)\n  (list (list 51 POOL_PUZZLE_HASH 1))\n)`,
+    },
+    {
+      path: "docs/MTT_POOL.md",
+      content:
+        "## Pool puzzle hash\n\n`aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa`\n",
+    },
+  ],
+  {
+    requireHash: true,
+    toolingOk: false,
+    toolingMissing: ["cdv"],
+    resultText: "cdv not found on this worker",
+  },
+);
+assert.equal(toolingMissing.ok, false);
+assert.ok(
+  toolingMissing.failures.some((f) => /missing required ChiaLisp tooling/i.test(f)),
+);
+
 console.log("verify.test.mjs ok");

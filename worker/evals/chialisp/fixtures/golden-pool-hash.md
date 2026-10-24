@@ -1,0 +1,3 @@
+## Pool puzzle hash
+
+`aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa`

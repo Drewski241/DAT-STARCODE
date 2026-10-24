@@ -1,0 +1,7 @@
+; Adversarial: treats AGG_SIG_ME as a boolean predicate.
+(mod (PK MSG)
+  (if (AGG_SIG_ME PK MSG)
+    (list (list 51 PK 1))
+    (x)
+  )
+)

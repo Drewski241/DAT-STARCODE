@@ -1,0 +1,4 @@
+; Adversarial: JavaScript/Python index syntax.
+(mod (winner_phs AMOUNT)
+  (list (list 51 winner_phs[0] AMOUNT))
+)
