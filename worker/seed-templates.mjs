@@ -76,6 +76,10 @@ async function needsClspRefresh(root, rel) {
       if (claim && /PRINCIPAL\s+DEPOSIT_SECONDS\s+OWNER_PH/i.test(claim)) {
         return true;
       }
+      // v2: claim-msg must bind OWNER_PH (not a free dest_ph arg).
+      const cm = defunBody(body, "claim-msg");
+      if (cm && /\bdest_ph\b/i.test(cm)) return true;
+      if (cm && !/\bOWNER_PH\b/.test(cm)) return true;
     }
     return false;
   } catch {
@@ -149,7 +153,10 @@ export async function seedTemplatesForGoal(root, goalId, opts = {}) {
   for (const [fromRel, toRel] of puzzles) {
     try {
       const body = await fs.readFile(path.join(base, fromRel), "utf8");
-      const force = await needsClspRefresh(root, toRel);
+      // Always force the primary puzzles/ copies — agents often leave a stale
+      // vault next to a refreshed templates/ tree (see Studio zip 94408ee8).
+      const force =
+        /^puzzles\//i.test(toRel) || (await needsClspRefresh(root, toRel));
       await writeFile(root, toRel, body, written, log, { force });
     } catch (err) {
       log(
