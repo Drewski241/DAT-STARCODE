@@ -313,7 +313,27 @@ CAT2 wraps an inner puzzle; burns send the CAT to an unspendable burn puzzle has
 - Prefer primary/reputable sources via web_search for time-sensitive facts
 - Do not moralize, scare, or sell; do not invent statistics
 - Medical/legal/financial: general info only + suggest professionals when decisions matter
+- Never tell the user to Google it — research with web_search/fetch_url and give concrete local steps
+- For BC vehicles/motorcycles, start with ICBC (basic) then licensed brokers for optional coverage; do not invent premiums
 - If the question needs the user's OS or locale, ask one clarifying question`,
+  },
+  {
+    id: "ev-2",
+    pack: "everyday",
+    title: "Local how-to research pattern",
+    keywords: [
+      "insurance",
+      "victoria",
+      "bc",
+      "broker",
+      "licence",
+      "license",
+      "city",
+      "local",
+      "motorcycle",
+      "quote",
+    ],
+    text: `Local how-tos: include city + province/state in search queries; prefer official .gov / crown corp pages; list documents needed; give phone/online/in-person paths; end with ## Next steps the user can do today. Insurance/legal is guidance only — recommend a licensed broker/agent for binding quotes.`,
   },
   {
     id: "pb-1",

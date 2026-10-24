@@ -40,6 +40,20 @@ and say when unsure. Use web_search for time-sensitive facts. Never ask for pass
 recovery keys. Medical/legal/financial topics = general info only + suggest professionals when stakes are high.
 `.trim();
 
+const GENERAL_QNA_RULES = `
+This turn is everyday Q&A / local how-to — NOT a coding job.
+- Do NOT create PLAN.md, README.md, src/, apps, or other code scaffolds.
+- Do NOT tell the user to "just Google it". YOU research and synthesize the best practical answer.
+- BEFORE {"done":true}: call web_search at least once (and fetch_url for the best official page when useful).
+- Structure the final markdown as:
+  1) Direct answer first (who / what / where for their city or region)
+  2) Concrete steps (documents, phone/office/online path, what to compare)
+  3) Caveats (licensing vs advice; say when a licensed broker/agent is required)
+  4) ## Next steps — numbered actions the user can take today
+- Prefer official/government and well-known local providers (e.g. ICBC for BC auto/motorcycle).
+- If search results are thin, try a second more specific query (include city + province + product).
+`.trim();
+
 const QUALITY_RULES = `
 Quality rules:
 - Infer the user's end goal from a short prompt; use the domain playbook(s) below — do not wait for a novel-length spec.
@@ -242,13 +256,16 @@ function agentSystem(job, github, githubClone, extras = {}) {
     github?.repoFullName ||
     githubClone?.fullName ||
     null;
-  const githubMode = github
-    ? `This workspace is a clone of GitHub repo ${github.repoFullName}. After you finish, the worker will commit, push a branch, and open a pull request automatically — focus on making good file changes.`
-    : githubClone
-      ? `This workspace is a clone of public GitHub repo ${githubClone.fullName}. After you finish, the user will push with terminal commands printed in the result — focus on making good file changes. Do not commit or push yourself.`
-      : "This workspace syncs to Studio download zip (no GitHub repo linked).";
+  const isGeneral = extras.goal?.id === "general";
+  const githubMode = isGeneral
+    ? "This is an advice / research turn — ignore GitHub unless the user asked about a repo."
+    : github
+      ? `This workspace is a clone of GitHub repo ${github.repoFullName}. After you finish, the worker will commit, push a branch, and open a pull request automatically — focus on making good file changes.`
+      : githubClone
+        ? `This workspace is a clone of public GitHub repo ${githubClone.fullName}. After you finish, the user will push with terminal commands printed in the result — focus on making good file changes. Do not commit or push yourself.`
+        : "This workspace syncs to Studio download zip (no GitHub repo linked).";
   const profile = detectProfile(job.prompt || "");
-  const packs = packsForProfile(profile);
+  const packs = packsForProfile(isGeneral ? "general" : profile);
   const chunks = retrieveKnowledge(job.prompt || "", { packs, limit: 3 });
   const knowledge =
     chunks.length === 0
@@ -257,6 +274,35 @@ function agentSystem(job, github, githubClone, extras = {}) {
           "Retrieved knowledge:",
           ...chunks.map((c) => `### ${c.title}\n${c.text}`),
         ].join("\n\n");
+
+  if (isGeneral) {
+    return [
+      "You are DAT STARCODER, a careful research assistant for everyday and local questions.",
+      UNBIASED_QNA,
+      GENERAL_QNA_RULES,
+      githubMode,
+      "On every turn respond with ONLY one JSON object (optionally in a ```json fence):",
+      "",
+      '1) Call a tool: {"thought":"...","tool":"web_search"|"fetch_url","args":{...}}',
+      '   - web_search args: {"query":"..."}',
+      '   - fetch_url args: {"url":"https://..."}',
+      "",
+      '2) Finish: {"done":true,"message":"markdown answer for the user"}',
+      "",
+      "Do not use list_files/write_file/run for this turn unless the user explicitly asked for files.",
+      knowledge,
+      extras.goal
+        ? `\n## Inferred goal\n${extras.goal.label} (\`${extras.goal.id}\`)\n`
+        : "",
+      job.context ? `\nPrior context:\n${job.context}\n` : "",
+      "",
+      "User request:",
+      job.prompt,
+    ]
+      .filter(Boolean)
+      .join("\n");
+  }
+
   return [
     "You are DAT STARCODER, a robust coding and help agent with tools.",
     "You work inside a real project workspace on disk when coding.",
@@ -317,24 +363,92 @@ function agentSystem(job, github, githubClone, extras = {}) {
 async function webSearch(query) {
   const q = String(query || "").trim();
   if (!q) return "ERROR: empty query";
+  const ua = {
+    "User-Agent":
+      "DAT-STARCODER-agent/0.1 (research; +https://datstarcoder.com)",
+  };
+  const lines = [];
   try {
-    const url = `https://api.duckduckgo.com/?q=${encodeURIComponent(q)}&format=json&no_html=1&skip_disambig=1`;
-    const res = await fetch(url, {
-      headers: { "User-Agent": "DAT-STARCODER-agent/0.1" },
+    const apiUrl = `https://api.duckduckgo.com/?q=${encodeURIComponent(q)}&format=json&no_html=1&skip_disambig=1`;
+    const res = await fetch(apiUrl, {
+      headers: ua,
       signal: AbortSignal.timeout(12_000),
     });
-    if (!res.ok) return `ERROR: search ${res.status}`;
-    const data = await res.json();
-    const lines = [];
-    if (data.AbstractText) lines.push(data.AbstractText);
-    for (const t of data.RelatedTopics || []) {
-      if (t.Text) lines.push(t.Text);
-      for (const x of t.Topics || []) if (x.Text) lines.push(x.Text);
+    if (res.ok) {
+      const data = await res.json();
+      if (data.Heading) lines.push(`Heading: ${data.Heading}`);
+      if (data.AbstractText) lines.push(data.AbstractText);
+      if (data.AbstractURL) lines.push(`Source: ${data.AbstractURL}`);
+      for (const t of data.RelatedTopics || []) {
+        if (t.Text) lines.push(t.Text);
+        if (t.FirstURL) lines.push(`URL: ${t.FirstURL}`);
+        for (const x of t.Topics || []) {
+          if (x.Text) lines.push(x.Text);
+          if (x.FirstURL) lines.push(`URL: ${x.FirstURL}`);
+        }
+      }
+      for (const r of data.Results || []) {
+        if (r.Text) lines.push(r.Text);
+        if (r.FirstURL) lines.push(`URL: ${r.FirstURL}`);
+      }
     }
-    return lines.slice(0, 8).join("\n") || "(no results)";
   } catch (err) {
-    return `ERROR: ${err instanceof Error ? err.message : String(err)}`;
+    lines.push(
+      `API search note: ${err instanceof Error ? err.message : String(err)}`,
+    );
   }
+
+  // Instant-answer API is often empty for local queries — also scrape lite HTML.
+  if (lines.filter((l) => !l.startsWith("API search")).length < 2) {
+    try {
+      const htmlUrl = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(q)}`;
+      const res = await fetch(htmlUrl, {
+        headers: { ...ua, Accept: "text/html" },
+        signal: AbortSignal.timeout(15_000),
+      });
+      if (res.ok) {
+        const html = await res.text();
+        const re =
+          /uddg=([^&"]+)[^>]*>[\s\S]*?class="result__a"[^>]*>([\s\S]*?)<\/a>[\s\S]*?class="result__snippet"[^>]*>([\s\S]*?)<\/a>/gi;
+        let m;
+        let n = 0;
+        while ((m = re.exec(html)) && n < 6) {
+          let link = m[1];
+          try {
+            link = decodeURIComponent(link);
+          } catch {
+            /* keep */
+          }
+          const title = m[2].replace(/<[^>]+>/g, "").trim();
+          const snip = m[3].replace(/<[^>]+>/g, "").trim();
+          if (title) lines.push(`${title}\n${snip}\nURL: ${link}`);
+          n += 1;
+        }
+        if (n === 0) {
+          // Fallback: simpler title+url pairs
+          const loose =
+            /class="result__a"[^>]*href="[^"]*uddg=([^&"]+)[^"]*"[^>]*>([\s\S]*?)<\/a>/gi;
+          while ((m = loose.exec(html)) && n < 6) {
+            let link = m[1];
+            try {
+              link = decodeURIComponent(link);
+            } catch {
+              /* keep */
+            }
+            const title = m[2].replace(/<[^>]+>/g, "").trim();
+            if (title) lines.push(`${title}\nURL: ${link}`);
+            n += 1;
+          }
+        }
+      }
+    } catch (err) {
+      lines.push(
+        `HTML search note: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }
+
+  return lines.slice(0, 14).join("\n\n") || "(no results — try a more specific query)";
 }
 
 async function fetchUrl(url) {
@@ -516,6 +630,7 @@ export async function runAgentJob({
 
     const goal = inferGoal(job.prompt);
     const hardTask = goal.hard;
+    const isGeneral = goal.id === "general";
     const stepLimit = hardTask ? HARD_TASK_STEPS : MAX_STEPS;
     const playbook = await loadPlaybooks(goal.playbooks);
     const hasCdv = goal.wantCdv ? await cdvAvailable() : false;
@@ -526,7 +641,7 @@ export async function runAgentJob({
     } else {
       log(`[agent] goal=${goal.id}`);
     }
-    const agentsMd = await loadRepoAgentsMd(root);
+    const agentsMd = isGeneral ? null : await loadRepoAgentsMd(root);
     if (agentsMd) log(`[agent] loaded repo agent instructions`);
 
     const messages = [
@@ -542,6 +657,7 @@ export async function runAgentJob({
     ];
     let finalMessage = "";
     let stepsUsed = 0;
+    let researchSteps = 0;
 
     for (let step = 0; step < stepLimit; step++) {
       stepsUsed = step + 1;
@@ -566,9 +682,13 @@ export async function runAgentJob({
           "",
           err instanceof Error ? err.message : String(err),
           "",
-          "## How to run / play",
-          "1. Open Studio → Workspace → Download zip if files exist.",
-          "2. Retry the job after confirming Ollama is running and the selected model is pulled (`ollama list`).",
+          isGeneral
+            ? "## Next steps\n1. Retry after confirming Ollama is running."
+            : [
+                "## How to run / play",
+                "1. Open Studio → Workspace → Download zip if files exist.",
+                "2. Retry the job after confirming Ollama is running and the selected model is pulled (`ollama list`).",
+              ].join("\n"),
         ].join("\n");
         await emit(
           "error",
@@ -583,13 +703,22 @@ export async function runAgentJob({
       if (!action) {
         messages.push({
           role: "user",
-          content:
-            'Could not parse JSON. Reply with only one JSON object, e.g. {"tool":"list_files","args":{}} or {"done":true,"message":"..."}',
+          content: isGeneral
+            ? 'Could not parse JSON. Reply with only one JSON object, e.g. {"tool":"web_search","args":{"query":"..."}} or {"done":true,"message":"..."}'
+            : 'Could not parse JSON. Reply with only one JSON object, e.g. {"tool":"list_files","args":{}} or {"done":true,"message":"..."}',
         });
         continue;
       }
 
       if (action.done) {
+        if (isGeneral && researchSteps < 1) {
+          messages.push({
+            role: "user",
+            content:
+              'You must research before finishing. Call web_search now with a specific query that includes the city/region and product (e.g. "motorcycle insurance Victoria BC ICBC"), then synthesize a concrete answer. Do not tell the user to Google it themselves.',
+          });
+          continue;
+        }
         finalMessage = String(action.message || content);
         await emit("status", "Finishing answer");
         break;
@@ -623,8 +752,14 @@ export async function runAgentJob({
         observation = await runCommand(root, String(args.command || "true"));
       } else if (tool === "web_search") {
         observation = await webSearch(args.query);
+        researchSteps += 1;
       } else if (tool === "fetch_url") {
         observation = await fetchUrl(args.url);
+        researchSteps += 1;
+      } else if (isGeneral && (tool === "write_file" || tool === "run")) {
+        observation =
+          "ERROR: this is a general Q&A turn — do not create code or run shell. Use web_search / fetch_url, then {" +
+          '"done":true,"message":"..."} with a concrete answer.';
       } else if (tool === "clvm_verify") {
         const verified = await clvmVerify(args);
         observation = JSON.stringify(verified);
@@ -648,18 +783,37 @@ export async function runAgentJob({
     }
 
     if (!finalMessage) {
-      finalMessage = [
-        "# Reached step limit",
-        "",
-        "I made partial progress in the workspace. Download the zip and continue with another prompt.",
-        "",
-        "## How to run / play",
-        "1. Studio → this job → Workspace → Download zip.",
-        "2. Unzip and open the main file (often index.html) or follow README.md.",
-      ].join("\n");
+      finalMessage = isGeneral
+        ? [
+            "# Reached step limit",
+            "",
+            "I researched partially but hit the step budget. Ask a follow-up with more detail (budget, new vs used bike, your license class) and I will continue.",
+            "",
+            "## Next steps",
+            "1. Retry with a shorter question focused on one decision (e.g. ICBC quote vs broker).",
+          ].join("\n")
+        : [
+            "# Reached step limit",
+            "",
+            "I made partial progress in the workspace. Download the zip and continue with another prompt.",
+            "",
+            "## How to run / play",
+            "1. Studio → this job → Workspace → Download zip.",
+            "2. Unzip and open the main file (often index.html) or follow README.md.",
+          ].join("\n");
     }
 
-    if (!/## How to run \/ play/i.test(finalMessage)) {
+    if (isGeneral) {
+      if (!/## Next steps/i.test(finalMessage)) {
+        finalMessage += [
+          "",
+          "## Next steps",
+          "1. Open the official insurer / broker links from the answer above.",
+          "2. Have your licence, VIN/bike details, and address ready for a quote.",
+          "3. Ask a follow-up here if you want help comparing two options.",
+        ].join("\n");
+      }
+    } else if (!/## How to run \/ play/i.test(finalMessage)) {
       finalMessage += [
         "",
         "## How to run / play",
@@ -693,54 +847,59 @@ export async function runAgentJob({
       }
     }
 
-    const files = await collectLocalFiles(root);
-    const verification = verifyWorkspaceFiles(files, {
-      requireHash: hardTask && hasCdv,
-      resultText: finalMessage,
-    });
-    if (!verification.ok) {
-      log(`[agent] verification failed: ${verification.failures.join("; ")}`);
-      finalMessage += [
-        "",
-        "## Verification failed",
-        "",
-        "DAT STARCODER checked the workspace and rejected these deliverables:",
-        ...verification.failures.map((f) => `- ${f}`),
-        "",
-        "Do not treat this turn as done. Re-run with a fix prompt (or a stronger model).",
-      ].join("\n");
-    } else if (hardTask) {
-      const clsp = files.filter((f) => /\.clsp$/i.test(f.path));
-      if (clsp.length === 0) {
+    // General Q&A should not litter the project workspace with scaffold files.
+    const files = isGeneral ? [] : await collectLocalFiles(root);
+    if (!isGeneral) {
+      const verification = verifyWorkspaceFiles(files, {
+        requireHash: hardTask && hasCdv,
+        resultText: finalMessage,
+      });
+      if (!verification.ok) {
+        log(`[agent] verification failed: ${verification.failures.join("; ")}`);
         finalMessage += [
           "",
           "## Verification failed",
           "",
-          "- Hard-domain goal expected a `.clsp` (or ChiaLisp) deliverable, but none was written.",
+          "DAT STARCODER checked the workspace and rejected these deliverables:",
+          ...verification.failures.map((f) => `- ${f}`),
+          "",
+          "Do not treat this turn as done. Re-run with a fix prompt (or a stronger model).",
+        ].join("\n");
+      } else if (hardTask) {
+        const clsp = files.filter((f) => /\.clsp$/i.test(f.path));
+        if (clsp.length === 0) {
+          finalMessage += [
+            "",
+            "## Verification failed",
+            "",
+            "- Hard-domain goal expected a `.clsp` (or ChiaLisp) deliverable, but none was written.",
+          ].join("\n");
+        }
+      }
+      if (verification.warnings?.length) {
+        finalMessage += [
+          "",
+          "## Verification notes",
+          ...verification.warnings.map((w) => `- ${w}`),
         ].join("\n");
       }
-    }
-    if (verification.warnings?.length) {
-      finalMessage += [
-        "",
-        "## Verification notes",
-        ...verification.warnings.map((w) => `- ${w}`),
-      ].join("\n");
     }
 
     // Paths that were in Studio at pull but are gone on disk → delete from S3.
     const deletePaths = [];
-    for (const rel of pulledPaths) {
-      try {
-        await fs.access(path.join(root, rel));
-      } catch {
-        deletePaths.push(rel);
+    if (!isGeneral) {
+      for (const rel of pulledPaths) {
+        try {
+          await fs.access(path.join(root, rel));
+        } catch {
+          deletePaths.push(rel);
+        }
       }
-    }
-    if (deletePaths.length) {
-      log(
-        `[agent] workspace deletes (${deletePaths.length}): ${deletePaths.slice(0, 12).join(", ")}${deletePaths.length > 12 ? "…" : ""}`,
-      );
+      if (deletePaths.length) {
+        log(
+          `[agent] workspace deletes (${deletePaths.length}): ${deletePaths.slice(0, 12).join(", ")}${deletePaths.length > 12 ? "…" : ""}`,
+        );
+      }
     }
     await pushWorkspace(job, files, deletePaths);
 
