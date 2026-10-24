@@ -1,10 +1,4 @@
-; Singleton-safe treasury coin (educational).
-; Pays interest by recreating THIS coin with amount reduced — exactly one CREATE_COIN.
-; Interest value leaves via a concurrent CAT/ephemeral payout spend that asserts our
-; announcement (not a second CREATE_COIN from this puzzle).
-;
-; Curry: MOD_HASH AUTHORIZER_PK
-; Solution: mode amount interest_amount dest_ph claim_msg
+; Deprecated alias — use treasury_coin.clsp.
 
 (mod (
   MOD_HASH
@@ -24,20 +18,17 @@
     (if (> n 0) n (x))
   )
 
-  (if (= mode 1)
+  (defun pay-interest ()
     (if (> interest_amount 0)
       (if (> amount (- interest_amount 1))
         (list
           (list 50 AUTHORIZER_PK
             (sha256tree (list mode amount interest_amount dest_ph claim_msg)))
-          ; Must see matching vault claim (ASSERT_PUZZLE_ANNOUNCEMENT / coin ann — 62)
           (list 62 claim_msg)
-          ; Exactly ONE child: treasury remainder (singleton invariant)
           (list 51
             (sha256tree (list MOD_HASH AUTHORIZER_PK))
             (- amount interest_amount)
           )
-          ; Announce payout intent for concurrent payout coin / melt path
           (list 60
             (sha256tree (list (assert-b32 dest_ph) (assert-pos interest_amount))))
         )
@@ -45,6 +36,10 @@
       )
       (x)
     )
+  )
+
+  (if (= mode 1)
+    (pay-interest)
     (x)
   )
 )

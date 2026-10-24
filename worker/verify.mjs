@@ -13,6 +13,33 @@ const HAS_AGG_SIG_ME = /\bAGG_SIG_ME\b|\(list\s+50\b/i;
 const HAS_ASSERT_MY = /\bASSERT_MY_(AMOUNT|PUZZLEHASH|COIN_ID)\b|\(list\s+7[0-3]\b/i;
 
 /**
+ * True if any single condition-list contains two CREATE_COIN / (list 51 …) siblings.
+ * Mutually exclusive modes each with one CREATE_COIN are OK (separate parent lists).
+ */
+export function hasSiblingCreateCoins(source) {
+  const s = String(source || "").replace(/;.*$/gm, "\n");
+  /** @type {{ childCreates: number }[]} */
+  const stack = [];
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i];
+    if (ch === "(") {
+      const rest = s.slice(i);
+      const isCreate =
+        /^\(\s*list\s+51\b/i.test(rest) || /^\(\s*CREATE_COIN\b/i.test(rest);
+      stack.push({ childCreates: 0 });
+      if (isCreate && stack.length >= 2) {
+        const parent = stack[stack.length - 2];
+        parent.childCreates += 1;
+        if (parent.childCreates >= 2) return true;
+      }
+    } else if (ch === ")") {
+      stack.pop();
+    }
+  }
+  return false;
+}
+
+/**
  * Extract a bare 64-char hex puzzle hash from a ## Pool puzzle hash section.
  * Rejects `0x…` placeholders (x is a hex digit so naive {64} matches lie).
  */
@@ -34,6 +61,7 @@ export function findBarePuzzleHash(text) {
  *   resultText?: string,
  *   toolingOk?: boolean,
  *   toolingMissing?: string[],
+ *   strictSingleton?: boolean,
  * }} [opts]
  * @returns {{ ok: boolean, failures: string[], warnings: string[] }}
  */
@@ -41,6 +69,7 @@ export function verifyWorkspaceFiles(files, opts = {}) {
   const failures = [];
   const warnings = [];
   const clspFiles = files.filter((f) => /\.clsp$/i.test(f.path));
+  const strictSingleton = Boolean(opts.strictSingleton);
 
   for (const f of clspFiles) {
     const body = String(f.content || "");
@@ -92,13 +121,10 @@ export function verifyWorkspaceFiles(files, opts = {}) {
         `${f.path}: CREATE_COIN without AGG_SIG_ME or ASSERT_MY_* — confirm destinations are curried/derived, not attacker-chosen solution atoms`,
       );
     }
-    // Heuristic: more than one literal CREATE_COIN / (list 51 …) in a singleton-style vault
-    // often means lineage-spoof risk (CircuitDAO Zellic finding).
-    const createCoinHits = body.match(/\bCREATE_COIN\b|\(list\s+51\b/gi) || [];
-    if (createCoinHits.length > 2) {
-      warnings.push(
-        `${f.path}: multiple CREATE_COIN forms detected (${createCoinHits.length}) — singleton vaults/treasuries should emit exactly one child per spend (CircuitDAO lineage-spoof class)`,
-      );
+    if (hasSiblingCreateCoins(body)) {
+      const msg = `${f.path}: sibling CREATE_COIN conditions in one spend — singleton vaults/treasuries must emit exactly one child (CircuitDAO lineage-spoof class)`;
+      if (strictSingleton) failures.push(msg);
+      else warnings.push(msg);
     }
   }
 

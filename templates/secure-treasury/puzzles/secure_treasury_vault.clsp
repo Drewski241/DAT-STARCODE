@@ -1,18 +1,5 @@
-; Secure treasury-backed savings vault (educational reference for DAT STARCODER).
-; Original pattern — not Circuit protocol source.
-;
-; Encodes post-incident rules:
-;   A) Exactly one CREATE_COIN per spend (no lineage-spoof sibling coins)
-;   B) Deposit time is CURRIED; interest needs MIN_HOLD_SECONDS elapsed
-;   C) Interest from principal × bps × elapsed — never a solution-supplied "discounted balance"
-;   D) Destinations must be 32-byte atoms
-;   E) Interest is claimed via announcement for a concurrent treasury spend (vault does not
-;      CREATE_COIN the interest itself — that would be a second child / forged payout path)
-;
-; Curry: MOD_HASH AUTHORIZER_PK MIN_HOLD_SECONDS INTEREST_BPS TREASURY_PH
-;        PRINCIPAL DEPOSIT_SECONDS OWNER_PH
-; Solution: mode now_seconds dest_ph
-;   1 = deposit/recreate   2 = withdraw principal only   3 = withdraw + announce interest claim
+; Deprecated alias — use savings_vault.clsp (same security rules).
+; Kept so older prompts that name this path still resolve after seed.
 
 (mod (
   MOD_HASH
@@ -36,8 +23,8 @@
     (if (> n 0) n (x))
   )
 
-  (defun interest-due (principal elapsed_seconds bps)
-    (quotient (* (* principal bps) elapsed_seconds) (* 10000 31536000))
+  (defun interest-due (principal elapsed bps)
+    (quotient (* (* principal bps) elapsed) (* 10000 31536000))
   )
 
   (defun vault-ph (mod_hash auth min_hold bps treasury_ph principal deposit_seconds owner_ph)
@@ -46,8 +33,7 @@
     )
   )
 
-  (if (= mode 1)
-    ; Deposit / recreate — single child with updated curried principal + deposit time
+  (defun mode-deposit ()
     (list
       (list 50 AUTHORIZER_PK (sha256tree (list 1 now_seconds PRINCIPAL)))
       (list 51
@@ -56,37 +42,41 @@
         (assert-pos PRINCIPAL)
       )
     )
+  )
 
-    (if (= mode 2)
-      ; Withdraw principal only — single CREATE_COIN to owner; no interest
-      (list
-        (list 50 AUTHORIZER_PK (sha256tree (list 2 now_seconds dest_ph)))
-        (list 51 (assert-b32 dest_ph) (assert-pos PRINCIPAL))
+  (defun mode-withdraw ()
+    (list
+      (list 50 AUTHORIZER_PK (sha256tree (list 2 now_seconds dest_ph)))
+      (list 51 (assert-b32 dest_ph) (assert-pos PRINCIPAL))
+    )
+  )
+
+  (defun mode-claim-interest (elapsed owed)
+    (if (> elapsed (- MIN_HOLD_SECONDS 1))
+      (if (> owed 0)
+        (list
+          (list 50 AUTHORIZER_PK
+            (sha256tree (list 3 now_seconds dest_ph owed)))
+          (list 81 now_seconds)
+          (list 51 (assert-b32 dest_ph) (assert-pos PRINCIPAL))
+          (list 60
+            (sha256tree (list TREASURY_PH owed (assert-b32 dest_ph))))
+        )
+        (x)
       )
+      (x)
+    )
+  )
 
+  (if (= mode 1)
+    (mode-deposit)
+    (if (= mode 2)
+      (mode-withdraw)
       (if (= mode 3)
-        ; Withdraw principal + announce interest claim for concurrent treasury spend
         (if (> now_seconds DEPOSIT_SECONDS)
-          (if (> (- now_seconds DEPOSIT_SECONDS) (- MIN_HOLD_SECONDS 1))
-            (if (> (interest-due PRINCIPAL (- now_seconds DEPOSIT_SECONDS) INTEREST_BPS) 0)
-              (list
-                (list 50 AUTHORIZER_PK
-                  (sha256tree
-                    (list 3 now_seconds dest_ph
-                      (interest-due PRINCIPAL (- now_seconds DEPOSIT_SECONDS) INTEREST_BPS))))
-                (list 81 now_seconds)
-                ; Exactly one CREATE_COIN: principal to destination
-                (list 51 (assert-b32 dest_ph) (assert-pos PRINCIPAL))
-                ; Coin announcement for treasury to ASSERT (opcode 60)
-                (list 60
-                  (sha256tree
-                    (list TREASURY_PH
-                      (interest-due PRINCIPAL (- now_seconds DEPOSIT_SECONDS) INTEREST_BPS)
-                      (assert-b32 dest_ph))))
-              )
-              (x)
-            )
-            (x) ; min hold — blocks same-block flash interest
+          (mode-claim-interest
+            (- now_seconds DEPOSIT_SECONDS)
+            (interest-due PRINCIPAL (- now_seconds DEPOSIT_SECONDS) INTEREST_BPS)
           )
           (x)
         )

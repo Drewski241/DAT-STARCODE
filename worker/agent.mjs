@@ -24,6 +24,7 @@ import {
   probeChialispTooling,
   toolingFailureLines,
 } from "./tooling.mjs";
+import { seedTemplatesForGoal } from "./seed-templates.mjs";
 
 const MAX_STEPS = Number(process.env.AGENT_MAX_STEPS || 12);
 const HARD_TASK_STEPS = Number(process.env.AGENT_HARD_TASK_STEPS || 40);
@@ -701,6 +702,17 @@ export async function runAgentJob({
       : isShopping
         ? Math.max(MAX_STEPS, 10)
         : MAX_STEPS;
+
+    if (!isGeneral && hardTask) {
+      try {
+        await seedTemplatesForGoal(root, goal.id, { log });
+      } catch (err) {
+        log(
+          `[agent] seed templates: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    }
+
     const playbook = await loadPlaybooks(goal.playbooks);
     const tooling =
       goal.wantCdv || hardTask ? await probeChialispTooling() : null;
@@ -1129,6 +1141,8 @@ export async function runAgentJob({
         resultText: finalMessage,
         toolingOk: requireTooling ? toolingReady : undefined,
         toolingMissing: tooling?.missing,
+        strictSingleton:
+          goal.id === "secure_treasury" || goal.id === "mtt_pool",
       });
       if (!verification.ok) {
         log(`[agent] verification failed: ${verification.failures.join("; ")}`);

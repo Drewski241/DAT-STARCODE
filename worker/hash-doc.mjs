@@ -36,7 +36,10 @@ export function upsertPoolPuzzleHashSection(docsBody, bareHash) {
  */
 export function pickClspForHash(relPaths) {
   const clsp = relPaths.filter((p) => /\.clsp$/i.test(p));
-  const preferred = clsp.find((p) => /puzzles\/mtt_pool\.clsp$/i.test(p));
+  const preferred =
+    clsp.find((p) => /puzzles\/savings_vault\.clsp$/i.test(p)) ||
+    clsp.find((p) => /puzzles\/mtt_pool\.clsp$/i.test(p)) ||
+    clsp.find((p) => /puzzles\/secure_treasury_vault\.clsp$/i.test(p));
   if (preferred) return preferred;
   const underPuzzles = clsp.find((p) => /(^|\/)puzzles\//i.test(p));
   return underPuzzles || clsp[0] || null;

@@ -1,10 +1,14 @@
 import assert from "node:assert/strict";
 import {
   findBarePuzzleHash,
+  hasSiblingCreateCoins,
   verifyWorkspaceFiles,
   wantsChialisp,
 } from "./verify.mjs";
 import { inferGoal } from "./goals.mjs";
+import { readFileSync } from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 assert.equal(wantsChialisp("write puzzles/mtt_pool.clsp"), true);
 assert.equal(inferGoal("Finish the MTT pool and show the puzzle hash").id, "mtt_pool");
@@ -101,5 +105,46 @@ assert.equal(toolingMissing.ok, false);
 assert.ok(
   toolingMissing.failures.some((f) => /missing required ChiaLisp tooling/i.test(f)),
 );
+
+const badSiblings = `(mod (A)
+  (list
+    (list 50 A msg)
+    (list 51 ph1 1)
+    (list 51 ph2 2)
+  )
+)`;
+assert.equal(hasSiblingCreateCoins(badSiblings), true);
+
+const here = path.dirname(fileURLToPath(import.meta.url));
+const vault = readFileSync(
+  path.join(here, "../templates/secure-treasury/puzzles/savings_vault.clsp"),
+  "utf8",
+);
+const treasury = readFileSync(
+  path.join(here, "../templates/secure-treasury/puzzles/treasury_coin.clsp"),
+  "utf8",
+);
+assert.equal(hasSiblingCreateCoins(vault), false);
+assert.equal(hasSiblingCreateCoins(treasury), false);
+
+const strictOk = verifyWorkspaceFiles(
+  [
+    { path: "puzzles/savings_vault.clsp", content: vault },
+    { path: "puzzles/treasury_coin.clsp", content: treasury },
+    {
+      path: "docs/MTT_POOL.md",
+      content:
+        "## Pool puzzle hash\n\n`aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa`\n",
+    },
+  ],
+  { requireHash: true, strictSingleton: true },
+);
+assert.equal(strictOk.ok, true);
+
+const strictBad = verifyWorkspaceFiles(
+  [{ path: "puzzles/bad.clsp", content: badSiblings }],
+  { strictSingleton: true },
+);
+assert.equal(strictBad.ok, false);
 
 console.log("verify.test.mjs ok");

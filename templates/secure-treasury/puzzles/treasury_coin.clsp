@@ -1,0 +1,52 @@
+; Singleton-safe treasury coin (educational, not Circuit source).
+;
+; Exactly ONE CREATE_COIN: recreate treasury with amount - interest.
+; Interest leaves via concurrent payout that asserts our announcement —
+; never a second CREATE_COIN from this puzzle (lineage-spoof class).
+;
+; Curry: MOD_HASH AUTHORIZER_PK
+; Solution: mode amount interest_amount dest_ph claim_msg
+
+(mod (
+  MOD_HASH
+  AUTHORIZER_PK
+  mode
+  amount
+  interest_amount
+  dest_ph
+  claim_msg
+)
+
+  (defun assert-b32 (atom)
+    (if (= (strlen atom) 32) atom (x))
+  )
+
+  (defun assert-pos (n)
+    (if (> n 0) n (x))
+  )
+
+  (defun pay-interest ()
+    (if (> interest_amount 0)
+      (if (> amount (- interest_amount 1))
+        (list
+          (list 50 AUTHORIZER_PK
+            (sha256tree (list mode amount interest_amount dest_ph claim_msg)))
+          (list 62 claim_msg)
+          (list 51
+            (sha256tree (list MOD_HASH AUTHORIZER_PK))
+            (- amount interest_amount)
+          )
+          (list 60
+            (sha256tree (list (assert-b32 dest_ph) (assert-pos interest_amount))))
+        )
+        (x)
+      )
+      (x)
+    )
+  )
+
+  (if (= mode 1)
+    (pay-interest)
+    (x)
+  )
+)

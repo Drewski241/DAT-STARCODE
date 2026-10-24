@@ -1,0 +1,98 @@
+; Secure savings vault — treasury-backed interest (educational, not Circuit source).
+;
+; CircuitDAO-class fixes:
+;   A) Exactly ONE (list 51 …) CREATE_COIN in each returned condition list
+;   B) DEPOSIT_SECONDS curried; mode 3 needs MIN_HOLD_SECONDS elapsed
+;   C) Interest = principal * bps * elapsed / (10000 * year) — never solution "discounted balance"
+;   D) Dest puzzle hashes must be 32-byte atoms
+;   E) Interest paid by concurrent treasury spend (announcement), not a second vault child
+;
+; Curry: MOD_HASH AUTHORIZER_PK MIN_HOLD_SECONDS INTEREST_BPS TREASURY_PH
+;        PRINCIPAL DEPOSIT_SECONDS OWNER_PH
+; Solution: mode now_seconds dest_ph
+;   1 deposit/recreate  2 withdraw principal  3 withdraw + announce interest claim
+
+(mod (
+  MOD_HASH
+  AUTHORIZER_PK
+  MIN_HOLD_SECONDS
+  INTEREST_BPS
+  TREASURY_PH
+  PRINCIPAL
+  DEPOSIT_SECONDS
+  OWNER_PH
+  mode
+  now_seconds
+  dest_ph
+)
+
+  (defun assert-b32 (atom)
+    (if (= (strlen atom) 32) atom (x))
+  )
+
+  (defun assert-pos (n)
+    (if (> n 0) n (x))
+  )
+
+  (defun interest-due (principal elapsed bps)
+    (quotient (* (* principal bps) elapsed) (* 10000 31536000))
+  )
+
+  (defun vault-ph (mod_hash auth min_hold bps treasury_ph principal deposit_seconds owner_ph)
+    (sha256tree
+      (list mod_hash auth min_hold bps treasury_ph principal deposit_seconds owner_ph)
+    )
+  )
+
+  (defun mode-deposit ()
+    (list
+      (list 50 AUTHORIZER_PK (sha256tree (list 1 now_seconds PRINCIPAL)))
+      (list 51
+        (vault-ph MOD_HASH AUTHORIZER_PK MIN_HOLD_SECONDS INTEREST_BPS TREASURY_PH
+          (assert-pos PRINCIPAL) now_seconds (assert-b32 OWNER_PH))
+        (assert-pos PRINCIPAL)
+      )
+    )
+  )
+
+  (defun mode-withdraw ()
+    (list
+      (list 50 AUTHORIZER_PK (sha256tree (list 2 now_seconds dest_ph)))
+      (list 51 (assert-b32 dest_ph) (assert-pos PRINCIPAL))
+    )
+  )
+
+  (defun mode-claim-interest (elapsed owed)
+    (if (> elapsed (- MIN_HOLD_SECONDS 1))
+      (if (> owed 0)
+        (list
+          (list 50 AUTHORIZER_PK
+            (sha256tree (list 3 now_seconds dest_ph owed)))
+          (list 81 now_seconds)
+          (list 51 (assert-b32 dest_ph) (assert-pos PRINCIPAL))
+          (list 60
+            (sha256tree (list TREASURY_PH owed (assert-b32 dest_ph))))
+        )
+        (x)
+      )
+      (x)
+    )
+  )
+
+  (if (= mode 1)
+    (mode-deposit)
+    (if (= mode 2)
+      (mode-withdraw)
+      (if (= mode 3)
+        (if (> now_seconds DEPOSIT_SECONDS)
+          (mode-claim-interest
+            (- now_seconds DEPOSIT_SECONDS)
+            (interest-due PRINCIPAL (- now_seconds DEPOSIT_SECONDS) INTEREST_BPS)
+          )
+          (x)
+        )
+        (x)
+      )
+    )
+  )
+)
