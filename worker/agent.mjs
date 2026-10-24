@@ -26,6 +26,7 @@ import {
 } from "./tooling.mjs";
 import { seedTemplatesForGoal } from "./seed-templates.mjs";
 import { runSecureTreasurySpendFixtures } from "./spend-fixtures.mjs";
+import { checkVaultSecure } from "./secure-checks.mjs";
 
 const MAX_STEPS = Number(process.env.AGENT_MAX_STEPS || 12);
 const HARD_TASK_STEPS = Number(process.env.AGENT_HARD_TASK_STEPS || 40);
@@ -1180,6 +1181,41 @@ export async function runAgentJob({
         "2. Unzip the folder.",
         "3. Open index.html (or follow README.md) to run/play.",
       ].join("\n");
+    }
+
+    // 14b often leaves a stale v1 vault next to a seeded templates/ copy
+    // (Studio zips 94408ee8 / ab11df8e). Force-restore before hash/fixtures.
+    if (goal.id === "secure_treasury" && !resultOnly) {
+      try {
+        const vaultRel = "puzzles/savings_vault.clsp";
+        let vaultBody = "";
+        try {
+          vaultBody = await fs.readFile(path.join(root, vaultRel), "utf8");
+        } catch {
+          vaultBody = "";
+        }
+        const vaultFails = checkVaultSecure(vaultBody, vaultRel);
+        if (vaultFails.length) {
+          await emit(
+            "status",
+            "Restoring v2 savings_vault from templates (stale vault detected)…",
+          );
+          log(
+            `[agent] rescue vault: ${vaultFails.slice(0, 3).join("; ")}`,
+          );
+          await seedTemplatesForGoal(root, "secure_treasury", { log });
+          finalMessage += [
+            "",
+            "## Repair",
+            "",
+            "Restored `puzzles/*.clsp` from seeded v2 templates — the model left a pre-reset vault (`claim-msg dest_ph` / stale mode-4 clock).",
+          ].join("\n");
+        }
+      } catch (err) {
+        log(
+          `[agent] rescue vault error: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
     }
 
     // Deterministic: do not rely on the model to remember puzzle_hash.
