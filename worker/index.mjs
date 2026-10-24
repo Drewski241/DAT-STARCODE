@@ -9,7 +9,12 @@
  *   OLLAMA_URL               http://127.0.0.1:11434
  *   OLLAMA_MODEL             fallback if a job has no modelResolved
  *   POLL_MS                  default 4000
+ *   AGENT_MAX_STEPS          max tool iterations (default 8)
+ *   AGENT_REPO_ROOT          sandbox root for file tools (default cwd)
+ *   AGENT_ALLOW_SHELL        set 1 to enable allowlisted run_command
  */
+
+import { runAgentJob } from "./agent.mjs";
 
 const API_BASE = (
   process.env.DAT_STARCODER_API_BASE ||
@@ -18,11 +23,6 @@ const API_BASE = (
 ).replace(/\/$/, "");
 const WORKER_KEY = process.env.WORKER_API_KEY || "dev-worker-key-change-me";
 const WORKER_ID = process.env.WORKER_ID || "forge-1";
-const OLLAMA_URL = (process.env.OLLAMA_URL || "http://127.0.0.1:11434").replace(
-  /\/$/,
-  "",
-);
-const OLLAMA_MODEL = process.env.OLLAMA_MODEL || "qwen2.5-coder:7b";
 const POLL_MS = Number(process.env.POLL_MS || 4000);
 
 async function claim() {
@@ -42,14 +42,20 @@ async function claim() {
   return data.job;
 }
 
-async function complete(jobId, { result, error }) {
+async function complete(jobId, { result, error, toolSteps }) {
   const res = await fetch(`${API_BASE}/api/worker/complete`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
       "x-worker-key": WORKER_KEY,
     },
-    body: JSON.stringify({ jobId, workerId: WORKER_ID, result, error }),
+    body: JSON.stringify({
+      jobId,
+      workerId: WORKER_ID,
+      result,
+      error,
+      toolSteps,
+    }),
   });
   if (!res.ok) {
     const text = await res.text();
@@ -58,76 +64,11 @@ async function complete(jobId, { result, error }) {
   return res.json();
 }
 
-function systemPromptFor(job, model) {
-  const coding = /coder/i.test(model);
-  if (coding) {
-    return [
-      "You are DAT STARCODER, a careful coding agent.",
-      "Return a concrete implementation plan and code patches in markdown.",
-      job.repoHint ? `Repo/path hint: ${job.repoHint}` : "",
-      "",
-      "User request:",
-      job.prompt,
-    ]
-      .filter(Boolean)
-      .join("\n");
-  }
-  return [
-    "You are DAT STARCODER, a helpful assistant.",
-    "Answer clearly and accurately. Use markdown when useful.",
-    "",
-    "User request:",
-    job.prompt,
-  ].join("\n");
-}
-
-async function runWithOllama(job) {
-  const model = job.modelResolved || OLLAMA_MODEL;
-  const prompt = systemPromptFor(job, model);
-
-  try {
-    const res = await fetch(`${OLLAMA_URL}/api/generate`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        model,
-        prompt,
-        stream: false,
-      }),
-    });
-    if (!res.ok) {
-      const body = await res.text();
-      throw new Error(`Ollama ${res.status}: ${body.slice(0, 200)}`);
-    }
-    const data = await res.json();
-    const header = [
-      `Model: ${job.modelRequested || "auto"} → ${model}`,
-      job.modelReason ? `Reason: ${job.modelReason}` : "",
-      "",
-    ]
-      .filter(Boolean)
-      .join("\n");
-    return `${header}${data.response || "(empty Ollama response)"}`;
-  } catch (err) {
-    const reason = err instanceof Error ? err.message : String(err);
-    return [
-      `# Offline fallback (Ollama unreachable: ${reason})`,
-      "",
-      `Model target: ${model}`,
-      "",
-      "## Request",
-      job.prompt,
-      "",
-      "## Suggested next step",
-      `1. ollama pull ${model}`,
-      "2. Confirm Ollama is running on OLLAMA_URL.",
-      "3. Restart this worker.",
-    ].join("\n");
-  }
-}
-
 async function loop() {
   console.log(`[dat-starcoder-worker] ${WORKER_ID} → ${API_BASE}`);
+  console.log(
+    `[dat-starcoder-worker] agent tools on · max_steps=${process.env.AGENT_MAX_STEPS || 8} shell=${process.env.AGENT_ALLOW_SHELL === "1" ? "allowlist" : "off"}`,
+  );
   for (;;) {
     try {
       const job = await claim();
@@ -135,13 +76,15 @@ async function loop() {
         await sleep(POLL_MS);
         continue;
       }
-      const model = job.modelResolved || OLLAMA_MODEL;
+      const model = job.modelResolved || process.env.OLLAMA_MODEL || "qwen2.5-coder:7b";
       console.log(
-        `[dat-starcoder-worker] claimed ${job.id} model=${model}`,
+        `[dat-starcoder-worker] claimed ${job.id} kind=${job.kind || "task"} profile=${job.agentProfile || "?"} model=${model}`,
       );
-      const result = await runWithOllama(job);
-      await complete(job.id, { result });
-      console.log(`[dat-starcoder-worker] completed ${job.id}`);
+      const { result, toolSteps } = await runAgentJob(job);
+      await complete(job.id, { result, toolSteps });
+      console.log(
+        `[dat-starcoder-worker] completed ${job.id} toolSteps=${toolSteps}`,
+      );
     } catch (err) {
       console.error("[dat-starcoder-worker]", err);
       await sleep(POLL_MS);

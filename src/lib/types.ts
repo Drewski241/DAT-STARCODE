@@ -10,6 +10,27 @@ export type PaymentStatus = "pending" | "confirmed" | "failed" | "demo";
 
 export type AccountSource = "local" | "spirit-poker";
 
+/** How the worker should specialize for this job. */
+export type AgentProfile = "coding" | "general" | "chialisp" | "ops";
+
+export type JobKind = "task" | "plan" | "step";
+
+export type ProjectStatus =
+  | "draft"
+  | "planning"
+  | "planned"
+  | "running"
+  | "completed"
+  | "failed";
+
+export type ProjectStepStatus =
+  | "pending"
+  | "queued"
+  | "running"
+  | "completed"
+  | "failed"
+  | "skipped";
+
 export interface Account {
   id: string;
   username: string | null;
@@ -40,6 +61,29 @@ export interface PaymentIntent {
   confirmedAt: string | null;
 }
 
+export interface ProjectStep {
+  id: string;
+  title: string;
+  prompt: string;
+  status: ProjectStepStatus;
+  jobId: string | null;
+  resultSummary: string | null;
+}
+
+export interface Project {
+  id: string;
+  accountId: string;
+  title: string;
+  goal: string;
+  status: ProjectStatus;
+  steps: ProjectStep[];
+  modelRequested: string;
+  agentProfile: AgentProfile;
+  planJobId: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface CodingJob {
   id: string;
   accountId: string;
@@ -48,11 +92,16 @@ export interface CodingJob {
   modelRequested: string;
   modelResolved: string;
   modelReason: string;
+  kind: JobKind;
+  projectId: string | null;
+  stepId: string | null;
+  agentProfile: AgentProfile;
   status: JobStatus;
   creditsCharged: number;
   result: string | null;
   error: string | null;
   workerId: string | null;
+  toolSteps: number;
   createdAt: string;
   updatedAt: string;
   completedAt: string | null;
@@ -62,4 +111,5 @@ export interface StoreSnapshot {
   accounts: Account[];
   payments: PaymentIntent[];
   jobs: CodingJob[];
+  projects: Project[];
 }

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { toPublicAccount } from "@/lib/account-public";
+import { processOneInlineJob } from "@/lib/inline-worker";
 import { resolveModel } from "@/lib/models";
 import { requireRegisteredAccount } from "@/lib/require-auth";
 import { enqueueJob, listJobs } from "@/lib/store";
@@ -41,7 +42,12 @@ export async function POST(req: NextRequest) {
       modelRequested: resolved.requested,
       modelResolved: resolved.resolved,
       modelReason: resolved.reason,
+      agentProfile: resolved.agentProfile,
+      kind: "task",
     });
+
+    void processOneInlineJob();
+
     return NextResponse.json({
       job: result.job,
       account: toPublicAccount(result.account),

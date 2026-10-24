@@ -13,6 +13,7 @@ export async function POST(req: NextRequest) {
     workerId?: string;
     result?: string;
     error?: string;
+    toolSteps?: number;
   };
 
   if (!body.jobId || !body.workerId) {
@@ -28,6 +29,7 @@ export async function POST(req: NextRequest) {
       workerId: body.workerId,
       result: body.result,
       error: body.error,
+      toolSteps: body.toolSteps,
     });
     return NextResponse.json({ job });
   } catch (err) {

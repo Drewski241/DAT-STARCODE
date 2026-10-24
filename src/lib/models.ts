@@ -3,6 +3,9 @@
  * Auto resolves to a concrete model before the job is queued.
  */
 
+import { detectAgentProfile } from "@/lib/agent-profile";
+import type { AgentProfile } from "@/lib/types";
+
 export type ModelKind = "auto" | "coding" | "general";
 
 export type ModelOption = {
@@ -19,7 +22,7 @@ export const MODEL_OPTIONS: ModelOption[] = [
     label: "Auto",
     kind: "auto",
     ollamaTag: null,
-    blurb: "Picks coding vs general from your prompt",
+    blurb: "Picks model + specialty (coding, ChiaLisp, OS) from your prompt",
   },
   {
     id: "qwen2.5-coder:7b",
@@ -33,7 +36,7 @@ export const MODEL_OPTIONS: ModelOption[] = [
     label: "Coder 14B",
     kind: "coding",
     ollamaTag: "qwen2.5-coder:14b",
-    blurb: "Stronger coding; needs more VRAM",
+    blurb: "Stronger coding / ChiaLisp; needs more VRAM",
   },
   {
     id: "qwen2.5:7b",
@@ -53,26 +56,42 @@ export const MODEL_OPTIONS: ModelOption[] = [
 
 export const DEFAULT_MODEL_ID = "auto";
 export const DEFAULT_CODING_MODEL = "qwen2.5-coder:7b";
+export const DEFAULT_STRONG_CODING_MODEL = "qwen2.5-coder:14b";
 export const DEFAULT_GENERAL_MODEL = "llama3.1:8b";
 
-const CODING_HINT =
-  /\b(code|coding|function|bug|fix|refactor|implement|typescript|javascript|python|rust|go\b|api|endpoint|class|module|commit|diff|pr\b|pull request|compile|lint|test|unit test|css|html|sql|docker|kubernetes|cli|script|repo|github|stack trace|error:|npm|cargo|pytest)\b/i;
+const HARD_HINT =
+  /\b(chialisp|clvm|architecture|migrate|from scratch|multi-file|security|race condition|refactor (the |entire |whole )|production|consensus|curry|coinset)\b/i;
+
+export type ResolveModelResult = {
+  requested: string;
+  resolved: string;
+  reason: string;
+  agentProfile: AgentProfile;
+  difficulty: "standard" | "hard";
+};
 
 /**
- * Resolve Auto (or an explicit id) to an Ollama model tag.
+ * Resolve Auto (or an explicit id) to an Ollama model tag + agent profile.
  */
 export function resolveModel(
   modelId: string | null | undefined,
   prompt: string,
-): { requested: string; resolved: string; reason: string } {
+): ResolveModelResult {
   const requested = modelId?.trim() || DEFAULT_MODEL_ID;
   const option = MODEL_OPTIONS.find((m) => m.id === requested);
+  const agentProfile = detectAgentProfile(prompt);
+  const hard =
+    HARD_HINT.test(prompt) ||
+    agentProfile === "chialisp" ||
+    prompt.trim().length > 900;
 
   if (option && option.kind !== "auto" && option.ollamaTag) {
     return {
       requested: option.id,
       resolved: option.ollamaTag,
-      reason: `User selected ${option.label}`,
+      reason: `User selected ${option.label} · profile ${agentProfile}`,
+      agentProfile,
+      difficulty: hard ? "hard" : "standard",
     };
   }
 
@@ -81,18 +100,34 @@ export function resolveModel(
     return {
       requested,
       resolved: requested,
-      reason: "Custom Ollama tag",
+      reason: `Custom Ollama tag · profile ${agentProfile}`,
+      agentProfile,
+      difficulty: hard ? "hard" : "standard",
     };
   }
 
-  const coding = CODING_HINT.test(prompt);
-  const resolved = coding ? DEFAULT_CODING_MODEL : DEFAULT_GENERAL_MODEL;
+  if (agentProfile === "general" || agentProfile === "ops") {
+    return {
+      requested: "auto",
+      resolved: DEFAULT_GENERAL_MODEL,
+      reason:
+        agentProfile === "ops"
+          ? "Auto: OS/ops question → general model"
+          : "Auto: prompt looks like general Q&A",
+      agentProfile,
+      difficulty: hard ? "hard" : "standard",
+    };
+  }
+
+  const resolved = hard ? DEFAULT_STRONG_CODING_MODEL : DEFAULT_CODING_MODEL;
   return {
     requested: "auto",
     resolved,
-    reason: coding
-      ? "Auto: prompt looks like a coding task"
-      : "Auto: prompt looks like general Q&A",
+    reason: hard
+      ? `Auto: hard ${agentProfile} task → ${resolved}`
+      : `Auto: ${agentProfile} task → ${resolved}`,
+    agentProfile,
+    difficulty: hard ? "hard" : "standard",
   };
 }
 

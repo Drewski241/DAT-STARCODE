@@ -70,7 +70,12 @@ ollama pull llama3.1:8b
 # ollama pull qwen2.5:7b
 ```
 
-**Auto** routing: coding-like prompts → `qwen2.5-coder:7b`; otherwise → `llama3.1:8b`.
+**Auto** routing:
+- ChiaLisp / hard coding → `qwen2.5-coder:14b` (pull it if you want Auto hard-mode)
+- Standard coding → `qwen2.5-coder:7b`
+- OS / general → `llama3.1:8b`
+
+**Stronger agent (worker tools):** the live worker runs a tool loop — `web_search`, `fetch_url`, `read_file`, `list_dir`, optional allowlisted `run_command` (`AGENT_ALLOW_SHELL=1`), then `done`. Knowledge packs (ChiaLisp, Ubuntu/ops) are retrieved into the prompt. Studio **Project** mode plans a checklist, then you run steps one credit at a time.
 
 ## DAT + Sage (live burns)
 
@@ -127,10 +132,14 @@ Local demo uses `.data/store.json`. Wire Amplify to DynamoDB when you leave demo
 | `POST /api/payments/intent` | browser | start DAT pack (burn destination) |
 | `POST /api/payments/confirm` | browser | credit after burn (demo or tx id) |
 | `POST /api/jobs` | browser | enqueue coding job |
+| `GET/POST /api/projects` | browser | list / create project + plan job |
+| `POST /api/projects/:id/run-next` | browser | enqueue next checklist step |
+| `POST /api/projects/:id/steps/:stepId/skip` | browser | skip a step |
 | `POST /api/worker/claim` | worker | claim next job (`x-worker-key`) |
-| `POST /api/worker/complete` | worker | post result |
+| `POST /api/worker/complete` | worker | post result (+ optional `toolSteps`) |
 
 ## Next upgrades
 
 - Persist to DynamoDB instead of `.data/store.json`
-- Stream token output over SSE while the worker generates
+- Stream token output / tool trace over SSE while the worker runs
+- Optional CLVM verify tool for ChiaLisp steps

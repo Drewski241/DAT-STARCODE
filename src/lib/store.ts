@@ -4,8 +4,12 @@ import { randomUUID } from "crypto";
 import type {
   Account,
   AccountSource,
+  AgentProfile,
   CodingJob,
+  JobKind,
   PaymentIntent,
+  Project,
+  ProjectStep,
   StoreSnapshot,
 } from "@/lib/types";
 import { CREDITS_PER_JOB, DAT_ASSET_ID } from "@/lib/config";
@@ -22,7 +26,28 @@ const emptyStore = (): StoreSnapshot => ({
   accounts: [],
   payments: [],
   jobs: [],
+  projects: [],
 });
+
+function normalizeJob(raw: CodingJob): CodingJob {
+  return {
+    ...raw,
+    kind: raw.kind ?? "task",
+    projectId: raw.projectId ?? null,
+    stepId: raw.stepId ?? null,
+    agentProfile: raw.agentProfile ?? "coding",
+    toolSteps: raw.toolSteps ?? 0,
+  };
+}
+
+function normalizeStore(raw: StoreSnapshot): StoreSnapshot {
+  return {
+    accounts: raw.accounts ?? [],
+    payments: raw.payments ?? [],
+    jobs: (raw.jobs ?? []).map((j) => normalizeJob(j)),
+    projects: raw.projects ?? [],
+  };
+}
 
 let writeChain: Promise<void> = Promise.resolve();
 
@@ -33,7 +58,7 @@ async function ensureDir() {
 async function readStore(): Promise<StoreSnapshot> {
   try {
     const raw = await fs.readFile(STORE_PATH, "utf8");
-    return JSON.parse(raw) as StoreSnapshot;
+    return normalizeStore(JSON.parse(raw) as StoreSnapshot);
   } catch {
     return emptyStore();
   }
@@ -324,17 +349,21 @@ export async function enqueueJob(input: {
   modelRequested?: string | null;
   modelResolved: string;
   modelReason: string;
+  kind?: JobKind;
+  projectId?: string | null;
+  stepId?: string | null;
+  agentProfile?: AgentProfile;
+  creditCost?: number;
 }) {
   return mutate((store) => {
     const account = store.accounts.find((a) => a.id === input.accountId);
     if (!account) throw new Error("Account not found");
-    if (account.credits < CREDITS_PER_JOB) {
-      throw new Error(
-        `Need ${CREDITS_PER_JOB} credits; balance is ${account.credits}`,
-      );
+    const cost = input.creditCost ?? CREDITS_PER_JOB;
+    if (account.credits < cost) {
+      throw new Error(`Need ${cost} credits; balance is ${account.credits}`);
     }
     const now = new Date().toISOString();
-    account.credits -= CREDITS_PER_JOB;
+    account.credits -= cost;
     account.updatedAt = now;
     const job: CodingJob = {
       id: randomUUID(),
@@ -344,16 +373,40 @@ export async function enqueueJob(input: {
       modelRequested: input.modelRequested?.trim() || "auto",
       modelResolved: input.modelResolved,
       modelReason: input.modelReason,
+      kind: input.kind ?? "task",
+      projectId: input.projectId ?? null,
+      stepId: input.stepId ?? null,
+      agentProfile: input.agentProfile ?? "coding",
       status: "queued",
-      creditsCharged: CREDITS_PER_JOB,
+      creditsCharged: cost,
       result: null,
       error: null,
       workerId: null,
+      toolSteps: 0,
       createdAt: now,
       updatedAt: now,
       completedAt: null,
     };
     store.jobs.push(job);
+
+    if (job.projectId) {
+      const project = store.projects.find((p) => p.id === job.projectId);
+      if (project) {
+        project.updatedAt = now;
+        if (job.kind === "plan") {
+          project.status = "planning";
+          project.planJobId = job.id;
+        } else if (job.kind === "step" && job.stepId) {
+          project.status = "running";
+          const step = project.steps.find((s) => s.id === job.stepId);
+          if (step) {
+            step.status = "queued";
+            step.jobId = job.id;
+          }
+        }
+      }
+    }
+
     return { job, account };
   });
 }
@@ -375,10 +428,57 @@ export async function markJobRunning(jobId: string, workerId: string) {
     const job = store.jobs.find((j) => j.id === jobId);
     if (!job) throw new Error("Job not found");
     if (job.workerId !== workerId) throw new Error("Worker mismatch");
+    const now = new Date().toISOString();
     job.status = "running";
-    job.updatedAt = new Date().toISOString();
+    job.updatedAt = now;
+    if (job.projectId && job.kind === "step" && job.stepId) {
+      const project = store.projects.find((p) => p.id === job.projectId);
+      const step = project?.steps.find((s) => s.id === job.stepId);
+      if (project && step) {
+        step.status = "running";
+        project.status = "running";
+        project.updatedAt = now;
+      }
+    }
     return job;
   });
+}
+
+function parsePlanPayload(result: string): {
+  title?: string;
+  steps: { title: string; prompt: string }[];
+} | null {
+  const marker = result.match(
+    /<!--PLAN_JSON\s*([\s\S]*?)\s*PLAN_JSON-->/i,
+  );
+  const raw = marker?.[1]?.trim() || null;
+  if (!raw) return null;
+  try {
+    const data = JSON.parse(raw) as {
+      title?: string;
+      steps?: { title?: string; prompt?: string }[];
+    };
+    const steps = (data.steps ?? [])
+      .map((s) => ({
+        title: (s.title ?? "").trim(),
+        prompt: (s.prompt ?? "").trim(),
+      }))
+      .filter((s) => s.title && s.prompt)
+      .slice(0, 12);
+    if (steps.length === 0) return null;
+    return { title: data.title?.trim(), steps };
+  } catch {
+    return null;
+  }
+}
+
+function summarizeResult(result: string, max = 280): string {
+  const cleaned = result
+    .replace(/<!--PLAN_JSON[\s\S]*?PLAN_JSON-->/gi, "")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+  if (cleaned.length <= max) return cleaned;
+  return `${cleaned.slice(0, max)}…`;
 }
 
 export async function completeJob(input: {
@@ -386,12 +486,16 @@ export async function completeJob(input: {
   workerId: string;
   result?: string | null;
   error?: string | null;
+  toolSteps?: number;
 }) {
   return mutate((store) => {
     const job = store.jobs.find((j) => j.id === input.jobId);
     if (!job) throw new Error("Job not found");
     if (job.workerId !== input.workerId) throw new Error("Worker mismatch");
     const now = new Date().toISOString();
+    if (typeof input.toolSteps === "number") {
+      job.toolSteps = Math.max(0, input.toolSteps);
+    }
     if (input.error) {
       job.status = "failed";
       job.error = input.error;
@@ -400,15 +504,195 @@ export async function completeJob(input: {
         account.credits += job.creditsCharged;
         account.updatedAt = now;
       }
+      if (job.projectId) {
+        const project = store.projects.find((p) => p.id === job.projectId);
+        if (project) {
+          project.updatedAt = now;
+          if (job.kind === "plan") project.status = "failed";
+          if (job.kind === "step" && job.stepId) {
+            const step = project.steps.find((s) => s.id === job.stepId);
+            if (step) step.status = "failed";
+            project.status = "failed";
+          }
+        }
+      }
     } else {
       job.status = "completed";
       job.result = input.result ?? "";
       job.error = null;
+
+      if (job.projectId) {
+        const project = store.projects.find((p) => p.id === job.projectId);
+        if (project) {
+          project.updatedAt = now;
+          if (job.kind === "plan") {
+            const plan = parsePlanPayload(job.result);
+            if (plan) {
+              if (plan.title) project.title = plan.title.slice(0, 120);
+              project.steps = plan.steps.map((s) => ({
+                id: randomUUID(),
+                title: s.title.slice(0, 160),
+                prompt: s.prompt,
+                status: "pending" as const,
+                jobId: null,
+                resultSummary: null,
+              }));
+              project.status = "planned";
+            } else {
+              project.status = "failed";
+              job.error =
+                "Plan job finished but no <!--PLAN_JSON ... PLAN_JSON--> checklist was found";
+              job.status = "failed";
+            }
+          } else if (job.kind === "step" && job.stepId) {
+            const step = project.steps.find((s) => s.id === job.stepId);
+            if (step) {
+              step.status = "completed";
+              step.resultSummary = summarizeResult(job.result);
+            }
+            const allDone = project.steps.every(
+              (s) => s.status === "completed" || s.status === "skipped",
+            );
+            project.status = allDone ? "completed" : "planned";
+          }
+        }
+      }
     }
     job.updatedAt = now;
     job.completedAt = now;
     return job;
   });
+}
+
+export async function listProjects(accountId: string) {
+  const store = await readStore();
+  return store.projects
+    .filter((p) => p.accountId === accountId)
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+}
+
+export async function getProject(projectId: string) {
+  const store = await readStore();
+  return store.projects.find((p) => p.id === projectId) ?? null;
+}
+
+export async function createProject(input: {
+  accountId: string;
+  goal: string;
+  modelRequested: string;
+  agentProfile: AgentProfile;
+  title?: string;
+}) {
+  return mutate((store) => {
+    const account = store.accounts.find((a) => a.id === input.accountId);
+    if (!account) throw new Error("Account not found");
+    const now = new Date().toISOString();
+    const goal = input.goal.trim();
+    const project: Project = {
+      id: randomUUID(),
+      accountId: input.accountId,
+      title: (input.title?.trim() || goal.slice(0, 72) || "Untitled project").slice(
+        0,
+        120,
+      ),
+      goal,
+      status: "draft",
+      steps: [],
+      modelRequested: input.modelRequested,
+      agentProfile: input.agentProfile,
+      planJobId: null,
+      createdAt: now,
+      updatedAt: now,
+    };
+    store.projects.push(project);
+    return { project, account };
+  });
+}
+
+export async function updateProjectSteps(
+  projectId: string,
+  accountId: string,
+  steps: { id?: string; title: string; prompt: string }[],
+) {
+  return mutate((store) => {
+    const project = store.projects.find(
+      (p) => p.id === projectId && p.accountId === accountId,
+    );
+    if (!project) throw new Error("Project not found");
+    if (project.status === "planning" || project.status === "running") {
+      throw new Error("Cannot edit steps while a job is in flight");
+    }
+    const now = new Date().toISOString();
+    project.steps = steps.slice(0, 12).map((s) => {
+      const existing = s.id
+        ? project.steps.find((x) => x.id === s.id)
+        : undefined;
+      const step: ProjectStep = {
+        id: existing?.id ?? randomUUID(),
+        title: s.title.trim().slice(0, 160),
+        prompt: s.prompt.trim(),
+        status: existing?.status === "completed" ? "completed" : "pending",
+        jobId: existing?.status === "completed" ? existing.jobId : null,
+        resultSummary:
+          existing?.status === "completed" ? existing.resultSummary : null,
+      };
+      return step;
+    });
+    project.status = project.steps.length ? "planned" : "draft";
+    project.updatedAt = now;
+    return project;
+  });
+}
+
+export async function skipProjectStep(
+  projectId: string,
+  accountId: string,
+  stepId: string,
+) {
+  return mutate((store) => {
+    const project = store.projects.find(
+      (p) => p.id === projectId && p.accountId === accountId,
+    );
+    if (!project) throw new Error("Project not found");
+    const step = project.steps.find((s) => s.id === stepId);
+    if (!step) throw new Error("Step not found");
+    if (step.status === "queued" || step.status === "running") {
+      throw new Error("Step already in flight");
+    }
+    step.status = "skipped";
+    step.resultSummary = step.resultSummary ?? "Skipped by user";
+    const allDone = project.steps.every(
+      (s) => s.status === "completed" || s.status === "skipped",
+    );
+    project.status = allDone ? "completed" : "planned";
+    project.updatedAt = new Date().toISOString();
+    return project;
+  });
+}
+
+/** Build the prompt for the next pending project step (includes prior context). */
+export function buildStepPrompt(project: Project, step: ProjectStep): string {
+  const prior = project.steps
+    .filter((s) => s.status === "completed" || s.status === "skipped")
+    .map((s, i) => {
+      const body = s.resultSummary || "(no summary)";
+      return `${i + 1}. ${s.title} [${s.status}]\n${body}`;
+    })
+    .join("\n\n");
+
+  const index = project.steps.findIndex((s) => s.id === step.id) + 1;
+  return [
+    `You are working project "${project.title}".`,
+    `Overall goal:\n${project.goal}`,
+    "",
+    prior ? `Completed so far:\n${prior}` : "No prior steps completed yet.",
+    "",
+    `Current step (${index}/${project.steps.length}): ${step.title}`,
+    "Do only this step. When finished, summarize what changed and what the next step should know.",
+    "",
+    "Step instructions:",
+    step.prompt,
+  ].join("\n");
 }
 
 export async function getPayments(accountId: string) {
