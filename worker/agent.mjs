@@ -692,7 +692,10 @@ export async function runAgentJob({
       }
     }
 
-    const goal = inferGoal(job.prompt);
+    // Include continue context so "summarize the puzzles" stays hard-domain.
+    const goal = inferGoal(
+      [job.prompt, job.context].filter(Boolean).join("\n"),
+    );
     const hardTask = goal.hard;
     const isGeneral = goal.id === "general";
     const isShopping = isGeneral && SHOPPING_HINT.test(job.prompt || "");

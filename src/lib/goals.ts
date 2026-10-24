@@ -23,8 +23,9 @@ const TREASURY_HINT =
   /\b(treasury|savings\s*vault|discounted_balance|circuit\s*dao|byc\b|flash-?loan.*interest|interest.*treasury)\b/i;
 const CHIALISP_HINT =
   /\b(\.clsp|chialisp|chia\s*lisp|clvm|pool\s*coin|mtt_pool|puzzle\s*hash|agg_sig|create_coin)\b/i;
+const PUZZLE_WORD = /\bpuzzles?\b/i;
 const CODING_HINT =
-  /\b(code|coding|function|bug|fix|refactor|implement|typescript|javascript|python|rust|go\b|api|endpoint|class|module|commit|diff|pr\b|pull request|compile|lint|test|unit test|css|html|sql|docker|cli|script|repo|github|build|game|app|website|component|ui|frontend|backend|puzzle|curry|treehash)\b/i;
+  /\b(code|coding|function|bug|fix|refactor|implement|typescript|javascript|python|rust|go\b|api|endpoint|class|module|commit|diff|pr\b|pull request|compile|lint|test|unit test|css|html|sql|docker|cli|script|repo|github|build|game|app|website|component|ui|frontend|backend|puzzles?|curry|treehash)\b/i;
 
 export function inferGoal(prompt: string): InferredGoal {
   const text = String(prompt || "");
@@ -33,7 +34,9 @@ export function inferGoal(prompt: string): InferredGoal {
   const treasury = TREASURY_HINT.test(text);
   const treasuryWork =
     treasury ||
-    /\b(savings_vault|treasury_coin|secure_treasury)\b/i.test(text);
+    /\b(savings_vault|treasury_coin|secure_treasury|interest_payout)\b/i.test(
+      text,
+    );
 
   // Prefer treasury over MTT when both match (e.g. "delete MTT stub … savings_vault").
   if (treasuryWork) {
@@ -43,7 +46,7 @@ export function inferGoal(prompt: string): InferredGoal {
       hard: true,
     };
   }
-  if (mtt && (chia || /\bpuzzle|clsp|chia|pool\b/i.test(text))) {
+  if (mtt && (chia || /\bpuzzles?|clsp|chia|pool\b/i.test(text))) {
     return {
       id: "mtt_pool",
       label: "MTT pool / tournament coin",
@@ -52,8 +55,10 @@ export function inferGoal(prompt: string): InferredGoal {
   }
   if (
     chia ||
-    (/\bpuzzle\b/i.test(text) &&
-      /\b(compromised|vulnerab|exploit|drain|secure)\b/i.test(text))
+    (PUZZLE_WORD.test(text) &&
+      /\b(compromised|vulnerab|exploit|drain|secur(?:e|ity)|chialisp|clvm|create_coin|agg_sig|summarize|summary)\b/i.test(
+        text,
+      ))
   ) {
     return {
       id: "chialisp",

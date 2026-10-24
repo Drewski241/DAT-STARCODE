@@ -28,6 +28,14 @@ assert.equal(
   "secure_treasury",
 );
 assert.equal(inferGoal("refactor the typescript API module").id, "coding");
+assert.equal(
+  inferGoal("summarize the three puzzles and security fixes").hard,
+  true,
+);
+assert.notEqual(
+  inferGoal("summarize the three puzzles and security fixes").id,
+  "general",
+);
 
 assert.equal(
   findBarePuzzleHash(`## Puzzle hash\n\n\` 0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef \`\n`),
