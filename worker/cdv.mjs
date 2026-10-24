@@ -135,16 +135,48 @@ export async function puzzleHashWithCdv(root, relPath, opts = {}) {
     }
   }
 
+  const hexPath = `${safe}.hex`;
+  const curriedHexCandidates = [
+    hexPath.replace(/\.hex$/i, ".curried.hex"),
+    `${hexPath}.curried`,
+  ];
+  // Drop stale hex from prior turns so we never hash/curry an old program
+  // after the .clsp was rescued/overwritten (Studio zip 199278a5).
+  for (const rel of [hexPath, ...curriedHexCandidates]) {
+    try {
+      await fs.unlink(path.join(root, rel));
+    } catch {
+      /* missing */
+    }
+  }
+
+  const buildStarted = Date.now();
   const build = await run("cdv", ["clsp", "build", safe, ...includeFlags], {
     cwd: root,
     timeoutMs: 90_000,
   });
-  const hexPath = `${safe}.hex`;
   let hexBody = "";
   try {
-    hexBody = (await fs.readFile(path.join(root, hexPath), "utf8")).trim();
+    hexBody = (await fs.readFile(path.join(root, hexPath), "utf8"))
+      .replace(/\s+/g, "")
+      .trim();
   } catch {
     /* build may write elsewhere */
+  }
+  if (build.code !== 0 || !hexBody) {
+    return {
+      ok: false,
+      available: true,
+      path: safe,
+      hexPath: null,
+      puzzleHash: null,
+      modHash: null,
+      curried: false,
+      curryArgs: null,
+      buildCode: build.code,
+      message: `cdv build failed (code ${build.code}): ${(build.stderr || build.stdout).slice(0, 500)}`,
+      log: `${build.stdout}\n${build.stderr}`.slice(0, 4000),
+    };
   }
 
   let curryArgs = Array.isArray(opts.curryArgs) ? opts.curryArgs.map(String) : [];
@@ -154,18 +186,19 @@ export async function puzzleHashWithCdv(root, relPath, opts = {}) {
   let curried = false;
 
   // Uncurried / mod hash first.
-  const inspectTarget = hexBody ? hexPath : safe;
   const inspectCmds = [
-    ["inspect", "puzzle", inspectTarget],
-    ["inspect", "puzzle", "-x", inspectTarget],
+    ["inspect", "puzzle", hexPath],
+    ["inspect", "puzzle", "-x", hexPath],
     ["clsp", "hash", safe],
-    ["hash", inspectTarget],
   ];
   const inspectBlobs = [];
   for (const args of inspectCmds) {
     const inspect = await run("cdv", args, { cwd: root, timeoutMs: 60_000 });
     inspectBlobs.push(inspect.stdout, inspect.stderr);
-    hashLine = extractPuzzleHash(`${inspect.stdout}\n${inspect.stderr}`) || hashLine;
+    hashLine =
+      extractPuzzleHash(`${inspect.stdout}\n${inspect.stderr}`, {
+        labeledOnly: false,
+      }) || hashLine;
     if (hashLine) break;
   }
   modHash = hashLine;
@@ -176,31 +209,33 @@ export async function puzzleHashWithCdv(root, relPath, opts = {}) {
   }
 
   if (curryArgs.length && hexBody) {
+    const curryStarted = Date.now();
     const curry = await run(
       "cdv",
       ["clsp", "curry", hexPath, ...curryArgs.flatMap((a) => ["-a", a])],
       { cwd: root, timeoutMs: 90_000 },
     );
     curryOut = `${curry.stdout}\n${curry.stderr}`.trim();
-    const curriedHash = extractPuzzleHash(curryOut);
+    const curriedHash = extractPuzzleHash(curryOut, { labeledOnly: true });
     if (curriedHash) {
       hashLine = curriedHash;
       curried = true;
     }
-    // Some cdv versions write a curried hex — prefer hashing that if present.
-    const curriedHexCandidates = [
-      hexPath.replace(/\.hex$/i, ".curried.hex"),
-      `${hexPath}.curried`,
-    ];
+    // Only trust curried hex written during this curry (not a prior turn).
     for (const cand of curriedHexCandidates) {
       try {
-        await fs.access(path.join(root, cand));
+        const st = await fs.stat(path.join(root, cand));
+        if (st.mtimeMs + 1000 < curryStarted && st.mtimeMs + 1000 < buildStarted) {
+          continue;
+        }
         const insp = await run("cdv", ["inspect", "puzzle", cand], {
           cwd: root,
           timeoutMs: 60_000,
         });
         inspectBlobs.push(insp.stdout, insp.stderr);
-        const h = extractPuzzleHash(`${insp.stdout}\n${insp.stderr}`);
+        const h = extractPuzzleHash(`${insp.stdout}\n${insp.stderr}`, {
+          labeledOnly: false,
+        });
         if (h) {
           hashLine = h;
           curried = true;
@@ -215,36 +250,49 @@ export async function puzzleHashWithCdv(root, relPath, opts = {}) {
   const blob = [build.stdout, build.stderr, curryOut, ...inspectBlobs]
     .filter(Boolean)
     .join("\n");
-  if (!hashLine) hashLine = extractPuzzleHash(blob) || "";
+  if (!hashLine) {
+    hashLine = extractPuzzleHash(blob, { labeledOnly: true }) || "";
+  }
 
-  // Fallback: sha256 of hex file bytes is NOT the puzzle hash — only report cdv hashes.
-  const ok = build.code === 0 || Boolean(hexBody) || Boolean(hashLine);
+  const ok = Boolean(hashLine);
   return {
     ok,
     available: true,
     path: safe,
-    hexPath: hexBody ? hexPath : null,
+    hexPath,
     puzzleHash: hashLine || null,
     modHash: modHash || null,
     curried,
     curryArgs: curryArgs.length ? curryArgs : null,
     buildCode: build.code,
     message: ok
-      ? hashLine
-        ? `puzzle hash: ${hashLine}${curried ? " (curried)" : " (uncurried mod)"}`
-        : `cdv build finished (code ${build.code}). Hex: ${hexBody ? hexPath : "n/a"}. Hash not parsed — check cdv inspect output.`
-      : `cdv failed (build ${build.code}): ${(build.stderr || build.stdout).slice(0, 500)}`,
+      ? `puzzle hash: ${hashLine}${curried ? " (curried)" : " (uncurried mod)"}`
+      : `cdv build ok but hash not parsed — check cdv inspect/curry output.`,
     log: blob.slice(0, 4000),
   };
 }
 
-/** Prefer labeled puzzle-hash lines over arbitrary 64-hex (e.g. pubkeys in logs). */
-export function extractPuzzleHash(text) {
+/** Demo / placeholder 64-hex (all same nibble) — never a real puzzle hash. */
+function isPlaceholderHash(h) {
+  return /^([0-9a-f])\1{63}$/i.test(String(h || ""));
+}
+
+/**
+ * Prefer labeled puzzle-hash lines over arbitrary 64-hex (curry -a args, etc.).
+ * @param {string} text
+ * @param {{ labeledOnly?: boolean }} [opts]
+ */
+export function extractPuzzleHash(text, opts = {}) {
   const s = String(text || "");
   const labeled = s.match(
     /(?:puzzle\s*hash|treehash|ph)\s*[:=]?\s*(?:0x)?([0-9a-fA-F]{64})\b/i,
   );
-  if (labeled) return labeled[1].toLowerCase();
-  const m = s.match(/\b([0-9a-fA-F]{64})\b/);
-  return m ? m[1].toLowerCase() : null;
+  if (labeled && !isPlaceholderHash(labeled[1])) {
+    return labeled[1].toLowerCase();
+  }
+  if (opts.labeledOnly) return null;
+  for (const m of s.matchAll(/\b(?:0x)?([0-9a-fA-F]{64})\b/g)) {
+    if (!isPlaceholderHash(m[1])) return m[1].toLowerCase();
+  }
+  return null;
 }

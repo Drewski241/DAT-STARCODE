@@ -67,13 +67,23 @@ async function compileClsp(workspaceRoot, rel) {
       /* missing */
     }
   }
+  const hexRel = `${rel}.hex`;
+  // Always rebuild — stale .hex from a prior turn fails brun against new .clsp.
+  for (const stale of [hexRel, hexRel.replace(/\.hex$/i, ".curried.hex")]) {
+    try {
+      await fs.unlink(path.join(workspaceRoot, stale));
+    } catch {
+      /* missing */
+    }
+  }
   const build = await run("cdv", ["clsp", "build", rel, ...includeFlags], {
     cwd: workspaceRoot,
     timeoutMs: 90_000,
   });
-  const hexRel = `${rel}.hex`;
   try {
-    const hex = (await fs.readFile(path.join(workspaceRoot, hexRel), "utf8")).trim();
+    const hex = (await fs.readFile(path.join(workspaceRoot, hexRel), "utf8"))
+      .replace(/\s+/g, "")
+      .trim();
     if (hex && build.code === 0) {
       return { ok: true, program: hex, hexRel, log: `${build.stdout}\n${build.stderr}` };
     }

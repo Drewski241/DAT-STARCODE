@@ -1204,6 +1204,23 @@ export async function runAgentJob({
             `[agent] rescue vault: ${vaultFails.slice(0, 3).join("; ")}`,
           );
           await seedTemplatesForGoal(root, "secure_treasury", { log });
+          // Drop compiled artifacts so hash-doc / spend fixtures cannot reuse
+          // stale .hex from the pre-repair vault (zip 199278a5).
+          for (const rel of [
+            "puzzles/savings_vault.clsp.hex",
+            "puzzles/treasury_coin.clsp.hex",
+            "puzzles/interest_payout.clsp.hex",
+            "puzzles/savings_vault.clsp.curried.hex",
+            "puzzles/treasury_coin.clsp.curried.hex",
+            "puzzles/interest_payout.clsp.curried.hex",
+            "main.sym",
+          ]) {
+            try {
+              await fs.unlink(path.join(root, rel));
+            } catch {
+              /* missing */
+            }
+          }
           finalMessage += [
             "",
             "## Repair",

@@ -24,8 +24,20 @@ assert.equal(defaultCurryArgsFor("puzzles/other.clsp", mod), null);
 assert.equal(defaultCurryArgsFor("puzzles/savings_vault.clsp", "nope"), null);
 
 assert.equal(
-  extractPuzzleHash("Puzzle hash: 0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"),
-  "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  extractPuzzleHash(
+    "Puzzle hash: 0x34c4755463240b02f3b3ec4214119e591b9cef300f1ed6a45b9a81789cae57ac",
+  ),
+  "34c4755463240b02f3b3ec4214119e591b9cef300f1ed6a45b9a81789cae57ac",
+);
+assert.equal(
+  extractPuzzleHash("curry -a 0x2222222222222222222222222222222222222222222222222222222222222222", {
+    labeledOnly: true,
+  }),
+  null,
+);
+assert.equal(
+  extractPuzzleHash("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"),
+  null,
 );
 
 console.log("cdv.test.mjs ok");

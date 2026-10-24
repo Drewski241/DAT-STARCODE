@@ -42,15 +42,21 @@ function captureStdout(fn) {
   return out.trim();
 }
 
+/** True if string looks like CLVM hex bytecode (not ChiaLisp source). */
+export function looksLikeClvmHex(s) {
+  const t = String(s || "").replace(/\s+/g, "");
+  return t.length >= 8 && /^[0-9a-fA-F]+$/.test(t);
+}
+
 /**
  * @param {{ program?: string, solution?: string, mode?: "brun"|"run", expect?: string }} args
  */
 export async function clvmVerify(args = {}) {
-  const program = String(args.program || "").trim();
-  if (!program) {
+  const programRaw = String(args.program || "").trim();
+  if (!programRaw) {
     return { ok: false, error: "program required (CLVM/ChiaLisp source or hex)" };
   }
-  if (program.length > 20_000) {
+  if (programRaw.length > 20_000) {
     return { ok: false, error: "program too large (max 20000 chars)" };
   }
 
@@ -68,13 +74,33 @@ export async function clvmVerify(args = {}) {
 
   try {
     const clvm_tools = await getTools();
+    const programHex = looksLikeClvmHex(programRaw)
+      ? programRaw.replace(/\s+/g, "")
+      : null;
+
     const output = captureStdout(() => {
       if (mode === "run") {
-        if (solution !== undefined) clvm_tools.go("run", program, solution);
-        else clvm_tools.go("run", program);
-      } else {
-        clvm_tools.go("brun", program, solution ?? "()");
+        if (solution !== undefined) clvm_tools.go("run", programRaw, solution);
+        else clvm_tools.go("run", programRaw);
+        return;
       }
+
+      // brun on hex: clvm_tools `-x` treats BOTH program and env as hex, so
+      // opc the solution first. Plain `brun <hex> <src>` misreads hex as IR
+      // and fails with "path into atom".
+      if (programHex) {
+        const envSrc = solution ?? "()";
+        const envHex = captureStdout(() => clvm_tools.go("opc", envSrc))
+          .replace(/\s+/g, "")
+          .replace(/^0x/i, "");
+        if (!envHex || /fail|error|invalid/i.test(envHex)) {
+          throw new Error(`opc failed for solution: ${envHex || "(empty)"}`);
+        }
+        clvm_tools.go("brun", "-x", programHex, envHex);
+        return;
+      }
+
+      clvm_tools.go("brun", programRaw, solution ?? "()");
     });
 
     const failed = /^FAIL:/i.test(output) || /clvm raise/i.test(output);
@@ -85,19 +111,20 @@ export async function clvmVerify(args = {}) {
     return {
       ok,
       mode,
-      program,
+      program: programHex || programRaw,
       solution: solution ?? null,
       output,
       expect,
       matched,
       verified: ok && (expect === null || matched === true),
       engine: "clvm_tools",
+      hex: Boolean(programHex),
     };
   } catch (err) {
     return {
       ok: false,
       mode,
-      program,
+      program: programRaw,
       solution: solution ?? null,
       error: err instanceof Error ? err.message : String(err),
       hint: "Ensure clvm_tools is installed (npm install) on the worker host.",

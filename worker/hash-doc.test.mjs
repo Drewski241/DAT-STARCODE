@@ -38,8 +38,14 @@ assert.equal(
 );
 
 assert.equal(
+  extractPuzzleHash(
+    "Puzzle hash: 0x34c4755463240b02f3b3ec4214119e591b9cef300f1ed6a45b9a81789cae57ac",
+  ),
+  "34c4755463240b02f3b3ec4214119e591b9cef300f1ed6a45b9a81789cae57ac",
+);
+assert.equal(
   extractPuzzleHash("Puzzle hash: 0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"),
-  "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  null,
 );
 
 console.log("hash-doc.test.mjs ok");
