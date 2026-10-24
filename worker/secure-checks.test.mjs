@@ -89,4 +89,26 @@ const badPayout = checkPayoutSecure(
 );
 assert.ok(badPayout.some((f) => /OWNER_PH|dest_ph/i.test(f)));
 
+const nullaryModes = checkVaultSecure(`(mod (MOD_HASH AUTHORIZER_PK MIN_HOLD_SECONDS INTEREST_BPS TREASURY_PH PRINCIPAL DEPOSIT_SECONDS OWNER_PH mode now_seconds)
+  (defun vault-ph (mod_hash auth min_hold bps treasury_ph principal deposit_seconds owner_ph)
+    (sha256tree (c mod_hash (list auth)))
+  )
+  (defun mode-open ()
+    (list (list 51 (vault-ph MOD_HASH AUTHORIZER_PK MIN_HOLD_SECONDS INTEREST_BPS TREASURY_PH PRINCIPAL now_seconds OWNER_PH) PRINCIPAL))
+  )
+  (defun mode-claim-only (elapsed owed)
+    (list (list 51 (vault-ph MOD_HASH AUTHORIZER_PK MIN_HOLD_SECONDS INTEREST_BPS TREASURY_PH PRINCIPAL now_seconds OWNER_PH) PRINCIPAL) (list 61 1))
+  )
+  (if (= mode 1) (mode-open) (if (= mode 4) (mode-claim-only 1 1) (x)))
+)`);
+assert.ok(nullaryModes.some((f) => /nullary|inline|free mod/i.test(f)));
+
+const nullaryPay = checkTreasurySecure(
+  `(mod (MOD_HASH AUTHORIZER_PK mode amount interest_amount OWNER_PH)
+  (defun pay-interest () (list (list 73 amount) (list 63 1) (list 51 MOD_HASH 1)))
+  (if (= mode 1) (pay-interest) (x))
+)`,
+);
+assert.ok(nullaryPay.some((f) => /pay-interest|inline/i.test(f)));
+
 console.log("secure-checks.test.mjs ok");

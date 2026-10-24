@@ -26,7 +26,11 @@ import {
 } from "./tooling.mjs";
 import { seedTemplatesForGoal } from "./seed-templates.mjs";
 import { runSecureTreasurySpendFixtures } from "./spend-fixtures.mjs";
-import { checkVaultSecure } from "./secure-checks.mjs";
+import {
+  checkVaultSecure,
+  checkTreasurySecure,
+  checkPayoutSecure,
+} from "./secure-checks.mjs";
 
 const MAX_STEPS = Number(process.env.AGENT_MAX_STEPS || 12);
 const HARD_TASK_STEPS = Number(process.env.AGENT_HARD_TASK_STEPS || 40);
@@ -1183,25 +1187,32 @@ export async function runAgentJob({
       ].join("\n");
     }
 
-    // 14b often leaves a stale v1 vault next to a seeded templates/ copy
-    // (Studio zips 94408ee8 / ab11df8e). Force-restore before hash/fixtures.
+    // 14b often leaves a stale vault (nullary mode defuns / free mod params)
+    // next to good treasury/payout (Studio zips 94408ee8–fdcb9b56). Re-seed.
     if (goal.id === "secure_treasury" && !resultOnly) {
       try {
+        const readRel = async (rel) => {
+          try {
+            return await fs.readFile(path.join(root, rel), "utf8");
+          } catch {
+            return "";
+          }
+        };
         const vaultRel = "puzzles/savings_vault.clsp";
-        let vaultBody = "";
-        try {
-          vaultBody = await fs.readFile(path.join(root, vaultRel), "utf8");
-        } catch {
-          vaultBody = "";
-        }
-        const vaultFails = checkVaultSecure(vaultBody, vaultRel);
-        if (vaultFails.length) {
+        const treasuryRel = "puzzles/treasury_coin.clsp";
+        const payoutRel = "puzzles/interest_payout.clsp";
+        const rescueFails = [
+          ...checkVaultSecure(await readRel(vaultRel), vaultRel),
+          ...checkTreasurySecure(await readRel(treasuryRel), treasuryRel),
+          ...checkPayoutSecure(await readRel(payoutRel), payoutRel),
+        ];
+        if (rescueFails.length) {
           await emit(
             "status",
-            "Restoring v2 savings_vault from templates (stale vault detected)…",
+            "Restoring secure-treasury puzzles from templates…",
           );
           log(
-            `[agent] rescue vault: ${vaultFails.slice(0, 3).join("; ")}`,
+            `[agent] rescue treasury: ${rescueFails.slice(0, 4).join("; ")}`,
           );
           await seedTemplatesForGoal(root, "secure_treasury", { log });
           // Drop compiled artifacts so hash-doc / spend fixtures cannot reuse
@@ -1225,12 +1236,12 @@ export async function runAgentJob({
             "",
             "## Repair",
             "",
-            "Restored `puzzles/*.clsp` from seeded v2 templates — the model left a pre-reset vault (`claim-msg dest_ph` / stale mode-4 clock).",
+            "Restored `puzzles/*.clsp` from seeded templates — removed nullary mode/pay defuns or other patterns that make cdv/brun raise.",
           ].join("\n");
         }
       } catch (err) {
         log(
-          `[agent] rescue vault error: ${err instanceof Error ? err.message : String(err)}`,
+          `[agent] rescue treasury error: ${err instanceof Error ? err.message : String(err)}`,
         );
       }
     }

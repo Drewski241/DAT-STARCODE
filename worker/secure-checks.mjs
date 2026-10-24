@@ -88,6 +88,18 @@ export function checkVaultSecure(body, path = "savings_vault.clsp") {
       );
     }
   }
+  // Nullary mode defuns close over free mod params — cdv/brun raise (zip fdcb9b56).
+  const code = s.replace(/;.*$/gm, "\n");
+  if (
+    /\(defun\s+mode-(?:open|withdraw)\s*\(\s*\)/i.test(code) ||
+    /\(defun\s+mode-(?:exit-with-interest|claim-only)\s*\(\s*elapsed\s+owed\s*\)/i.test(
+      code,
+    )
+  ) {
+    failures.push(
+      `${path}: mode helpers must not be nullary / close over free mod params — keep mode branches inline (cdv/brun otherwise raise)`,
+    );
+  }
   return failures;
 }
 
@@ -116,6 +128,11 @@ export function checkTreasurySecure(body, path = "treasury_coin.clsp") {
   if (/\bdest_ph\b/i.test(code) && !/\bOWNER_PH\b/.test(code)) {
     failures.push(
       `${path}: interest claim uses free dest_ph — bind claim-msg / solution to OWNER_PH (match vault + payout)`,
+    );
+  }
+  if (/\(defun\s+pay-interest\s*\(\s*\)/i.test(code)) {
+    failures.push(
+      `${path}: nullary pay-interest closes over free mod params — inline the pay path (cdv/brun otherwise raise)`,
     );
   }
   return failures;
