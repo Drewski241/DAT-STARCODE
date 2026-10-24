@@ -93,6 +93,7 @@ export function StudioClient() {
   const [githubUrlDraft, setGithubUrlDraft] = useState("");
   const [liveEvents, setLiveEvents] = useState<JobEvent[]>([]);
   const [liveDraft, setLiveDraft] = useState("");
+  const progressEndRef = useRef<HTMLDivElement | null>(null);
   /** Keeps refresh() aligned after create/switch (avoids stale projectId closure). */
   const projectIdRef = useRef<string | null>(null);
   projectIdRef.current = projectId;
@@ -289,6 +290,11 @@ export function StudioClient() {
     });
     return () => es.close();
   }, [selectedId, selectedStatus, refresh]);
+
+  // Keep the play-by-play scrolled to the newest line while a job runs.
+  useEffect(() => {
+    progressEndRef.current?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  }, [liveEvents.length, liveDraft]);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -900,7 +906,16 @@ export function StudioClient() {
               {jobs.length === 0 && (
                 <li className="font-mono text-xs text-steel-500">No jobs yet.</li>
               )}
-              {jobs.map((job) => (
+              {jobs.map((job) => {
+                const headline =
+                  job.id === selectedId
+                    ? latestPlayByPlay(liveEvents)
+                    : latestPlayByPlay(job.events);
+                const inFlight =
+                  job.status === "queued" ||
+                  job.status === "claimed" ||
+                  job.status === "running";
+                return (
                 <li key={job.id}>
                   <button
                     type="button"
@@ -916,24 +931,31 @@ export function StudioClient() {
                       <span className="truncate font-mono text-xs text-copper-100">
                         {job.prompt.slice(0, 64)}
                       </span>
-                      <StatusPill status={job.status} />
+                      <StatusPill status={job.status} headline={inFlight ? headline : null} />
                     </div>
                     <p className="mt-1 truncate font-mono text-[10px] text-steel-500">
-                      {job.creditsCharged ? `${job.creditsCharged} cr` : ""}
-                      {job.modelResolved
-                        ? `${job.creditsCharged ? " · " : ""}${job.modelRequested === "auto" ? "auto → " : ""}${job.modelResolved}`
-                        : ""}
-                      {typeof job.workspaceFileCount === "number" &&
-                      job.workspaceFileCount > 0
-                        ? ` · ${job.workspaceFileCount} files`
-                        : ""}
-                      {typeof job.stepsUsed === "number"
-                        ? ` · ${job.stepsUsed} steps`
-                        : ""}
+                      {inFlight && headline
+                        ? headline
+                        : [
+                            job.creditsCharged ? `${job.creditsCharged} cr` : "",
+                            job.modelResolved
+                              ? `${job.modelRequested === "auto" ? "auto → " : ""}${job.modelResolved}`
+                              : "",
+                            typeof job.workspaceFileCount === "number" &&
+                            job.workspaceFileCount > 0
+                              ? `${job.workspaceFileCount} files`
+                              : "",
+                            typeof job.stepsUsed === "number"
+                              ? `${job.stepsUsed} steps`
+                              : "",
+                          ]
+                            .filter(Boolean)
+                            .join(" · ")}
                     </p>
                   </button>
                 </li>
-              ))}
+                );
+              })}
             </ul>
           </section>
 
@@ -945,7 +967,7 @@ export function StudioClient() {
             ) : (
               <>
                 <div className="flex flex-wrap items-center justify-between gap-3 border-b border-copper-800/40 pb-4">
-                  <div>
+                  <div className="min-w-0 flex-1">
                     <p className="font-mono text-[11px] uppercase tracking-widest text-steel-500">
                       Job {selected.id.slice(0, 8)}
                       {selected.modelResolved
@@ -960,8 +982,28 @@ export function StudioClient() {
                         {selected.modelReason}
                       </p>
                     )}
+                    {(selected.status === "queued" ||
+                      selected.status === "claimed" ||
+                      selected.status === "running") && (
+                      <p className="mt-2 font-mono text-xs text-copper-300">
+                        <span className="animate-pulse-soft text-copper-400">
+                          ●
+                        </span>{" "}
+                        {latestPlayByPlay(liveEvents) ||
+                          waitingMessage(selected.status)}
+                      </p>
+                    )}
                   </div>
-                  <StatusPill status={selected.status} />
+                  <StatusPill
+                    status={selected.status}
+                    headline={
+                      selected.status === "queued" ||
+                      selected.status === "claimed" ||
+                      selected.status === "running"
+                        ? latestPlayByPlay(liveEvents)
+                        : null
+                    }
+                  />
                 </div>
                 {(selected.githubPrUrl || selected.githubBranch) && (
                   <p className="mt-3 font-mono text-xs text-copper-300">
@@ -1024,33 +1066,51 @@ export function StudioClient() {
                         selected.status === "running" ||
                         liveEvents.length > 0) && (
                         <div className="border border-copper-800/40 bg-ink-950/50 p-3">
-                          <p className="font-mono text-[11px] uppercase tracking-widest text-steel-400">
-                            Progress
-                            {selected.modelResolved
-                              ? ` · ${selected.modelResolved}`
-                              : ""}
-                          </p>
+                          <div className="flex flex-wrap items-baseline justify-between gap-2">
+                            <p className="font-mono text-[11px] uppercase tracking-widest text-steel-400">
+                              Live play-by-play
+                              {selected.modelResolved
+                                ? ` · ${selected.modelResolved}`
+                                : ""}
+                            </p>
+                            {liveEvents.length > 0 && (
+                              <p className="font-mono text-[10px] text-steel-500">
+                                {liveEvents.length} update
+                                {liveEvents.length === 1 ? "" : "s"}
+                              </p>
+                            )}
+                          </div>
                           {liveEvents.length === 0 && !liveDraft ? (
                             <p className="mt-2 animate-pulse-soft font-mono text-sm text-copper-300">
-                              Working on your request…
+                              {waitingMessage(selected.status)}
                             </p>
                           ) : (
-                            <ul className="mt-2 space-y-2 font-mono text-xs leading-relaxed text-steel-300">
-                              {liveEvents.map((ev) => (
-                                <li key={ev.id}>
-                                  <span className="text-steel-500">
-                                    {friendlyEventLabel(ev.type)}:{" "}
-                                  </span>
-                                  <span className="text-copper-100/90">
-                                    {ev.message}
-                                    {ev.data &&
-                                    typeof ev.data.summary === "string"
-                                      ? ` — ${ev.data.summary}`
-                                      : ""}
-                                  </span>
+                            <ol className="mt-3 max-h-64 space-y-2.5 overflow-auto border-l border-copper-800/50 pl-3 font-mono text-xs leading-relaxed">
+                              {liveEvents.map((ev, i) => (
+                                <li key={ev.id} className="relative">
+                                  <span className="absolute -left-[0.95rem] top-1.5 h-1.5 w-1.5 rounded-full bg-copper-500/80" />
+                                  <div className="flex gap-2 text-steel-500">
+                                    <span className="shrink-0 tabular-nums">
+                                      {String(i + 1).padStart(2, "0")}
+                                    </span>
+                                    <span className="shrink-0">
+                                      {friendlyEventLabel(ev.type)}
+                                    </span>
+                                    <span className="min-w-0 text-copper-100/90">
+                                      {ev.message}
+                                    </span>
+                                  </div>
+                                  {ev.data &&
+                                    typeof ev.data.summary === "string" &&
+                                    ev.type === "tool_result" && (
+                                      <p className="mt-0.5 pl-8 text-[10px] text-steel-500 line-clamp-2">
+                                        {ev.data.summary}
+                                      </p>
+                                    )}
                                 </li>
                               ))}
-                            </ul>
+                              <div ref={progressEndRef} />
+                            </ol>
                           )}
                           {liveDraft && (
                             <div className="mt-3 border-t border-copper-800/40 pt-3">
@@ -1121,33 +1181,65 @@ export function StudioClient() {
   );
 }
 
-function StatusPill({ status }: { status: string }) {
+function StatusPill({
+  status,
+  headline,
+}: {
+  status: string;
+  headline?: string | null;
+}) {
   const tone =
     status === "completed"
       ? "text-emerald-300"
       : status === "failed"
         ? "text-rose-300"
         : "text-copper-300";
+  const short =
+    status === "running" && headline
+      ? "live"
+      : status === "queued"
+        ? "queued"
+        : status === "claimed"
+          ? "claimed"
+          : status;
   return (
     <span
       className={cn(
         "shrink-0 font-mono text-[10px] uppercase tracking-widest",
         tone,
       )}
+      title={headline || status}
     >
-      {status}
+      {short}
     </span>
   );
+}
+
+function waitingMessage(status: string) {
+  if (status === "queued") return "Waiting for a worker to pick up this job…";
+  if (status === "claimed") return "Worker claimed the job · starting…";
+  return "Worker is starting · first update shortly…";
+}
+
+function latestPlayByPlay(events?: JobEvent[] | null) {
+  if (!events?.length) return null;
+  for (let i = events.length - 1; i >= 0; i--) {
+    const e = events[i];
+    if (e.type === "token") continue;
+    const msg = String(e.message || "").trim();
+    if (msg) return msg;
+  }
+  return null;
 }
 
 function friendlyEventLabel(type: string) {
   switch (type) {
     case "tool":
-      return "Using a tool";
+      return "Doing";
     case "tool_result":
-      return "Tool finished";
+      return "Done";
     case "status":
-      return "Status";
+      return "Now";
     case "log":
       return "Note";
     case "error":

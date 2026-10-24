@@ -38,6 +38,33 @@ const MAX_FILE_BYTES = 200_000;
 const PLAYBOOK_MAX_CHARS = 8_000;
 const AGENTS_MD_MAX_CHARS = 4_000;
 
+/** Short human line for Studio live play-by-play. */
+function toolHeadline(tool, args = {}) {
+  const a = args && typeof args === "object" ? args : {};
+  switch (String(tool || "")) {
+    case "list_files":
+      return "Listing workspace files";
+    case "read_file":
+      return `Reading ${a.path || "file"}`;
+    case "write_file":
+      return `Writing ${a.path || "file"}`;
+    case "run":
+      return `Running \`${String(a.command || "").slice(0, 72)}\``;
+    case "web_search":
+      return `Searching “${String(a.query || "").slice(0, 72)}”`;
+    case "fetch_url":
+      return `Fetching ${String(a.url || "").slice(0, 80)}`;
+    case "puzzle_hash":
+      return `Computing puzzle hash for ${a.path || "puzzle"}`;
+    case "clvm_verify":
+      return "Verifying ChiaLisp";
+    case "spend_check":
+      return "Running spend check samples";
+    default:
+      return String(tool || "tool");
+  }
+}
+
 const HOW_TO_RUN = `
 Always end your final answer with a section titled exactly: ## How to run / play
 Write numbered steps for a non-technical user. Include: download zip from Studio
@@ -650,7 +677,8 @@ export async function runAgentJob({
   /** @type {"oauth"|"commands"|null} */
   let githubPath = null;
   try {
-    await emit("status", `Starting agent · ${model}`);
+    await emit("status", `Worker claimed job · ${model}`);
+    await emit("status", "Loading project workspace…");
     const pulled = await pullWorkspace(job);
     /** Paths that existed in Studio before this turn — used to detect deletes. */
     const pulledPaths = [];
@@ -718,19 +746,35 @@ export async function runAgentJob({
           ? Math.max(MAX_STEPS, 10)
           : MAX_STEPS;
 
+    await emit(
+      "status",
+      `Goal: ${goal.id}${hardTask ? " (hard)" : ""} · up to ${stepLimit} steps`,
+    );
+
     if (!isGeneral && hardTask && !resultOnly) {
       try {
-        await seedTemplatesForGoal(root, goal.id, { log });
+        await emit("status", "Seeding secure templates…");
+        const written = await seedTemplatesForGoal(root, goal.id, { log });
+        if (written?.length) {
+          await emit(
+            "status",
+            `Seeded ${written.length} template file${written.length === 1 ? "" : "s"}`,
+          );
+        } else {
+          await emit("status", "Templates already up to date");
+        }
       } catch (err) {
         log(
           `[agent] seed templates: ${err instanceof Error ? err.message : String(err)}`,
         );
+        await emit("log", "Template seed skipped (see worker log)");
       }
     }
     if (resultOnly) {
       log(
         `[agent] result-only polish — stepLimit=${stepLimit}, skip seed/spend-fixtures`,
       );
+      await emit("status", "RESULT-only polish · skipping seed/fixtures");
     }
 
     const playbook = await loadPlaybooks(goal.playbooks);
@@ -744,6 +788,10 @@ export async function runAgentJob({
     if (playbook) {
       log(
         `[agent] goal=${goal.id} playbooks=${goal.playbooks.join(",") || "-"} (${playbook.length} chars) cdv=${hasCdv} clvm_tools=${Boolean(tooling?.clvmTools)} requireTooling=${requireTooling}`,
+      );
+      await emit(
+        "status",
+        `Playbook ready · cdv=${hasCdv ? "yes" : "no"} · clvm_tools=${tooling?.clvmTools ? "yes" : "no"}`,
       );
     } else {
       log(`[agent] goal=${goal.id}`);
@@ -890,7 +938,7 @@ export async function runAgentJob({
       stepsUsed = step + 1;
       const stepsLeft = stepLimit - step;
       log(`[agent] step ${step + 1}/${stepLimit} job=${job.id.slice(0, 8)}`);
-      await emit("log", `Thinking (step ${step + 1}/${stepLimit})…`);
+      await emit("status", `Thinking · step ${step + 1}/${stepLimit}`);
 
       // Force synthesis before the budget dies.
       if (isGeneral && researchReady() && stepsLeft <= 3) {
@@ -987,7 +1035,8 @@ export async function runAgentJob({
       const tool = action.tool;
       const args = action.args || {};
       toolSteps += 1;
-      await emit("tool", String(tool || "unknown"), {
+      const headline = toolHeadline(tool, args);
+      await emit("tool", headline, {
         name: tool,
         args: { ...args, content: args.content ? "[…]" : undefined },
         step: toolSteps,
@@ -1042,10 +1091,16 @@ export async function runAgentJob({
       } else {
         observation = `ERROR: unknown tool ${tool}`;
       }
-      await emit("tool_result", `${tool}: ok`, {
-        name: tool,
-        summary: String(observation).slice(0, 240),
-      });
+      const obsPreview = String(observation).slice(0, 240);
+      const failed = /^ERROR:/i.test(obsPreview);
+      await emit(
+        failed ? "log" : "tool_result",
+        failed ? `${headline} — issue` : `Done · ${headline}`,
+        {
+          name: tool,
+          summary: obsPreview,
+        },
+      );
 
       let obsMsg = `OBSERVATION:\n${observation}`;
       if (isGeneral && researchReady()) {
@@ -1131,8 +1186,13 @@ export async function runAgentJob({
     let hashDoc = null;
     if (hardTask && hasCdv && !resultOnly) {
       try {
+        await emit("status", "Documenting puzzle hash with cdv…");
         hashDoc = await ensurePuzzleHashDocumented(root, { log });
         if (hashDoc.ok && hashDoc.puzzleHash) {
+          await emit(
+            "status",
+            `Puzzle hash ready · ${String(hashDoc.puzzleHash).slice(0, 16)}…`,
+          );
           finalMessage += [
             "",
             "## Puzzle hash",
@@ -1143,6 +1203,7 @@ export async function runAgentJob({
           ].join("\n");
         } else if (hashDoc && !hashDoc.ok) {
           log(`[agent] hash-doc: ${hashDoc.message}`);
+          await emit("log", `Puzzle hash: ${hashDoc.message}`);
         }
       } catch (err) {
         log(
@@ -1151,6 +1212,7 @@ export async function runAgentJob({
       }
     } else if (hardTask && requireTooling && !hasCdv) {
       log("[agent] hash-doc skipped — cdv required but not available");
+      await emit("log", "Puzzle hash skipped — cdv not available on worker");
     }
 
     // Deterministic fail-closed spend samples for secure treasury (flash / cover / zero).
@@ -1158,8 +1220,13 @@ export async function runAgentJob({
     let spendFx = null;
     if (goal.id === "secure_treasury" && !resultOnly) {
       try {
+        await emit("status", "Running spend fixtures (brun)…");
         spendFx = await runSecureTreasurySpendFixtures(root, { log });
         log(`[agent] spend-fixtures: ${spendFx.message}`);
+        await emit(
+          spendFx.ok ? "status" : "log",
+          spendFx.message || "spend fixtures finished",
+        );
       } catch (err) {
         spendFx = {
           ok: false,
@@ -1167,6 +1234,7 @@ export async function runAgentJob({
           results: [],
         };
         log(`[agent] spend-fixtures error: ${spendFx.message}`);
+        await emit("log", spendFx.message);
       }
     }
 
@@ -1206,6 +1274,7 @@ export async function runAgentJob({
     }
 
     if (!isGeneral) {
+      await emit("status", "Verifying deliverables…");
       const verification = verifyWorkspaceFiles(files, {
         // Always require a documented hash on hard tasks when tooling is mandated.
         // RESULT-only polish: keep hash/secure checks but skip tooling re-probe failures.
@@ -1235,6 +1304,10 @@ export async function runAgentJob({
       }
       if (!verification.ok) {
         log(`[agent] verification failed: ${verification.failures.join("; ")}`);
+        await emit(
+          "log",
+          `Verification failed · ${verification.failures.length} issue${verification.failures.length === 1 ? "" : "s"}`,
+        );
         finalMessage += [
           "",
           "## Verification failed",
@@ -1253,7 +1326,11 @@ export async function runAgentJob({
             "",
             "- Hard-domain goal expected a `.clsp` (or ChiaLisp) deliverable, but none was written.",
           ].join("\n");
+        } else {
+          await emit("status", "Verification passed");
         }
+      } else {
+        await emit("status", "Verification passed");
       }
       if (verification.warnings?.length) {
         finalMessage += [
@@ -1280,7 +1357,9 @@ export async function runAgentJob({
         );
       }
     }
+    await emit("status", "Saving workspace to Studio…");
     await pushWorkspace(job, files, deletePaths);
+    await emit("status", "Finishing job…");
 
     if (githubPath === "oauth" && github && githubBranch) {
       try {
