@@ -76,9 +76,9 @@ Pull the models you want users to select (Auto needs both a coder and a general 
 ```bash
 ollama pull qwen2.5-coder:7b
 ollama pull llama3.1:8b
+ollama pull qwen2.5:7b   # Auto uses this for shopping / local research Q&A
 # optional (stronger coding — recommended for ChiaLisp / hard tasks):
 # ollama pull qwen2.5-coder:14b
-# ollama pull qwen2.5:7b
 ```
 
 The worker **preflights** the selected Ollama tag before running (`ollama list`). If Studio picks `qwen2.5-coder:14b` and it is not pulled, the job fails immediately with pull instructions instead of burning agent steps.

@@ -232,6 +232,23 @@ export const KNOWLEDGE_CHUNKS = [
     text: `Local how-tos: include city + province/state in search queries; prefer official .gov / crown corp pages; list documents needed; give phone/online/in-person paths; end with ## Next steps the user can do today. Insurance/legal is guidance only — recommend a licensed broker/agent for binding quotes. For "best/cheapest": compare purchase PATHS (mandatory basic vs optional add-ons), cost drivers, and the order of quotes to get — never invent premiums or remix URLs; only cite links returned by search/fetch.`,
   },
   {
+    id: "ev-bc-moto",
+    pack: "everyday",
+    title: "BC motorcycle insurance orientation",
+    keywords: [
+      "icbc",
+      "motorcycle",
+      "bike",
+      "victoria",
+      "bc",
+      "autoplan",
+      "sport",
+      "300cc",
+      "insurance",
+    ],
+    text: `British Columbia: basic Autoplan motorcycle insurance is through ICBC (sold via Autoplan brokers / agents). Optional coverages (collision, comprehensive, roadside) may be ICBC and/or other insurers — verify on icbc.com and broker sites via fetch_url. Sport bikes and lower experience often raise optional premiums. "Cheapest honest" path: (1) confirm licence class for the 300cc sport bike, (2) get an ICBC basic quote with VIN/details, (3) get 2 same-day optional quotes (e.g. BCAA + independent Autoplan broker in Victoria), (4) compare total price + deductibles + storage/commute discounts. Never invent $ amounts.`,
+  },
+  {
     id: "pb-1",
     pack: "playbook",
     title: "Agent playbook",

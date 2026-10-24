@@ -58,9 +58,14 @@ export const DEFAULT_CODING_MODEL = "qwen2.5-coder:7b";
 /** Stronger default when Auto detects ChiaLisp / MTT / other hard domains. */
 export const DEFAULT_HARD_CODING_MODEL = "qwen2.5-coder:14b";
 export const DEFAULT_GENERAL_MODEL = "llama3.1:8b";
+/** Better instruction-following for shopping / local research Q&A. */
+export const DEFAULT_RESEARCH_GENERAL_MODEL = "qwen2.5:7b";
 
 const CODING_HINT =
   /\b(code|coding|function|bug|fix|refactor|implement|typescript|javascript|python|rust|go\b|api|endpoint|class|module|commit|diff|pr\b|pull request|compile|lint|test|unit test|css|html|sql|docker|kubernetes|cli|script|repo|github|stack trace|error:|npm|cargo|pytest|build|game|app|website|page|component|ui|frontend|backend|playable|browser|canvas|sprite|unicorn|bubbles?|jump|platformer|make me|create a|write a|puzzle|chialisp|\.clsp)\b/i;
+
+const RESEARCH_HINT =
+  /\b(best|cheap|cheapest|affordable|lowest|compare|comparison|which|vs\b|versus|quote|quotes|buy|purchase|insurance|broker|price|cost|victoria|vancouver|icbc|how (do|should) i|where (do|can|should) i)\b/i;
 
 /**
  * Resolve Auto (or an explicit id) to an Ollama model tag.
@@ -99,12 +104,23 @@ export function resolveModel(
   }
 
   const coding = goal.id === "coding" || CODING_HINT.test(prompt);
-  const resolved = coding ? DEFAULT_CODING_MODEL : DEFAULT_GENERAL_MODEL;
+  if (coding) {
+    return {
+      requested: "auto",
+      resolved: DEFAULT_CODING_MODEL,
+      reason: "Auto: prompt looks like a coding task",
+    };
+  }
+
+  const research = RESEARCH_HINT.test(prompt);
+  const resolved = research
+    ? DEFAULT_RESEARCH_GENERAL_MODEL
+    : DEFAULT_GENERAL_MODEL;
   return {
     requested: "auto",
     resolved,
-    reason: coding
-      ? "Auto: prompt looks like a coding task"
+    reason: research
+      ? `Auto: research / shopping Q&A → ${resolved}`
       : "Auto: prompt looks like general Q&A",
   };
 }

@@ -49,18 +49,20 @@ This turn is everyday Q&A / local how-to — NOT a coding job.
   2) fetch_url at least one official / primary page from those results (e.g. icbc.com for BC vehicles)
 - URL honesty: ONLY cite links that appeared in web_search or fetch_url observations. Never invent or remix URLs. If unsure, omit the link and name the organization.
 - When the user asks what is best / cheapest / most affordable:
-  - Compare 2–4 real purchase PATHS (e.g. ICBC Autoplan broker vs BCAA vs independent broker vs aggregator), not vague brand name-drops
-  - Explain what is mandatory vs optional in that jurisdiction
-  - List cost drivers (cc/class, experience, claims, storage, commute, coverage limits)
-  - Give a ranked recommendation for the *process* to get the lowest honest price (which quotes to get, in what order)
-  - Do NOT invent dollar premiums. Say exact price needs their details via a licensed quote.
-  - End with a short "best next move for you" based on the bike/city they named
+  - Compare 2–4 real purchase PATHS (e.g. ICBC Autoplan broker vs BCAA vs independent broker), not vague brand name-drops
+  - In BC: basic motorcycle liability is through ICBC (Autoplan). Optional collision/comprehensive/roadside may be ICBC and/or private — say what you verified from fetched pages
+  - Explain mandatory vs optional; list cost drivers (cc, sport bike class, experience, claims, storage, commute)
+  - Rank the *process* to get the lowest honest price (which quotes, in what order) — e.g. get ICBC basic quote + 2 optional quotes same day
+  - Do NOT invent dollar premiums. Exact price needs their details via a licensed quote.
+  - Include a ## Sources section with real URLs from your tool observations
+  - End with one "best next move for you" tied to their bike/city
 - Structure the final markdown as:
   1) Direct recommendation (best path for their case)
   2) Comparison table or bullets: option → pros/cons → when it wins
   3) How to get comparable quotes (documents to bring, questions to ask)
   4) Caveats (advice vs binding insurance; licensed broker when required)
-  5) ## Next steps — numbered actions today
+  5) ## Sources — markdown links only from research
+  6) ## Next steps — numbered actions today
 `.trim();
 
 const SHOPPING_HINT =
@@ -781,6 +783,27 @@ export async function runAgentJob({
               return `${label} (${host} — verify; link not confirmed in research)`;
             },
           );
+        }
+        if (isShopping && !/https?:\/\//i.test(draft)) {
+          messages.push({
+            role: "user",
+            content:
+              "Your draft has no real https links. Rewrite with a ## Sources section using ONLY URLs from the OBSERVATION tool results above, plus a ranked purchase path. Do not invent links.",
+          });
+          continue;
+        }
+        // Always attach confirmed sources so the user can click through.
+        if (isShopping) {
+          const httpSources = [...knownUrls].filter((u) =>
+            /^https?:\/\//i.test(u),
+          );
+          if (httpSources.length && !/## Sources/i.test(draft)) {
+            draft += [
+              "",
+              "## Sources",
+              ...httpSources.slice(0, 8).map((u) => `- ${u}`),
+            ].join("\n");
+          }
         }
         finalMessage = draft;
         await emit("status", "Finishing answer");

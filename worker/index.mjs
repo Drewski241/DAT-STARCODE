@@ -235,7 +235,26 @@ async function loop() {
       }
       const github = claimed.github;
       const githubClone = claimed.githubClone;
-      const model = job.modelResolved || OLLAMA_MODEL;
+      let model = job.modelResolved || OLLAMA_MODEL;
+      // Shopping / local research needs stronger instruction-following than
+      // llama3.1:8b typically provides — bump when Auto still sent 8B.
+      const RESEARCH_MODEL =
+        process.env.AGENT_RESEARCH_MODEL?.trim() || "qwen2.5:7b";
+      const shoppingHint =
+        /\b(best|cheap|cheapest|affordable|compare|insurance|broker|quote|icbc|victoria|price|cost)\b/i.test(
+          job.prompt || "",
+        );
+      if (
+        shoppingHint &&
+        /^llama3\.1:8b$/i.test(model) &&
+        RESEARCH_MODEL &&
+        RESEARCH_MODEL !== model
+      ) {
+        console.log(
+          `[dat-starcoder-worker] research bump ${model} → ${RESEARCH_MODEL}`,
+        );
+        model = RESEARCH_MODEL;
+      }
       const repoLabel = github?.repoFullName || githubClone?.fullName;
       console.log(
         `[dat-starcoder-worker] claimed ${job.id} model=${model}` +
