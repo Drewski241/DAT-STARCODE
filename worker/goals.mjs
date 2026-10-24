@@ -21,22 +21,26 @@ export function inferGoal(prompt) {
   const chia = CHIALISP_HINT.test(text);
   const mtt = MTT_HINT.test(text);
   const treasury = TREASURY_HINT.test(text);
+  // Continuations often say "MTT stub" while working on savings_vault — prefer treasury.
+  const treasuryWork =
+    treasury ||
+    /\b(savings_vault|treasury_coin|secure_treasury)\b/i.test(text);
 
+  if (treasuryWork) {
+    return {
+      id: "secure_treasury",
+      label: "Secure treasury / savings vault",
+      hard: true,
+      playbooks: ["chialisp.md", "secure-treasury.md"],
+      wantCdv: true,
+    };
+  }
   if (mtt && (chia || /\bpuzzle|clsp|chia|pool\b/i.test(text))) {
     return {
       id: "mtt_pool",
       label: "MTT pool / tournament coin",
       hard: true,
       playbooks: ["chialisp.md", "mtt-pool.md"],
-      wantCdv: true,
-    };
-  }
-  if (treasury) {
-    return {
-      id: "secure_treasury",
-      label: "Secure treasury / savings vault",
-      hard: true,
-      playbooks: ["chialisp.md", "secure-treasury.md"],
       wantCdv: true,
     };
   }

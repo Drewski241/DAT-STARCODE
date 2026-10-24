@@ -31,18 +31,22 @@ export function inferGoal(prompt: string): InferredGoal {
   const chia = CHIALISP_HINT.test(text);
   const mtt = MTT_HINT.test(text);
   const treasury = TREASURY_HINT.test(text);
+  const treasuryWork =
+    treasury ||
+    /\b(savings_vault|treasury_coin|secure_treasury)\b/i.test(text);
 
+  // Prefer treasury over MTT when both match (e.g. "delete MTT stub … savings_vault").
+  if (treasuryWork) {
+    return {
+      id: "secure_treasury",
+      label: "Secure treasury / savings vault",
+      hard: true,
+    };
+  }
   if (mtt && (chia || /\bpuzzle|clsp|chia|pool\b/i.test(text))) {
     return {
       id: "mtt_pool",
       label: "MTT pool / tournament coin",
-      hard: true,
-    };
-  }
-  if (treasury) {
-    return {
-      id: "secure_treasury",
-      label: "Secure treasury / savings vault",
       hard: true,
     };
   }

@@ -21,6 +21,12 @@ assert.equal(
   inferGoal("secure the treasury savings vault in ChiaLisp").hard,
   true,
 );
+assert.equal(
+  inferGoal(
+    "Delete secure_treasury.clsp (leftover MTT stub). Keep puzzles/savings_vault.clsp.",
+  ).id,
+  "secure_treasury",
+);
 assert.equal(inferGoal("refactor the typescript API module").id, "coding");
 
 assert.equal(

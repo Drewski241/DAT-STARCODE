@@ -1135,9 +1135,9 @@ export async function runAgentJob({
     // General Q&A should not litter the project workspace with scaffold files.
     let files = isGeneral ? [] : await collectLocalFiles(root);
 
-    // Treasury jobs: drop leftover MTT-style secure_treasury.clsp stubs that fail
-    // sibling CREATE_COIN checks when the real puzzles/ pair is present.
-    if (goal.id === "secure_treasury" && !isGeneral) {
+    // Drop leftover root stubs that fail sibling CREATE_COIN checks when the
+    // real puzzles/savings_vault.clsp pair is present (any hard goal).
+    if (!isGeneral) {
       const hasVault = files.some((f) =>
         /puzzles\/savings_vault\.clsp$/i.test(f.path),
       );
