@@ -678,7 +678,7 @@ export async function runAgentJob({
   /** @type {"oauth"|"commands"|null} */
   let githubPath = null;
   try {
-    await emit("status", `Worker claimed job · ${model}`);
+    await emit("status", `Starting · ${model}`);
     await emit("status", "Loading project workspace…");
     const pulled = await pullWorkspace(job);
     /** Paths that existed in Studio before this turn — used to detect deletes. */

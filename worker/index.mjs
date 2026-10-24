@@ -301,7 +301,7 @@ async function loop() {
 
       await progress(job.id, {
         type: "status",
-        message: `Claimed by ${WORKER_ID} · checking model ${model}`,
+        message: `Starting · checking model ${model}`,
       });
 
       try {

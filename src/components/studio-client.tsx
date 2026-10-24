@@ -1258,8 +1258,8 @@ function StatusPill({
 
 function waitingMessage(status: string) {
   if (status === "queued") return "Waiting for a worker to pick up this job…";
-  if (status === "claimed") return "Worker claimed the job · starting…";
-  return "Worker is starting · first update shortly…";
+  if (status === "claimed") return "Starting · preparing your job…";
+  return "Starting · first update shortly…";
 }
 
 function latestPlayByPlay(events?: JobEvent[] | null) {
