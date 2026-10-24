@@ -238,13 +238,51 @@ function parseAction(text) {
     try {
       return JSON.parse(candidate.slice(start, end + 1));
     } catch {
-      /* fall through */
+      /* Models often put raw newlines inside "message" — recover below. */
+    }
+  }
+  // Recover {"done":true,"message":"..."} when message contains unescaped newlines.
+  if (/"done"\s*:\s*true/i.test(candidate)) {
+    const msgMatch = candidate.match(
+      /"message"\s*:\s*"([\s\S]*)"\s*,?\s*(?:"[^"]+"\s*:\s*[^,}]+,?\s*)*\}\s*$/i,
+    );
+    const loose = candidate.match(/"message"\s*:\s*"([\s\S]*)"\s*\}\s*$/i);
+    const body = (msgMatch || loose)?.[1];
+    if (body != null) {
+      return {
+        done: true,
+        message: body
+          .replace(/\\n/g, "\n")
+          .replace(/\\t/g, "\t")
+          .replace(/\\"/g, '"')
+          .replace(/\\\\/g, "\\"),
+      };
     }
   }
   // DONE: message
   const done = raw.match(/^DONE:\s*([\s\S]+)/i);
   if (done) return { done: true, message: done[1].trim() };
   return null;
+}
+
+/** Strip a leftover {"done":true,"message":"..."} envelope from user-visible text. */
+function unwrapDoneMessage(text) {
+  const raw = String(text || "").trim();
+  const parsed = parseAction(raw);
+  if (parsed?.done && typeof parsed.message === "string" && parsed.message.trim()) {
+    return parsed.message.trim();
+  }
+  if (/^\s*\{[\s\S]*"done"\s*:\s*true/i.test(raw)) {
+    const loose = raw.match(/"message"\s*:\s*"([\s\S]*)"\s*\}\s*$/i);
+    if (loose?.[1]) {
+      return loose[1]
+        .replace(/\\n/g, "\n")
+        .replace(/\\"/g, '"')
+        .replace(/\\\\/g, "\\")
+        .trim();
+    }
+  }
+  return raw;
 }
 
 function detectProfile(prompt) {
