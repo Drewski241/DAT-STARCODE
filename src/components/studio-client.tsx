@@ -93,14 +93,44 @@ export function StudioClient() {
   const [githubUrlDraft, setGithubUrlDraft] = useState("");
   const [liveEvents, setLiveEvents] = useState<JobEvent[]>([]);
   const [liveDraft, setLiveDraft] = useState("");
+  /** Keeps refresh() aligned after create/switch (avoids stale projectId closure). */
+  const projectIdRef = useRef<string | null>(null);
+  projectIdRef.current = projectId;
+  const PROJECT_STORAGE_KEY = "dat-starcoder-studio-project";
 
-  const refresh = useCallback(async () => {
+  function clearProjectUi() {
+    setSelectedId(null);
+    setJobs([]);
+    setWorkspaceFiles([]);
+    setPreviewPath(null);
+    setPreviewContent(null);
+    setLiveEvents([]);
+    setLiveDraft("");
+    setPanel("output");
+  }
+
+  function selectProject(nextId: string) {
+    projectIdRef.current = nextId;
+    setProjectId(nextId);
+    clearProjectUi();
+    try {
+      sessionStorage.setItem(PROJECT_STORAGE_KEY, nextId);
+    } catch {
+      /* ignore */
+    }
+  }
+
+  const refresh = useCallback(async (explicitProjectId?: string | null) => {
     // Retry briefly — Amplify/S3 can return a transient 401 while a job
     // is being claimed/written.
     let res: Response | null = null;
     let data: { account?: Account; jobs?: Job[]; error?: string } = {};
-    const jobsUrl = projectId
-      ? `/api/jobs?projectId=${encodeURIComponent(projectId)}`
+    const activeId =
+      explicitProjectId !== undefined
+        ? explicitProjectId
+        : projectIdRef.current;
+    const jobsUrl = activeId
+      ? `/api/jobs?projectId=${encodeURIComponent(activeId)}`
       : "/api/jobs";
     for (let i = 0; i < 4; i++) {
       res = await fetch(jobsUrl, { credentials: "same-origin" });
@@ -126,16 +156,48 @@ export function StudioClient() {
       setAuthed(true);
       authedRef.current = true;
       setAccount(data.account ?? null);
-      setJobs(data.jobs ?? []);
-      if (!selectedId && data.jobs?.[0]) setSelectedId(data.jobs[0].id);
+      const nextJobs = (data.jobs ?? []).filter((j) =>
+        activeId ? j.projectId === activeId : true,
+      );
+      setJobs(nextJobs);
+      setSelectedId((prev) => {
+        if (prev && nextJobs.some((j) => j.id === prev)) return prev;
+        return nextJobs[0]?.id ?? null;
+      });
     }
 
     const pref = await fetch("/api/projects", { credentials: "same-origin" });
     if (pref.ok) {
       const pdata = await pref.json();
-      setProjects(pdata.projects ?? []);
-      if (!projectId && pdata.projects?.[0]) {
-        setProjectId(pdata.projects[0].id);
+      const list = (pdata.projects ?? []) as Project[];
+      setProjects(list);
+      if (!projectIdRef.current && list.length) {
+        let preferred = list[0].id;
+        try {
+          const stored = sessionStorage.getItem(PROJECT_STORAGE_KEY);
+          if (stored && list.some((p) => p.id === stored)) preferred = stored;
+        } catch {
+          /* ignore */
+        }
+        projectIdRef.current = preferred;
+        setProjectId(preferred);
+        try {
+          sessionStorage.setItem(PROJECT_STORAGE_KEY, preferred);
+        } catch {
+          /* ignore */
+        }
+        const jr = await fetch(
+          `/api/jobs?projectId=${encodeURIComponent(preferred)}`,
+          { credentials: "same-origin" },
+        );
+        if (jr.ok) {
+          const jdata = await jr.json();
+          const nextJobs = ((jdata.jobs ?? []) as Job[]).filter(
+            (j) => j.projectId === preferred,
+          );
+          setJobs(nextJobs);
+          setSelectedId(nextJobs[0]?.id ?? null);
+        }
       }
       if (pdata.account) setAccount(pdata.account);
     }
@@ -146,13 +208,13 @@ export function StudioClient() {
       setGithubConfigured(Boolean(gdata.configured));
       if (gdata.account) setAccount(gdata.account);
     }
-  }, [selectedId, router, projectId]);
+  }, [router]);
 
   useEffect(() => {
     void refresh();
     const t = setInterval(() => void refresh(), 4000);
     return () => clearInterval(t);
-  }, [refresh]);
+  }, [refresh, projectId]);
 
   const selectedStatus =
     jobs.find((j) => j.id === selectedId)?.status ?? null;
@@ -349,7 +411,7 @@ export function StudioClient() {
     setBusy(true);
     setError(null);
     try {
-      let activeProjectId = projectId;
+      let activeProjectId = projectIdRef.current ?? projectId;
       if (!activeProjectId) {
         const created = await fetch("/api/projects", {
           method: "POST",
@@ -362,7 +424,7 @@ export function StudioClient() {
           throw new Error(pdata.error ?? "Could not create project");
         }
         activeProjectId = pdata.project.id as string;
-        setProjectId(activeProjectId);
+        selectProject(activeProjectId);
         setProjects((prev) => [pdata.project, ...prev]);
       }
 
@@ -452,10 +514,11 @@ export function StudioClient() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "Could not create project");
       setNewProjectTitle("");
-      setProjectId(data.project.id);
-      setSelectedId(null);
-      setJobs([]);
-      await refresh();
+      const nextId = data.project.id as string;
+      selectProject(nextId);
+      setProjects((prev) => [data.project as Project, ...prev]);
+      // Pass id explicitly — do not use a stale refresh closure over the old project.
+      await refresh(nextId);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Create project failed");
     } finally {
@@ -467,7 +530,7 @@ export function StudioClient() {
     setBusy(true);
     setError(null);
     try {
-      let activeProjectId = projectId;
+      let activeProjectId = projectIdRef.current ?? projectId;
       if (!activeProjectId) {
         const created = await fetch("/api/projects", {
           method: "POST",
@@ -482,7 +545,8 @@ export function StudioClient() {
           throw new Error(pdata.error ?? "Could not create project");
         }
         activeProjectId = pdata.project.id as string;
-        setProjectId(activeProjectId);
+        selectProject(activeProjectId);
+        setProjects((prev) => [pdata.project as Project, ...prev]);
       }
 
       const res = await fetch("/api/jobs", {
@@ -650,14 +714,28 @@ export function StudioClient() {
             <label className="mt-8 block font-mono text-[11px] uppercase tracking-widest text-steel-400">
               Project
             </label>
+            <p className="mt-1 font-mono text-[11px] text-steel-500">
+              Each project has its own workspace. New treasury jobs still seed
+              the same starter templates — that is not the old project.
+              {activeProject ? (
+                <>
+                  {" "}
+                  Active: <span className="text-copper-300">{activeProject.title}</span>
+                  <span className="text-steel-600">
+                    {" "}
+                    ({activeProject.id.slice(0, 8)})
+                  </span>
+                </>
+              ) : null}
+            </p>
             <div className="mt-2 flex flex-wrap gap-2">
               {projects.map((p) => (
                 <button
                   key={p.id}
                   type="button"
                   onClick={() => {
-                    setProjectId(p.id);
-                    setSelectedId(null);
+                    selectProject(p.id);
+                    void refresh(p.id);
                   }}
                   className={cn(
                     "rounded-none border px-3 py-2 font-mono text-[11px] uppercase tracking-widest transition",

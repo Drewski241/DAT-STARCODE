@@ -124,7 +124,10 @@ export async function initWorkspace(job: CodingJob): Promise<void> {
   const readme = [
     `# DAT STARCODER workspace`,
     ``,
-    job.projectId ? `Project: ${job.projectId}` : `Job: ${job.id}`,
+    job.projectId
+      ? `Project id: \`${job.projectId}\` (isolated from other projects)`
+      : `Job: ${job.id}`,
+    `Workspace key: \`${job.workspaceId ?? (job.projectId ? `projects/${job.projectId}` : job.id)}\``,
     `Created: ${job.createdAt}`,
     ``,
     `## Request`,
@@ -138,7 +141,9 @@ export async function initWorkspace(job: CodingJob): Promise<void> {
     job.modelReason ? `\n${job.modelReason}` : "",
     ``,
     `This folder is your project workspace. Later prompts in the same project`,
-    `edit these files in place. Download the zip from Studio anytime.`,
+    `edit these files in place. A new project starts empty (templates may seed`,
+    `the same starter names — check the project id above). Download the zip`,
+    `from Studio anytime.`,
     ``,
   ]
     .filter((line) => line !== undefined)
