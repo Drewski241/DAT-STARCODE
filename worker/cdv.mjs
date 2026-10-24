@@ -84,7 +84,8 @@ export function defaultCurryArgsFor(relPath, modHash) {
     return [mod0x, DEMO_PK];
   }
   if (/puzzles\/interest_payout\.clsp$/i.test(p)) {
-    return [DEMO_PK, DEMO_PH];
+    // Curry: AUTHORIZER_PK TREASURY_PH OWNER_PH
+    return [DEMO_PK, DEMO_PH, DEMO_OWNER];
   }
   if (/puzzles\/mtt_pool\.clsp$/i.test(p)) {
     // BUY_IN MAX SPLIT_1 SPLIT_2 SPLIT_3 AUTHORIZER_PK POOL_PUZZLE_HASH

@@ -14,7 +14,11 @@ assert.equal(treasury.length, 2);
 
 const payout = defaultCurryArgsFor("puzzles/interest_payout.clsp", mod);
 assert.ok(payout);
-assert.equal(payout.length, 2);
+assert.equal(payout.length, 3);
+assert.equal(
+  payout[2],
+  "0x4444444444444444444444444444444444444444444444444444444444444444",
+);
 
 assert.equal(defaultCurryArgsFor("puzzles/other.clsp", mod), null);
 assert.equal(defaultCurryArgsFor("puzzles/savings_vault.clsp", "nope"), null);

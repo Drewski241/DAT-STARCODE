@@ -17,6 +17,7 @@ import {
   secureTreasuryFailures,
   checkVaultSecure,
   checkTreasurySecure,
+  checkPayoutSecure,
   checkAnnouncementPairing,
 } from "../../secure-checks.mjs";
 import { promises as fsRoot } from "fs";
@@ -217,6 +218,24 @@ try {
   assert.ok(pairFail.some((f) => /Announcement pairing/i.test(f)));
   console.log("ok  trap-announcement-mismatch");
 
+  const freeDest = checkPayoutSecure(
+    `(mod (AUTHORIZER_PK TREASURY_PH dest_ph interest_amount)\n  (list (list 61 1) (list 51 dest_ph interest_amount))\n)`,
+  );
+  assert.ok(freeDest.some((f) => /OWNER_PH|dest_ph/i.test(f)));
+  console.log("ok  trap-payout-free-dest");
+
+  const staleClock = checkVaultSecure(`(mod (MOD_HASH AUTHORIZER_PK MIN_HOLD_SECONDS INTEREST_BPS TREASURY_PH PRINCIPAL DEPOSIT_SECONDS OWNER_PH mode now_seconds)
+  (defun vault-ph (mod_hash auth min_hold bps treasury_ph principal deposit_seconds owner_ph)
+    (sha256tree (c mod_hash (list auth min_hold bps treasury_ph principal deposit_seconds owner_ph)))
+  )
+  (defun mode-claim-only (elapsed owed)
+    (list (list 51 (vault-ph MOD_HASH AUTHORIZER_PK MIN_HOLD_SECONDS INTEREST_BPS TREASURY_PH PRINCIPAL DEPOSIT_SECONDS OWNER_PH) PRINCIPAL) (list 61 1))
+  )
+  (if (= mode 4) (mode-claim-only 1 1) (x))
+)`);
+  assert.ok(staleClock.some((f) => /now_seconds|stale clock|deposit/i.test(f)));
+  console.log("ok  trap-mode4-stale-clock");
+
   const golden = verifyWorkspaceFiles(
     [
       { path: "puzzles/savings_vault.clsp", content: vault },
@@ -243,4 +262,4 @@ if (failed) {
   console.error(`\n${failed} eval case(s) failed`);
   process.exit(1);
 }
-console.log(`\nchialisp evals: ${cases.length + 8} passed`);
+console.log(`\nchialisp evals: ${cases.length + 10} passed`);

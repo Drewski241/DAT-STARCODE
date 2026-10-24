@@ -1,12 +1,12 @@
+; Legacy alias — prefer puzzles/treasury_coin.clsp (v2 closable bundle).
 ; Singleton-safe treasury coin (educational, not Circuit source).
 ;
 ; Exactly ONE CREATE_COIN: recreate treasury with amount - interest.
-; Interest via concurrent puzzles/interest_payout.clsp (puzzle announcements).
+; Interest leaves via puzzles/interest_payout.clsp (OWNER_PH-bound).
 ;
 ; Curry: MOD_HASH AUTHORIZER_PK
-; Solution: mode amount interest_amount dest_ph
-;
-; sha256tree is inlined — file must start with (mod (after comments).
+; Solution: mode amount interest_amount OWNER_PH
+; claim-msg = (sha256tree (list 1 interest_amount OWNER_PH)) — must match vault/payout.
 
 (mod (
   MOD_HASH
@@ -14,7 +14,7 @@
   mode
   amount
   interest_amount
-  dest_ph
+  OWNER_PH
 )
   (defun sha256tree (TREE)
     (if (l TREE)
@@ -31,8 +31,8 @@
     (if (> n 0) n (x))
   )
 
-  (defun claim-msg (owed dest)
-    (sha256tree (list 1 (assert-pos owed) (assert-b32 dest)))
+  (defun claim-msg (owed owner)
+    (sha256tree (list 1 (assert-pos owed) (assert-b32 owner)))
   )
 
   (defun treasury-ph (mod_hash auth)
@@ -45,8 +45,8 @@
         (list
           (list 73 amount)
           (list 50 AUTHORIZER_PK
-            (sha256tree (list mode amount interest_amount dest_ph)))
-          (list 63 (claim-msg interest_amount dest_ph))
+            (sha256tree (list mode amount interest_amount OWNER_PH)))
+          (list 63 (claim-msg interest_amount OWNER_PH))
           (list 51
             (treasury-ph MOD_HASH AUTHORIZER_PK)
             (- amount interest_amount)

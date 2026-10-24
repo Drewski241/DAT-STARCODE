@@ -1,16 +1,17 @@
 ; Interest payout — third spend in the vault↔treasury claim bundle.
 ;
-; Asserts treasury CREATE_PUZZLE_ANNOUNCEMENT, then CREATE_COINs interest.
-; Curry: AUTHORIZER_PK TREASURY_PH
-; Solution: interest_amount dest_ph
+; OWNER_PH is curried — interest cannot be redirected via a free dest_ph.
+; Asserts treasury CREATE_PUZZLE_ANNOUNCEMENT, then CREATE_COINs to OWNER_PH.
 ;
-; sha256tree is inlined — file must start with (mod (after comments).
+; Curry: AUTHORIZER_PK TREASURY_PH OWNER_PH
+; Solution: interest_amount
+; claim-msg = (sha256tree (list 1 interest_amount OWNER_PH))
 
 (mod (
   AUTHORIZER_PK
   TREASURY_PH
+  OWNER_PH
   interest_amount
-  dest_ph
 )
   (defun sha256tree (TREE)
     (if (l TREE)
@@ -27,15 +28,15 @@
     (if (> n 0) n (x))
   )
 
-  (defun claim-msg (owed dest)
-    (sha256tree (list 1 (assert-pos owed) (assert-b32 dest)))
+  (defun claim-msg (owed)
+    (sha256tree (list 1 (assert-pos owed) (assert-b32 OWNER_PH)))
   )
 
   (list
     (list 50 AUTHORIZER_PK
-      (sha256tree (list interest_amount dest_ph)))
+      (sha256tree (list interest_amount OWNER_PH)))
     (list 61
-      (sha256 (assert-b32 TREASURY_PH) (claim-msg interest_amount dest_ph)))
-    (list 51 (assert-b32 dest_ph) (assert-pos interest_amount))
+      (sha256 (assert-b32 TREASURY_PH) (claim-msg interest_amount)))
+    (list 51 (assert-b32 OWNER_PH) (assert-pos interest_amount))
   )
 )

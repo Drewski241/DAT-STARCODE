@@ -8,9 +8,9 @@ Templates are **already seeded** into the workspace:
 
 - `puzzles/savings_vault.clsp`
 - `puzzles/treasury_coin.clsp`
-- `puzzles/interest_payout.clsp` (third spend — pays interest after asserting treasury announcement)
+- `puzzles/interest_payout.clsp` (third spend — pays interest to curried `OWNER_PH`)
 - `include/sha256tree.clib` (optional; puzzles inline `sha256tree`)
-- `tests/spend-samples.json`
+- `tests/spend-samples.json` + `tests/three-spend-claim.json`
 - `VULNERABILITY.md`, `PLAN.md`, `README.md`
 
 1. `list_files` then `read_file` those puzzles.
@@ -21,12 +21,22 @@ Templates are **already seeded** into the workspace:
 
 ## Hard requirements (verification fails without these)
 
-1. **Announcement pairing** — same `claim-msg = (sha256tree (list 1 owed dest_ph))` on vault, treasury, and interest_payout.
+1. **Announcement pairing** — same `claim-msg = (sha256tree (list 1 owed OWNER_PH))` on vault, treasury, and interest_payout.
 2. **Curry treehash shape** — recreate with `(sha256tree (c MOD_HASH (list …)))`, then confirm via `puzzle_hash` / cdv curry (not a flat `(list MOD_HASH …)`).
-3. **OWNER_PH binding** — withdraw/claim principal goes to curried `OWNER_PH` (not a free `dest_ph`).
+3. **OWNER_PH binding** — withdraw/claim principal **and** interest payout go to curried `OWNER_PH` (no free `dest_ph`).
 4. **ASSERT_MY_AMOUNT (73)** on treasury before `amount - interest`.
-5. **Lifecycle** — modes: open (1), withdraw principal (2), exit+interest (3), claim-only recreate (4).
-6. **Spend fixtures** — flash / over-cover / zero-interest samples in `tests/spend-samples.json` must raise.
+5. **Mode-4 accrual reset** — claim-only recreates with `DEPOSIT_SECONDS := now_seconds` so the same hold window cannot be claimed twice.
+6. **Lifecycle** — modes: open (1), withdraw principal (2), exit+interest (3), claim-only recreate (4).
+7. **Spend fixtures** — flash / over-cover / zero-interest samples must raise; three-spend happy-path halves must succeed.
+
+## Trust model (AUTHORIZER_PK)
+
+| Key | Signs | Teaching note |
+| --- | --- | --- |
+| `AUTHORIZER_PK` | Mode / amount / claim intents (`AGG_SIG_ME` 50) | Protocol or operator key in custodial teaching sketches; for a non-custodial variant, require owner-only sigs and drop protocol auth. |
+| `OWNER_PH` | Destination only (curried) | Not a pubkey — puzzle hash funds return to. Interest cannot be redirected. |
+
+Document which key may authorize claim vs withdraw in `docs/SECURITY.md` if you change the trust model.
 
 ## Done when
 
@@ -39,7 +49,8 @@ Templates are **already seeded** into the workspace:
 
 - Rewriting everything into one file with 5× CREATE_COIN
 - Paying interest with a second CREATE_COIN from the vault or treasury
-- Mismatched announcement digests / solution-chosen `claim_msg` on treasury
+- Free `dest_ph` on payout / mismatched announcement digests
+- Mode-4 recreate that keeps the old `DEPOSIT_SECONDS` (double-claim accrual)
 - Same-block flash interest (skip min hold)
 - Common Lisp stubs
 - Burning all 40 steps on rewrites — seed files are the solution; refine and verify

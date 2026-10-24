@@ -1,0 +1,35 @@
+{
+  "description": "Concurrent three-spend claim bundle metadata (vault mode 4 + treasury pay + interest_payout). Individual brun halves live in spend-samples.json; this documents the shared claim-msg so the bundle closes under automation.",
+  "claimMsgForm": "(sha256tree (list 1 owed OWNER_PH))",
+  "placeholders": {
+    "MOD_HASH": "0x1111111111111111111111111111111111111111111111111111111111111111",
+    "PK": "0x2222222222222222222222222222222222222222222222222222222222222222",
+    "TREASURY_PH": "0x3333333333333333333333333333333333333333333333333333333333333333",
+    "OWNER_PH": "0x4444444444444444444444444444444444444444444444444444444444444444"
+  },
+  "bundle": {
+    "name": "claim-only-three-spend",
+    "why": "After MIN_HOLD, vault asserts treasury puzzle announcement; treasury CREATE_PUZZLE_ANNOUNCEMENT + recreates; payout CREATE_COINs interest to OWNER_PH",
+    "halves": [
+      {
+        "path": "puzzles/savings_vault.clsp",
+        "sample": "claim-only-after-hold-ok",
+        "role": "ASSERT_PUZZLE_ANNOUNCEMENT (61) + recreate with now_seconds deposit clock"
+      },
+      {
+        "path": "puzzles/treasury_coin.clsp",
+        "sample": "pay-interest-ok",
+        "role": "ASSERT_MY_AMOUNT (73) + CREATE_PUZZLE_ANNOUNCEMENT (63) + recreate remainder"
+      },
+      {
+        "path": "puzzles/interest_payout.clsp",
+        "sample": "payout-to-owner-ok",
+        "role": "ASSERT_PUZZLE_ANNOUNCEMENT (61) + CREATE_COIN to curried OWNER_PH"
+      }
+    ]
+  },
+  "notes": [
+    "Worker spend fixtures run each half via brun; concurrent mempool / AGG_SIG aggregation is not simulated here.",
+    "claim-msg digests must match across all three puzzles — OWNER_PH is curried on vault+payout and passed on treasury solution."
+  ]
+}

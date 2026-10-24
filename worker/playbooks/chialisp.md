@@ -78,7 +78,7 @@ Notes for a real MTT pool (Mode C):
 3. **Bind the coin** — use `ASSERT_MY_AMOUNT` / `ASSERT_MY_PUZZLEHASH` / `ASSERT_MY_COIN_ID` when amount or lineage must not drift.
 4. **Fail closed** — bad mode / overflow / too many deposits → `(x)`, never a partial spend that leaks value.
 5. **Exact amounts** — integer `quotient` math; last payout gets the remainder so mojos cannot vanish or inflate.
-6. **Treat the solution as hostile** — any atom the spender provides can be attacker-chosen unless covered by a signature or curry constant.
+6. **Treat the solution as hostile** — any atom the spender provides can be attacker-chosen unless covered by a signature or curry constant. For treasury interest, curry `OWNER_PH` into payout — never a free `dest_ph`.
 
 Put a short “Security” subsection in `PLAN.md` or the companion docs answering these six points.
 

@@ -26,6 +26,22 @@ async function writeFile(root, rel, body, written, log, { force = false } = {}) 
   log(`[seed] ${force ? "refreshed" : "wrote"} ${rel}`);
 }
 
+function defunBody(s, name) {
+  const re = new RegExp(`\\(defun\\s+${name}\\b`, "i");
+  const m = re.exec(s);
+  if (!m) return "";
+  let i = m.index;
+  let depth = 0;
+  for (; i < s.length; i++) {
+    if (s[i] === "(") depth += 1;
+    else if (s[i] === ")") {
+      depth -= 1;
+      if (depth === 0) return s.slice(m.index, i + 1);
+    }
+  }
+  return s.slice(m.index);
+}
+
 async function needsClspRefresh(root, rel) {
   try {
     const body = await fs.readFile(path.join(root, rel), "utf8");
@@ -42,6 +58,25 @@ async function needsClspRefresh(root, rel) {
     // Prefer inlined sha256tree (no include dependency for cdv).
     if (!/\(defun\s+sha256tree\b/i.test(body)) return true;
     if (/\bquotient\b/i.test(body)) return true;
+    // v2: owner-bound payout (no free dest_ph in code).
+    const codeOnly = body.replace(/;.*$/gm, "\n");
+    if (/interest_payout\.clsp$/i.test(rel)) {
+      if (!/\bOWNER_PH\b/.test(codeOnly) || /\bdest_ph\b/i.test(codeOnly)) {
+        return true;
+      }
+    }
+    if (/treasury_coin\.clsp$/i.test(rel)) {
+      if (/\bdest_ph\b/i.test(codeOnly) && !/\bOWNER_PH\b/.test(codeOnly)) {
+        return true;
+      }
+    }
+    // v2: mode-4 claim-only must reset DEPOSIT_SECONDS := now_seconds.
+    if (/savings_vault\.clsp$/i.test(rel)) {
+      const claim = defunBody(body, "mode-claim-only");
+      if (claim && /PRINCIPAL\s+DEPOSIT_SECONDS\s+OWNER_PH/i.test(claim)) {
+        return true;
+      }
+    }
     return false;
   } catch {
     return true; // missing → write
@@ -66,7 +101,13 @@ export async function seedTemplatesForGoal(root, goalId, opts = {}) {
     ["PLAN.md", "PLAN.md", false],
     ["README.md", "README.md", false],
     ["docs/SECURITY.md", "docs/SECURITY.md", false],
-    ["tests/spend-samples.json", "tests/spend-samples.json", false],
+    // Always refresh fixtures — v2 owner-bound / three-spend samples.
+    ["tests/spend-samples.json", "tests/spend-samples.json", true],
+    [
+      "tests/three-spend-claim.json",
+      "tests/three-spend-claim.json",
+      true,
+    ],
     // Always refresh include — required for cdv.
     ["include/sha256tree.clib", "include/sha256tree.clib", true],
     [
