@@ -1133,7 +1133,40 @@ export async function runAgentJob({
     }
 
     // General Q&A should not litter the project workspace with scaffold files.
-    const files = isGeneral ? [] : await collectLocalFiles(root);
+    let files = isGeneral ? [] : await collectLocalFiles(root);
+
+    // Treasury jobs: drop leftover MTT-style secure_treasury.clsp stubs that fail
+    // sibling CREATE_COIN checks when the real puzzles/ pair is present.
+    if (goal.id === "secure_treasury" && !isGeneral) {
+      const hasVault = files.some((f) =>
+        /puzzles\/savings_vault\.clsp$/i.test(f.path),
+      );
+      const stubPaths = files
+        .filter(
+          (f) =>
+            /^secure_treasury\.clsp$/i.test(f.path) ||
+            /^pool_coin\.clsp$/i.test(f.path),
+        )
+        .map((f) => f.path);
+      if (hasVault && stubPaths.length) {
+        for (const rel of stubPaths) {
+          try {
+            await fs.unlink(path.join(root, rel));
+            log(`[agent] removed leftover stub ${rel}`);
+          } catch {
+            /* ignore */
+          }
+        }
+        files = files.filter((f) => !stubPaths.includes(f.path));
+        finalMessage += [
+          "",
+          "## Cleanup",
+          "",
+          `Removed leftover stub(s): ${stubPaths.map((p) => `\`${p}\``).join(", ")} (use \`puzzles/savings_vault.clsp\` + \`puzzles/treasury_coin.clsp\`).`,
+        ].join("\n");
+      }
+    }
+
     if (!isGeneral) {
       const verification = verifyWorkspaceFiles(files, {
         // Always require a documented hash on hard tasks when tooling is mandated.
