@@ -43,16 +43,28 @@ recovery keys. Medical/legal/financial topics = general info only + suggest prof
 const GENERAL_QNA_RULES = `
 This turn is everyday Q&A / local how-to — NOT a coding job.
 - Do NOT create PLAN.md, README.md, src/, apps, or other code scaffolds.
-- Do NOT tell the user to "just Google it". YOU research and synthesize the best practical answer.
-- BEFORE {"done":true}: call web_search at least once (and fetch_url for the best official page when useful).
+- Do NOT tell the user to "just Google it" or "research online". YOU do the research and recommend a clear path.
+- BEFORE {"done":true}:
+  1) web_search at least twice with specific queries (include city + province + product)
+  2) fetch_url at least one official / primary page from those results (e.g. icbc.com for BC vehicles)
+- URL honesty: ONLY cite links that appeared in web_search or fetch_url observations. Never invent or remix URLs. If unsure, omit the link and name the organization.
+- When the user asks what is best / cheapest / most affordable:
+  - Compare 2–4 real purchase PATHS (e.g. ICBC Autoplan broker vs BCAA vs independent broker vs aggregator), not vague brand name-drops
+  - Explain what is mandatory vs optional in that jurisdiction
+  - List cost drivers (cc/class, experience, claims, storage, commute, coverage limits)
+  - Give a ranked recommendation for the *process* to get the lowest honest price (which quotes to get, in what order)
+  - Do NOT invent dollar premiums. Say exact price needs their details via a licensed quote.
+  - End with a short "best next move for you" based on the bike/city they named
 - Structure the final markdown as:
-  1) Direct answer first (who / what / where for their city or region)
-  2) Concrete steps (documents, phone/office/online path, what to compare)
-  3) Caveats (licensing vs advice; say when a licensed broker/agent is required)
-  4) ## Next steps — numbered actions the user can take today
-- Prefer official/government and well-known local providers (e.g. ICBC for BC auto/motorcycle).
-- If search results are thin, try a second more specific query (include city + province + product).
+  1) Direct recommendation (best path for their case)
+  2) Comparison table or bullets: option → pros/cons → when it wins
+  3) How to get comparable quotes (documents to bring, questions to ask)
+  4) Caveats (advice vs binding insurance; licensed broker when required)
+  5) ## Next steps — numbered actions today
 `.trim();
+
+const SHOPPING_HINT =
+  /\b(best|cheap|cheapest|affordable|lowest|compare|comparison|which|vs\b|versus|quote|quotes|buy|purchase|insurance|broker|price|cost)\b/i;
 
 const QUALITY_RULES = `
 Quality rules:
@@ -631,7 +643,12 @@ export async function runAgentJob({
     const goal = inferGoal(job.prompt);
     const hardTask = goal.hard;
     const isGeneral = goal.id === "general";
-    const stepLimit = hardTask ? HARD_TASK_STEPS : MAX_STEPS;
+    const isShopping = isGeneral && SHOPPING_HINT.test(job.prompt || "");
+    const stepLimit = hardTask
+      ? HARD_TASK_STEPS
+      : isShopping
+        ? Math.max(MAX_STEPS, 16)
+        : MAX_STEPS;
     const playbook = await loadPlaybooks(goal.playbooks);
     const hasCdv = goal.wantCdv ? await cdvAvailable() : false;
     if (playbook) {
@@ -658,6 +675,25 @@ export async function runAgentJob({
     let finalMessage = "";
     let stepsUsed = 0;
     let researchSteps = 0;
+    let searchSteps = 0;
+    let fetchSteps = 0;
+    /** @type {Set<string>} */
+    const knownUrls = new Set();
+
+    const rememberUrls = (text) => {
+      const re = /https?:\/\/[^\s\)\]\>\"']+/gi;
+      let m;
+      while ((m = re.exec(String(text || "")))) {
+        const u = m[0].replace(/[.,;]+$/, "");
+        knownUrls.add(u);
+        try {
+          const host = new URL(u).hostname.replace(/^www\./, "");
+          if (host) knownUrls.add(host);
+        } catch {
+          /* ignore */
+        }
+      }
+    };
 
     for (let step = 0; step < stepLimit; step++) {
       stepsUsed = step + 1;
@@ -711,15 +747,42 @@ export async function runAgentJob({
       }
 
       if (action.done) {
-        if (isGeneral && researchSteps < 1) {
+        if (isGeneral && searchSteps < (isShopping ? 2 : 1)) {
           messages.push({
             role: "user",
-            content:
-              'You must research before finishing. Call web_search now with a specific query that includes the city/region and product (e.g. "motorcycle insurance Victoria BC ICBC"), then synthesize a concrete answer. Do not tell the user to Google it themselves.',
+            content: isShopping
+              ? 'Not done yet. For best/affordable shopping questions you need at least TWO web_search calls (e.g. "ICBC motorcycle insurance BC requirements" and "Victoria BC motorcycle insurance broker quote"), then fetch_url an official page, THEN compare purchase paths. Do not invent prices or URLs.'
+              : 'You must research before finishing. Call web_search now with a specific query that includes the city/region and product (e.g. "motorcycle insurance Victoria BC ICBC"), then synthesize a concrete answer. Do not tell the user to Google it themselves.',
           });
           continue;
         }
-        finalMessage = String(action.message || content);
+        if (isShopping && fetchSteps < 1) {
+          messages.push({
+            role: "user",
+            content:
+              "Not done yet. fetch_url at least one official page from your search results (prefer icbc.com or another primary insurer/broker page that appeared in OBSERVATION), then write a ranked comparison of purchase paths with a clear best-next-move. Only cite URLs from observations.",
+          });
+          continue;
+        }
+        let draft = String(action.message || content);
+        if (isGeneral && knownUrls.size > 0) {
+          // Drop markdown links whose URL never appeared in tool output.
+          draft = draft.replace(
+            /\[([^\]]+)\]\((https?:\/\/[^)]+)\)/g,
+            (full, label, url) => {
+              const clean = url.replace(/[.,;]+$/, "");
+              let host = "";
+              try {
+                host = new URL(clean).hostname.replace(/^www\./, "");
+              } catch {
+                return label;
+              }
+              if (knownUrls.has(clean) || knownUrls.has(host)) return full;
+              return `${label} (${host} — verify; link not confirmed in research)`;
+            },
+          );
+        }
+        finalMessage = draft;
         await emit("status", "Finishing answer");
         break;
       }
@@ -753,9 +816,14 @@ export async function runAgentJob({
       } else if (tool === "web_search") {
         observation = await webSearch(args.query);
         researchSteps += 1;
+        searchSteps += 1;
+        rememberUrls(observation);
       } else if (tool === "fetch_url") {
         observation = await fetchUrl(args.url);
         researchSteps += 1;
+        fetchSteps += 1;
+        rememberUrls(String(args.url || ""));
+        rememberUrls(observation);
       } else if (isGeneral && (tool === "write_file" || tool === "run")) {
         observation =
           "ERROR: this is a general Q&A turn — do not create code or run shell. Use web_search / fetch_url, then {" +

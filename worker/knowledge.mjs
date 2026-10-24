@@ -229,7 +229,7 @@ export const KNOWLEDGE_CHUNKS = [
       "motorcycle",
       "quote",
     ],
-    text: `Local how-tos: include city + province/state in search queries; prefer official .gov / crown corp pages; list documents needed; give phone/online/in-person paths; end with ## Next steps the user can do today. Insurance/legal is guidance only — recommend a licensed broker/agent for binding quotes.`,
+    text: `Local how-tos: include city + province/state in search queries; prefer official .gov / crown corp pages; list documents needed; give phone/online/in-person paths; end with ## Next steps the user can do today. Insurance/legal is guidance only — recommend a licensed broker/agent for binding quotes. For "best/cheapest": compare purchase PATHS (mandatory basic vs optional add-ons), cost drivers, and the order of quotes to get — never invent premiums or remix URLs; only cite links returned by search/fetch.`,
   },
   {
     id: "pb-1",
