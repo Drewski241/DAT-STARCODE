@@ -25,6 +25,7 @@ import {
   toolingFailureLines,
 } from "./tooling.mjs";
 import { seedTemplatesForGoal } from "./seed-templates.mjs";
+import { runSecureTreasurySpendFixtures } from "./spend-fixtures.mjs";
 
 const MAX_STEPS = Number(process.env.AGENT_MAX_STEPS || 12);
 const HARD_TASK_STEPS = Number(process.env.AGENT_HARD_TASK_STEPS || 40);
@@ -1132,6 +1133,23 @@ export async function runAgentJob({
       log("[agent] hash-doc skipped — cdv required but not available");
     }
 
+    // Deterministic fail-closed spend samples for secure treasury (flash / cover / zero).
+    /** @type {{ ok: boolean, message: string, results?: any[] }|null} */
+    let spendFx = null;
+    if (goal.id === "secure_treasury") {
+      try {
+        spendFx = await runSecureTreasurySpendFixtures(root, { log });
+        log(`[agent] spend-fixtures: ${spendFx.message}`);
+      } catch (err) {
+        spendFx = {
+          ok: false,
+          message: `spend fixtures error: ${err instanceof Error ? err.message : String(err)}`,
+          results: [],
+        };
+        log(`[agent] spend-fixtures error: ${spendFx.message}`);
+      }
+    }
+
     // General Q&A should not litter the project workspace with scaffold files.
     let files = isGeneral ? [] : await collectLocalFiles(root);
 
@@ -1176,7 +1194,20 @@ export async function runAgentJob({
         toolingMissing: tooling?.missing,
         strictSingleton:
           goal.id === "secure_treasury" || goal.id === "mtt_pool",
+        secureTreasury: goal.id === "secure_treasury",
       });
+      if (spendFx && !spendFx.ok) {
+        verification.ok = false;
+        verification.failures.push(
+          spendFx.message,
+          ...(spendFx.results || [])
+            .filter((r) => !r.ok)
+            .map(
+              (r) =>
+                `spend fixture: ${r.path}${r.name ? ` :: ${r.name}` : ""}${r.why ? ` — ${r.why}` : ""}${r.error ? ` (${r.error})` : ""}`,
+            ),
+        );
+      }
       if (!verification.ok) {
         log(`[agent] verification failed: ${verification.failures.join("; ")}`);
         finalMessage += [

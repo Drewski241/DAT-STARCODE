@@ -84,3 +84,10 @@ Put a short “Security” subsection in `PLAN.md` or the companion docs answeri
 ## Docs companion
 
 Document the bare puzzle hash in `docs/PUZZLE_HASH.md` under `## Puzzle hash`. For MTT-style pools, also document curry order, deposit/settle atoms, and a numeric example in docs as needed.
+
+## Create / test / secure loop
+
+1. Write or refine `.clsp` (start from templates when seeded).
+2. `clvm_verify` / `spend_check` — fail-closed samples must `(x)` / FAIL.
+3. `puzzle_hash` (cdv) — bare hex in `docs/PUZZLE_HASH.md`; recreation must use `(sha256tree (c MOD_HASH (list …)))` and match curry.
+4. For multi-coin protocols: every `CREATE_PUZZLE_ANNOUNCEMENT` (63) needs a matching `ASSERT_PUZZLE_ANNOUNCEMENT` (61) on a concurrent spend; bind amounts with `ASSERT_MY_AMOUNT` (73).

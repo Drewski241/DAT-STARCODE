@@ -1,0 +1,36 @@
+; Interest payout — third spend in the vault↔treasury claim bundle.
+;
+; Asserts the treasury CREATE_PUZZLE_ANNOUNCEMENT, then CREATE_COINs interest
+; to OWNER_PH. Exactly one CREATE_COIN. No lineage fork.
+;
+; Curry: AUTHORIZER_PK TREASURY_PH
+; Solution: interest_amount dest_ph
+; claim_msg = (sha256tree (list 1 interest_amount dest_ph)) — must match treasury.
+
+(mod (
+  AUTHORIZER_PK
+  TREASURY_PH
+  interest_amount
+  dest_ph
+)
+
+  (defun assert-b32 (atom)
+    (if (= (strlen atom) 32) atom (x))
+  )
+
+  (defun assert-pos (n)
+    (if (> n 0) n (x))
+  )
+
+  (defun claim-msg (owed dest)
+    (sha256tree (list 1 (assert-pos owed) (assert-b32 dest)))
+  )
+
+  (list
+    (list 50 AUTHORIZER_PK
+      (sha256tree (list interest_amount dest_ph)))
+    (list 61
+      (sha256 (assert-b32 TREASURY_PH) (claim-msg interest_amount dest_ph)))
+    (list 51 (assert-b32 dest_ph) (assert-pos interest_amount))
+  )
+)

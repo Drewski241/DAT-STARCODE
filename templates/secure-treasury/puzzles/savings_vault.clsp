@@ -2,15 +2,22 @@
 ;
 ; CircuitDAO-class fixes:
 ;   A) Exactly ONE (list 51 …) CREATE_COIN in each returned condition list
-;   B) DEPOSIT_SECONDS curried; mode 3 needs MIN_HOLD_SECONDS elapsed
+;   B) DEPOSIT_SECONDS curried; interest modes need MIN_HOLD_SECONDS elapsed
 ;   C) Interest = principal * bps * elapsed / (10000 * year) — never solution "discounted balance"
-;   D) Dest puzzle hashes must be 32-byte atoms
-;   E) Interest paid by concurrent treasury spend (announcement), not a second vault child
+;   D) Dest puzzle hashes must be 32-byte atoms; withdraw/claim pay OWNER_PH only
+;   E) Interest paid by concurrent treasury + interest_payout spends (puzzle announcements)
 ;
 ; Curry: MOD_HASH AUTHORIZER_PK MIN_HOLD_SECONDS INTEREST_BPS TREASURY_PH
 ;        PRINCIPAL DEPOSIT_SECONDS OWNER_PH
-; Solution: mode now_seconds dest_ph
-;   1 deposit/recreate  2 withdraw principal  3 withdraw + announce interest claim
+; Solution: mode now_seconds
+;   1 open/recreate (set DEPOSIT_SECONDS := now_seconds)
+;   2 withdraw principal → OWNER_PH (no interest)
+;   3 withdraw principal → OWNER_PH + assert treasury interest announcement
+;   4 claim interest only (recreate same vault; payout coin receives interest)
+;
+; MOD_HASH must be the treehash of this uncurried mod. Recreation uses
+;   (sha256tree (c MOD_HASH (list …curried args…)))
+; Confirm with: cdv clsp build && cdv clsp curry … (puzzle_hash tool).
 
 (mod (
   MOD_HASH
@@ -23,7 +30,6 @@
   OWNER_PH
   mode
   now_seconds
-  dest_ph
 )
 
   (defun assert-b32 (atom)
@@ -38,13 +44,20 @@
     (quotient (* (* principal bps) elapsed) (* 10000 31536000))
   )
 
+  ; Real curry treehash shape (not sha256tree of a flat list).
   (defun vault-ph (mod_hash auth min_hold bps treasury_ph principal deposit_seconds owner_ph)
     (sha256tree
-      (list mod_hash auth min_hold bps treasury_ph principal deposit_seconds owner_ph)
+      (c mod_hash
+        (list auth min_hold bps treasury_ph principal deposit_seconds owner_ph)
+      )
     )
   )
 
-  (defun mode-deposit ()
+  (defun claim-msg (owed dest_ph)
+    (sha256tree (list 1 (assert-pos owed) (assert-b32 dest_ph)))
+  )
+
+  (defun mode-open ()
     (list
       (list 50 AUTHORIZER_PK (sha256tree (list 1 now_seconds PRINCIPAL)))
       (list 51
@@ -57,21 +70,43 @@
 
   (defun mode-withdraw ()
     (list
-      (list 50 AUTHORIZER_PK (sha256tree (list 2 now_seconds dest_ph)))
-      (list 51 (assert-b32 dest_ph) (assert-pos PRINCIPAL))
+      (list 50 AUTHORIZER_PK (sha256tree (list 2 now_seconds OWNER_PH)))
+      (list 51 (assert-b32 OWNER_PH) (assert-pos PRINCIPAL))
     )
   )
 
-  (defun mode-claim-interest (elapsed owed)
+  (defun mode-exit-with-interest (elapsed owed)
     (if (> elapsed (- MIN_HOLD_SECONDS 1))
       (if (> owed 0)
         (list
           (list 50 AUTHORIZER_PK
-            (sha256tree (list 3 now_seconds dest_ph owed)))
+            (sha256tree (list 3 now_seconds owed OWNER_PH)))
           (list 81 now_seconds)
-          (list 51 (assert-b32 dest_ph) (assert-pos PRINCIPAL))
-          (list 60
-            (sha256tree (list TREASURY_PH owed (assert-b32 dest_ph))))
+          (list 51 (assert-b32 OWNER_PH) (assert-pos PRINCIPAL))
+          (list 61
+            (sha256 (assert-b32 TREASURY_PH) (claim-msg owed OWNER_PH)))
+        )
+        (x)
+      )
+      (x)
+    )
+  )
+
+  ; Keep principal in vault; concurrent interest_payout receives owed.
+  (defun mode-claim-only (elapsed owed)
+    (if (> elapsed (- MIN_HOLD_SECONDS 1))
+      (if (> owed 0)
+        (list
+          (list 50 AUTHORIZER_PK
+            (sha256tree (list 4 now_seconds owed OWNER_PH)))
+          (list 81 now_seconds)
+          (list 51
+            (vault-ph MOD_HASH AUTHORIZER_PK MIN_HOLD_SECONDS INTEREST_BPS TREASURY_PH
+              PRINCIPAL DEPOSIT_SECONDS OWNER_PH)
+            (assert-pos PRINCIPAL)
+          )
+          (list 61
+            (sha256 (assert-b32 TREASURY_PH) (claim-msg owed OWNER_PH)))
         )
         (x)
       )
@@ -80,18 +115,27 @@
   )
 
   (if (= mode 1)
-    (mode-deposit)
+    (mode-open)
     (if (= mode 2)
       (mode-withdraw)
       (if (= mode 3)
         (if (> now_seconds DEPOSIT_SECONDS)
-          (mode-claim-interest
+          (mode-exit-with-interest
             (- now_seconds DEPOSIT_SECONDS)
             (interest-due PRINCIPAL (- now_seconds DEPOSIT_SECONDS) INTEREST_BPS)
           )
           (x)
         )
-        (x)
+        (if (= mode 4)
+          (if (> now_seconds DEPOSIT_SECONDS)
+            (mode-claim-only
+              (- now_seconds DEPOSIT_SECONDS)
+              (interest-due PRINCIPAL (- now_seconds DEPOSIT_SECONDS) INTEREST_BPS)
+            )
+            (x)
+          )
+          (x)
+        )
       )
     )
   )

@@ -2,6 +2,8 @@
  * Lightweight post-job checks for niche deliverables (e.g. ChiaLisp).
  */
 
+import { secureTreasuryFailures } from "./secure-checks.mjs";
+
 const COMMON_LISP_BAD =
   /\b(defparameter|defvar|mapcar|progn|setf|getf|loop\s+for)\b|\(let\*/i;
 const INDEX_SYNTAX = /\w+\s*\[\s*\d+\s*\]/;
@@ -62,6 +64,7 @@ export function findBarePuzzleHash(text) {
  *   toolingOk?: boolean,
  *   toolingMissing?: string[],
  *   strictSingleton?: boolean,
+ *   secureTreasury?: boolean,
  * }} [opts]
  * @returns {{ ok: boolean, failures: string[], warnings: string[] }}
  */
@@ -70,6 +73,9 @@ export function verifyWorkspaceFiles(files, opts = {}) {
   const warnings = [];
   const clspFiles = files.filter((f) => /\.clsp$/i.test(f.path));
   const strictSingleton = Boolean(opts.strictSingleton);
+  const secureTreasury =
+    Boolean(opts.secureTreasury) ||
+    clspFiles.some((f) => /puzzles\/savings_vault\.clsp$/i.test(f.path));
 
   for (const f of clspFiles) {
     const body = String(f.content || "");
@@ -155,6 +161,10 @@ export function verifyWorkspaceFiles(files, opts = {}) {
         "## Puzzle hash must contain a bare 64-char hex from puzzle_hash/cdv (no 0x prefix / no placeholders)",
       );
     }
+  }
+
+  if (secureTreasury) {
+    failures.push(...secureTreasuryFailures(files));
   }
 
   return { ok: failures.length === 0, failures, warnings };

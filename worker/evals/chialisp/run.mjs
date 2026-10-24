@@ -10,6 +10,9 @@ import { fileURLToPath } from "url";
 import { verifyWorkspaceFiles } from "../../verify.mjs";
 import { findBarePuzzleHash } from "../../verify.mjs";
 import { inferGoal } from "../../goals.mjs";
+import { secureTreasuryFailures } from "../../secure-checks.mjs";
+import { promises as fsRoot } from "fs";
+import pathRoot from "path";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const fixtures = path.join(here, "fixtures");
@@ -151,8 +154,31 @@ try {
   );
 }
 
+try {
+  const tpl = pathRoot.join(here, "../../../templates/secure-treasury/puzzles");
+  const vault = await fsRoot.readFile(pathRoot.join(tpl, "savings_vault.clsp"), "utf8");
+  const treasury = await fsRoot.readFile(
+    pathRoot.join(tpl, "treasury_coin.clsp"),
+    "utf8",
+  );
+  const missing = secureTreasuryFailures([
+    { path: "puzzles/savings_vault.clsp", content: vault },
+    { path: "puzzles/treasury_coin.clsp", content: treasury },
+  ]);
+  assert.ok(
+    missing.some((f) => /interest_payout/.test(f)),
+    "expected missing interest_payout failure",
+  );
+  console.log("ok  trap-missing-payout");
+} catch (err) {
+  failed += 1;
+  console.error(
+    `FAIL trap-missing-payout: ${err instanceof Error ? err.message : err}`,
+  );
+}
+
 if (failed) {
   console.error(`\n${failed} eval case(s) failed`);
   process.exit(1);
 }
-console.log(`\nchialisp evals: ${cases.length + 2} passed`);
+console.log(`\nchialisp evals: ${cases.length + 3} passed`);

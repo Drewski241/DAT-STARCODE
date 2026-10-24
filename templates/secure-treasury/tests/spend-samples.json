@@ -1,0 +1,55 @@
+{
+  "description": "Deterministic brun/run samples for secure treasury. 32-byte atoms are hex strings; worker spend_check loads these for secure_treasury goals.",
+  "notes": [
+    "Full mempool simulation is out of scope — these catch raise/FAIL and condition shape regressions.",
+    "Replace PK/PH placeholders with real 32-byte values when currying for cdv."
+  ],
+  "placeholders": {
+    "MOD_HASH": "0x1111111111111111111111111111111111111111111111111111111111111111",
+    "PK": "0x2222222222222222222222222222222222222222222222222222222222222222",
+    "TREASURY_PH": "0x3333333333333333333333333333333333333333333333333333333333333333",
+    "OWNER_PH": "0x4444444444444444444444444444444444444444444444444444444444444444"
+  },
+  "programs": {
+    "puzzles/savings_vault.clsp": {
+      "samples": [
+        {
+          "name": "flash-interest-must-raise",
+          "mode": "run",
+          "expectFail": true,
+          "solution": "(0x1111111111111111111111111111111111111111111111111111111111111111 0x2222222222222222222222222222222222222222222222222222222222222222 86400 500 0x3333333333333333333333333333333333333333333333333333333333333333 1000000 1700000000 0x4444444444444444444444444444444444444444444444444444444444444444 3 1700000001)",
+          "why": "elapsed < MIN_HOLD_SECONDS — same-block flash claim must (x)"
+        },
+        {
+          "name": "bad-mode-must-raise",
+          "mode": "run",
+          "expectFail": true,
+          "solution": "(0x1111111111111111111111111111111111111111111111111111111111111111 0x2222222222222222222222222222222222222222222222222222222222222222 86400 500 0x3333333333333333333333333333333333333333333333333333333333333333 1000000 1700000000 0x4444444444444444444444444444444444444444444444444444444444444444 99 1700100000)",
+          "why": "unknown mode fails closed"
+        }
+      ]
+    },
+    "puzzles/treasury_coin.clsp": {
+      "samples": [
+        {
+          "name": "interest-exceeds-amount-must-raise",
+          "mode": "run",
+          "expectFail": true,
+          "solution": "(0x1111111111111111111111111111111111111111111111111111111111111111 0x2222222222222222222222222222222222222222222222222222222222222222 1 100 500 0x4444444444444444444444444444444444444444444444444444444444444444)",
+          "why": "treasury_amount must cover interest"
+        }
+      ]
+    },
+    "puzzles/interest_payout.clsp": {
+      "samples": [
+        {
+          "name": "zero-interest-must-raise",
+          "mode": "run",
+          "expectFail": true,
+          "solution": "(0x2222222222222222222222222222222222222222222222222222222222222222 0x3333333333333333333333333333333333333333333333333333333333333333 0 0x4444444444444444444444444444444444444444444444444444444444444444)",
+          "why": "assert-pos on interest_amount"
+        }
+      ]
+    }
+  }
+}

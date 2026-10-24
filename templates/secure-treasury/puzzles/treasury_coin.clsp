@@ -1,11 +1,15 @@
 ; Singleton-safe treasury coin (educational, not Circuit source).
 ;
 ; Exactly ONE CREATE_COIN: recreate treasury with amount - interest.
-; Interest leaves via concurrent payout that asserts our announcement —
-; never a second CREATE_COIN from this puzzle (lineage-spoof class).
+; Interest leaves via concurrent puzzles/interest_payout.clsp that asserts
+; our CREATE_PUZZLE_ANNOUNCEMENT — never a second CREATE_COIN here.
 ;
 ; Curry: MOD_HASH AUTHORIZER_PK
-; Solution: mode amount interest_amount dest_ph claim_msg
+; Solution: mode amount interest_amount dest_ph
+;
+; claim_msg is derived on-chain (not a free solution atom):
+;   (sha256tree (list 1 interest_amount dest_ph))
+; Must match savings_vault claim-msg / interest_payout assert.
 
 (mod (
   MOD_HASH
@@ -14,7 +18,6 @@
   amount
   interest_amount
   dest_ph
-  claim_msg
 )
 
   (defun assert-b32 (atom)
@@ -25,19 +28,27 @@
     (if (> n 0) n (x))
   )
 
+  (defun claim-msg (owed dest)
+    (sha256tree (list 1 (assert-pos owed) (assert-b32 dest)))
+  )
+
+  (defun treasury-ph (mod_hash auth)
+    (sha256tree (c mod_hash (list auth)))
+  )
+
   (defun pay-interest ()
     (if (> interest_amount 0)
       (if (> amount (- interest_amount 1))
         (list
+          ; Bind the coin — do not trust solution amount alone.
+          (list 73 amount)
           (list 50 AUTHORIZER_PK
-            (sha256tree (list mode amount interest_amount dest_ph claim_msg)))
-          (list 62 claim_msg)
+            (sha256tree (list mode amount interest_amount dest_ph)))
+          (list 63 (claim-msg interest_amount dest_ph))
           (list 51
-            (sha256tree (list MOD_HASH AUTHORIZER_PK))
+            (treasury-ph MOD_HASH AUTHORIZER_PK)
             (- amount interest_amount)
           )
-          (list 60
-            (sha256tree (list (assert-b32 dest_ph) (assert-pos interest_amount))))
         )
         (x)
       )

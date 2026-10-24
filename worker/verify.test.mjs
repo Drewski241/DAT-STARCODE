@@ -130,22 +130,28 @@ const treasury = readFileSync(
   path.join(here, "../templates/secure-treasury/puzzles/treasury_coin.clsp"),
   "utf8",
 );
+const payout = readFileSync(
+  path.join(here, "../templates/secure-treasury/puzzles/interest_payout.clsp"),
+  "utf8",
+);
 assert.equal(hasSiblingCreateCoins(vault), false);
 assert.equal(hasSiblingCreateCoins(treasury), false);
+assert.equal(hasSiblingCreateCoins(payout), false);
 
 const strictOk = verifyWorkspaceFiles(
   [
     { path: "puzzles/savings_vault.clsp", content: vault },
     { path: "puzzles/treasury_coin.clsp", content: treasury },
+    { path: "puzzles/interest_payout.clsp", content: payout },
     {
       path: "docs/PUZZLE_HASH.md",
       content:
         "## Puzzle hash\n\n`aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa`\n",
     },
   ],
-  { requireHash: true, strictSingleton: true },
+  { requireHash: true, strictSingleton: true, secureTreasury: true },
 );
-assert.equal(strictOk.ok, true);
+assert.equal(strictOk.ok, true, JSON.stringify(strictOk.failures));
 
 const strictBad = verifyWorkspaceFiles(
   [{ path: "puzzles/bad.clsp", content: badSiblings }],

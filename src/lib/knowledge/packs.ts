@@ -178,7 +178,28 @@ Never invent hashes or skip tools when the worker reports tooling missing.`,
     text: `CircuitDAO treasury was drained via savings↔treasury logic (not L1). Two classes:
 A) Multiple CREATE_COIN from a vault → forged curried DISCOUNTED_BALANCE sibling; lineage still proves; treasury pays fake interest. Fix: exactly one CREATE_COIN child.
 B) Same-block flash deposit/withdraw claiming interest. Fix: curry deposit time; require min hold; compute interest from principal×rate×elapsed only.
-Also: type-check 32-byte puzzle hashes. See templates/secure-treasury/.`,
+Also: type-check 32-byte puzzle hashes; bind OWNER_PH on withdraw; treasury ASSERT_MY_AMOUNT; match puzzle announcements (63/61) across vault + treasury + interest_payout; recreate with (sha256tree (c MOD_HASH (list …))) and confirm via cdv. See templates/secure-treasury/ and tests/spend-samples.json.`,
+  },
+  {
+    id: "cl-10",
+    pack: "chialisp",
+    title: "Create / test / secure loop",
+    keywords: [
+      "spend_check",
+      "fixture",
+      "announcement",
+      "treehash",
+      "curry",
+      "assert_my_amount",
+      "interest_payout",
+    ],
+    text: `DAT STARCODER ChiaLisp loop:
+1. Seed or write .clsp (prefer templates/secure-treasury for vault work).
+2. Static verify: sibling CREATE_COIN, OWNER_PH binding, ASSERT_MY_AMOUNT, announcement pairing, curry (c MOD_HASH) shape.
+3. spend_check / spend fixtures: flash and over-pay samples must raise; document why.
+4. puzzle_hash (cdv): bare hex in docs/PUZZLE_HASH.md; recreation hash must match curry.
+5. Closable bundles need every announcement create matched by an assert on a concurrent spend — include interest_payout.clsp when vault claims treasury interest.
+Not a full mempool simulator; use fixtures + cdv, then testnet for aggregation.`,
   },
   {
     id: "ops-nav",

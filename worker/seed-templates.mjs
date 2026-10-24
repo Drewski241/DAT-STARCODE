@@ -41,6 +41,8 @@ export async function seedTemplatesForGoal(root, goalId, opts = {}) {
     ["docs/SECURITY.md", "docs/SECURITY.md"],
     ["puzzles/savings_vault.clsp", "puzzles/savings_vault.clsp"],
     ["puzzles/treasury_coin.clsp", "puzzles/treasury_coin.clsp"],
+    ["puzzles/interest_payout.clsp", "puzzles/interest_payout.clsp"],
+    ["tests/spend-samples.json", "tests/spend-samples.json"],
     [
       "puzzles/savings_vault.clsp",
       "templates/secure-treasury/puzzles/savings_vault.clsp",
@@ -48,6 +50,10 @@ export async function seedTemplatesForGoal(root, goalId, opts = {}) {
     [
       "puzzles/treasury_coin.clsp",
       "templates/secure-treasury/puzzles/treasury_coin.clsp",
+    ],
+    [
+      "puzzles/interest_payout.clsp",
+      "templates/secure-treasury/puzzles/interest_payout.clsp",
     ],
   ];
 
