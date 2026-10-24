@@ -123,7 +123,18 @@ export async function puzzleHashWithCdv(root, relPath, opts = {}) {
     return { ok: false, available: true, message: `file not found: ${safe}` };
   }
 
-  const build = await run("cdv", ["clsp", "build", safe], {
+  // Prefer workspace include/ (seeded sha256tree.clib) then template include/.
+  const includeFlags = [];
+  for (const inc of ["include", "templates/secure-treasury/include"]) {
+    try {
+      await fs.access(path.join(root, inc));
+      includeFlags.push("-i", inc);
+    } catch {
+      /* missing */
+    }
+  }
+
+  const build = await run("cdv", ["clsp", "build", safe, ...includeFlags], {
     cwd: root,
     timeoutMs: 90_000,
   });

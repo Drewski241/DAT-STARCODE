@@ -99,21 +99,8 @@ export async function ensurePuzzleHashDocumented(root, opts = {}) {
     await fs.mkdir(path.join(root, "docs"), { recursive: true });
   }
 
-  const already = findBarePuzzleHash(existing);
-  if (already) {
-    // Ensure canonical path exists even if we only had legacy content in memory.
-    const next = upsertPuzzleHashSection(existing, already);
-    await fs.writeFile(path.join(root, docsPath), next, "utf8");
-    return {
-      ok: true,
-      path: clspPath,
-      puzzleHash: already,
-      docsPath,
-      message: `docs already have bare puzzle hash ${already}`,
-    };
-  }
-
-  // Two-phase when possible: uncurried mod → default curry args → curried PH.
+  // Always re-hash with cdv — do not trust a pre-written / stale docs hash
+  // (models sometimes copy an old 64-hex into PUZZLE_HASH.md).
   const result = await puzzleHashWithCdv(root, clspPath, {});
   if (!result.puzzleHash) {
     log(`[hash-doc] cdv did not return a hash for ${clspPath}: ${result.message}`);
@@ -126,15 +113,21 @@ export async function ensurePuzzleHashDocumented(root, opts = {}) {
     };
   }
 
+  const prior = findBarePuzzleHash(existing);
   const next = upsertPuzzleHashSection(existing, result.puzzleHash);
   await fs.writeFile(path.join(root, docsPath), next, "utf8");
-  log(`[hash-doc] wrote ${result.puzzleHash} into ${docsPath}`);
+  const note =
+    prior && prior !== result.puzzleHash
+      ? ` (replaced stale docs hash ${prior})`
+      : "";
+  log(`[hash-doc] wrote ${result.puzzleHash} into ${docsPath}${note}`);
   return {
     ok: true,
     path: clspPath,
     puzzleHash: result.puzzleHash,
     docsPath,
-    message: `documented puzzle hash ${result.puzzleHash}`,
+    curried: Boolean(result.curried),
+    message: `documented puzzle hash ${result.puzzleHash}${note}`,
   };
 }
 

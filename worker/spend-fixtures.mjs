@@ -58,14 +58,25 @@ function isCompileFailure(row) {
  * @param {string} rel
  */
 async function compileClsp(workspaceRoot, rel) {
-  const build = await run("cdv", ["clsp", "build", rel], {
+  const includeFlags = [];
+  for (const inc of ["include", "templates/secure-treasury/include"]) {
+    try {
+      await fs.access(path.join(workspaceRoot, inc));
+      includeFlags.push("-i", inc);
+    } catch {
+      /* missing */
+    }
+  }
+  const build = await run("cdv", ["clsp", "build", rel, ...includeFlags], {
     cwd: workspaceRoot,
     timeoutMs: 90_000,
   });
   const hexRel = `${rel}.hex`;
   try {
     const hex = (await fs.readFile(path.join(workspaceRoot, hexRel), "utf8")).trim();
-    if (hex) return { ok: true, program: hex, hexRel, log: `${build.stdout}\n${build.stderr}` };
+    if (hex && build.code === 0) {
+      return { ok: true, program: hex, hexRel, log: `${build.stdout}\n${build.stderr}` };
+    }
   } catch {
     /* fall through */
   }

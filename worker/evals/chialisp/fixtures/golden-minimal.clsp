@@ -1,4 +1,5 @@
 ; Golden: minimal valid ChiaLisp shape (not a full pool).
+; Inline tree-hash so this fixture does not need cdv includes.
 (mod (
   AUTHORIZER_PK
   DEST_PUZZLE_HASH
@@ -6,6 +7,12 @@
   ; solution
   mode
 )
+  (defun sha256tree (TREE)
+    (if (l TREE)
+      (sha256 2 (sha256tree (f TREE)) (sha256tree (r TREE)))
+      (sha256 1 TREE)
+    )
+  )
   (if (= mode 1)
     (list
       (list 50 AUTHORIZER_PK (sha256tree (list DEST_PUZZLE_HASH AMOUNT)))

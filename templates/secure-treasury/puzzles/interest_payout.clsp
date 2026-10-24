@@ -6,6 +6,8 @@
 ; Curry: AUTHORIZER_PK TREASURY_PH
 ; Solution: interest_amount dest_ph
 ; claim_msg = (sha256tree (list 1 interest_amount dest_ph)) — must match treasury.
+;
+; Build: cdv clsp build puzzles/interest_payout.clsp (needs include/sha256tree.clib)
 
 (mod (
   AUTHORIZER_PK
@@ -13,6 +15,7 @@
   interest_amount
   dest_ph
 )
+  (include sha256tree.clib)
 
   (defun assert-b32 (atom)
     (if (= (strlen atom) 32) atom (x))

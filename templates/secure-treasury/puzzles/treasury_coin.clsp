@@ -10,6 +10,8 @@
 ; claim_msg is derived on-chain (not a free solution atom):
 ;   (sha256tree (list 1 interest_amount dest_ph))
 ; Must match savings_vault claim-msg / interest_payout assert.
+;
+; Build: cdv clsp build puzzles/treasury_coin.clsp (needs include/sha256tree.clib)
 
 (mod (
   MOD_HASH
@@ -19,6 +21,7 @@
   interest_amount
   dest_ph
 )
+  (include sha256tree.clib)
 
   (defun assert-b32 (atom)
     (if (= (strlen atom) 32) atom (x))

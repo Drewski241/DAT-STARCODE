@@ -9,6 +9,7 @@ Templates are **already seeded** into the workspace:
 - `puzzles/savings_vault.clsp`
 - `puzzles/treasury_coin.clsp`
 - `puzzles/interest_payout.clsp` (third spend — pays interest after asserting treasury announcement)
+- `include/sha256tree.clib` (required for `cdv clsp build`)
 - `tests/spend-samples.json`
 - `VULNERABILITY.md`, `PLAN.md`, `README.md`
 

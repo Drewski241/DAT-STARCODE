@@ -15,9 +15,8 @@
 ;   3 withdraw principal → OWNER_PH + assert treasury interest announcement
 ;   4 claim interest only (recreate same vault; payout coin receives interest)
 ;
-; MOD_HASH must be the treehash of this uncurried mod. Recreation uses
-;   (sha256tree (c MOD_HASH (list …curried args…)))
-; Confirm with: cdv clsp build && cdv clsp curry … (puzzle_hash tool).
+; Build: cdv clsp build puzzles/savings_vault.clsp
+;   (needs include/sha256tree.clib — seeded with this template)
 
 (mod (
   MOD_HASH
@@ -31,6 +30,7 @@
   mode
   now_seconds
 )
+  (include sha256tree.clib)
 
   (defun assert-b32 (atom)
     (if (= (strlen atom) 32) atom (x))
@@ -40,8 +40,9 @@
     (if (> n 0) n (x))
   )
 
+  ; Use CLVM `/` (not a fictional `quotient` op).
   (defun interest-due (principal elapsed bps)
-    (quotient (* (* principal bps) elapsed) (* 10000 31536000))
+    (/ (* (* principal bps) elapsed) (* 10000 31536000))
   )
 
   ; Real curry treehash shape (not sha256tree of a flat list).

@@ -31,7 +31,7 @@ A puzzle file must start with `(mod (` and the program body must **return a list
   ; Prefer including condition codes when the repo has them; otherwise use integers:
   ; CREATE_COIN = 51, AGG_SIG_ME = 50
   (defun quotient_pct (amount pct)
-    (quotient (* amount pct) 100)
+    (/ (* amount pct) 100)
   )
 
   ; mode 1 = deposit, mode 2 = settle
@@ -63,7 +63,8 @@ A puzzle file must start with `(mod (` and the program body must **return a list
 Notes for a real MTT pool (Mode C):
 
 - Curry constants: buy-in, max players (500), splits (50/30/20), authorizer pubkey.
-- Integer percent math: `(quotient (* amount pct) 100)` — never `(/ pct 100)` first.
+- Integer percent math: `(/ (* amount pct) 100)` — never `(/ pct 100)` first. There is no `quotient` opcode; use `/` or `(f (divmod a b))`.
+- Tree hashes: `(include sha256tree.clib)` (seeded under `include/`) or define `sha256tree` inline — bare `sha256tree` without include fails `cdv clsp build`.
 - `f` / `r` for lists — never `[0]`.
 - Emit `(list 50 pubkey msg)` for AGG_SIG_ME; do not wrap it in `if`.
 - CREATE_COIN is `(list 51 puzzle_hash amount)`.
