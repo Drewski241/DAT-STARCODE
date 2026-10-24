@@ -21,7 +21,8 @@ export const MODEL_OPTIONS: ModelOption[] = [
     label: "Auto",
     kind: "auto",
     ollamaTag: null,
-    blurb: "Picks model from your prompt (hard ChiaLisp/MTT → Coder 14B)",
+    blurb:
+      "Picks from your prompt (coding → Coder 7B; niche / hard languages → Coder 14B; shopping Q&A → Qwen 7B)",
   },
   {
     id: "qwen2.5-coder:7b",

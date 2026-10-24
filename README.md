@@ -110,7 +110,7 @@ cdv --help
 
 When `cdv` is present, ChiaLisp turns must document a 64-char puzzle hash (or verification fails).
 
-**Auto** routing: hard domain (ChiaLisp / MTT) → `qwen2.5-coder:14b`; other coding → `qwen2.5-coder:7b`; otherwise → `llama3.1:8b`. Pull 14B on the worker or hard Auto jobs will 404 at preflight. Routing is re-evaluated when a job is claimed so queued jobs pick up heuristic fixes.
+**Auto** routing: niche / hard languages (e.g. ChiaLisp) → `qwen2.5-coder:14b`; other coding → `qwen2.5-coder:7b`; shopping / local research Q&A → `qwen2.5:7b`; otherwise → `llama3.1:8b`. Pull 14B (and Qwen 7B) on the worker or those Auto jobs will 404 at preflight. Routing is re-evaluated when a job is claimed so queued jobs pick up heuristic fixes.
 
 Optional worker agent knobs (see `.env.example`): `AGENT_MAX_STEPS`, `AGENT_ALLOW_SHELL`, `AGENT_REPO_ROOT`. Install `clvm_tools` (via `npm ci`) or put `brun`/`run` on `PATH` for ChiaLisp verification / `clvm_verify`.
 
