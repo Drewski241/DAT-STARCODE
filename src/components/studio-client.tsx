@@ -70,7 +70,7 @@ export function StudioClient() {
     "Add a typed CLI flag --dry-run that prints the planned agent steps without executing them.",
   );
   const [projectGoal, setProjectGoal] = useState(
-    "Hardening pass: document how to run DAT STARCODER worker on Ubuntu, add a health checklist, and note ChiaLisp specialty routing.",
+    "Help a new teammate: how to install the DAT STARCODER worker on Windows, macOS, or Linux, plus a short Chromebook note and ChiaLisp specialty routing.",
   );
   const [repoHint, setRepoHint] = useState("");
   const [modelId, setModelId] = useState(DEFAULT_MODEL_ID);
@@ -260,8 +260,8 @@ export function StudioClient() {
             </h1>
             <p className="mt-3 text-sm leading-relaxed text-steel-300">
               Single jobs or multi-step projects. The worker can search the web,
-              pull knowledge packs (ChiaLisp / Ubuntu), and route hard tasks to
-              stronger models.
+              guide Windows / macOS / ChromeOS / Linux tasks, use ChiaLisp packs,
+              and route hard work to stronger models.
             </p>
 
             <div className="mt-6 flex flex-wrap gap-2">

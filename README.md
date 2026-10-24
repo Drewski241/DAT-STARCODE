@@ -75,7 +75,7 @@ ollama pull llama3.1:8b
 - Standard coding → `qwen2.5-coder:7b`
 - OS / general → `llama3.1:8b`
 
-**Stronger agent (worker tools):** the live worker runs a tool loop — `web_search`, `fetch_url`, `read_file`, `list_dir`, optional allowlisted `run_command` (`AGENT_ALLOW_SHELL=1`), then `done`. Knowledge packs (ChiaLisp, Ubuntu/ops) are retrieved into the prompt. Studio **Project** mode plans a checklist, then you run steps one credit at a time.
+**Stronger agent (worker tools):** the live worker runs a tool loop — `web_search`, `fetch_url`, `read_file`, `list_dir`, optional allowlisted `run_command` (`AGENT_ALLOW_SHELL=1`), then `done`. Knowledge packs (ChiaLisp + cross-platform systems help for Windows, macOS, ChromeOS, and Linux) are retrieved into the prompt. Studio **Project** mode plans a checklist, then you run steps one credit at a time.
 
 ## DAT + Sage (live burns)
 

@@ -22,7 +22,8 @@ export const MODEL_OPTIONS: ModelOption[] = [
     label: "Auto",
     kind: "auto",
     ollamaTag: null,
-    blurb: "Picks model + specialty (coding, ChiaLisp, OS) from your prompt",
+    blurb:
+      "Picks model + specialty (coding, ChiaLisp, Windows/Mac/ChromeOS/Linux help)",
   },
   {
     id: "qwen2.5-coder:7b",
@@ -112,7 +113,7 @@ export function resolveModel(
       resolved: DEFAULT_GENERAL_MODEL,
       reason:
         agentProfile === "ops"
-          ? "Auto: OS/ops question → general model"
+          ? "Auto: systems / how-to question → general model"
           : "Auto: prompt looks like general Q&A",
       agentProfile,
       difficulty: hard ? "hard" : "standard",
