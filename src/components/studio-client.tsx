@@ -220,7 +220,7 @@ export function StudioClient() {
   const selectedStatus =
     jobs.find((j) => j.id === selectedId)?.status ?? null;
 
-  // Seed events from polled job payload (completed jobs / reconnect).
+  // Seed / merge events from polled job list (completed jobs / reconnect).
   useEffect(() => {
     if (!selectedId) {
       setLiveEvents([]);
@@ -228,15 +228,45 @@ export function StudioClient() {
       return;
     }
     const job = jobs.find((j) => j.id === selectedId);
-    if (job?.events?.length) {
-      setLiveEvents((prev) =>
-        job.events!.length >= prev.length ? job.events! : prev,
-      );
-    }
+    if (job?.events?.length) mergeIncomingEvents(job.events);
     if (job?.status === "completed" || job?.status === "failed") {
       setLiveDraft("");
     }
   }, [selectedId, jobs]);
+
+  // Stay on Output while a job is in flight so the timeline is visible.
+  useEffect(() => {
+    if (
+      selectedStatus === "queued" ||
+      selectedStatus === "claimed" ||
+      selectedStatus === "running"
+    ) {
+      setPanel("output");
+    }
+  }, [selectedStatus, selectedId]);
+
+  function mergeIncomingEvents(incoming: JobEvent[]) {
+    if (!incoming.length) return;
+    let latestDraft: string | null = null;
+    setLiveEvents((prev) => {
+      const seen = new Set(prev.map((e) => e.id));
+      const next = [...prev];
+      for (const e of incoming) {
+        if (e.type === "token") {
+          latestDraft =
+            typeof e.data?.draft === "string" ? e.data.draft : e.message;
+          continue;
+        }
+        if (!seen.has(e.id)) {
+          seen.add(e.id);
+          next.push(e);
+        }
+      }
+      next.sort((a, b) => a.t.localeCompare(b.t));
+      return next.slice(-120);
+    });
+    if (latestDraft !== null) setLiveDraft(latestDraft);
+  }
 
   // Live tool stream while the selected job is in flight.
   useEffect(() => {
@@ -247,13 +277,39 @@ export function StudioClient() {
       selectedStatus === "running";
     if (!active) return;
 
+    // Amplify/CloudFront often stalls SSE — poll the job record as the
+    // reliable play-by-play source; keep EventSource as a low-latency bonus.
+    let cancelled = false;
+    const poll = async () => {
+      try {
+        const res = await fetch(`/api/jobs/${selectedId}`, {
+          credentials: "same-origin",
+        });
+        if (!res.ok || cancelled) return;
+        const data = (await res.json()) as { job?: Job };
+        if (data.job?.events?.length) mergeIncomingEvents(data.job.events);
+        if (
+          data.job?.status === "completed" ||
+          data.job?.status === "failed" ||
+          data.job?.status === "cancelled"
+        ) {
+          setLiveDraft("");
+          void refresh();
+        }
+      } catch {
+        /* ignore */
+      }
+    };
+    void poll();
+    const pollTimer = window.setInterval(() => void poll(), 1000);
+
     const es = new EventSource(`/api/jobs/${selectedId}/stream`);
     es.addEventListener("hello", (ev) => {
       try {
         const data = JSON.parse((ev as MessageEvent).data) as {
           events?: JobEvent[];
         };
-        if (data.events) setLiveEvents(data.events);
+        if (data.events) mergeIncomingEvents(data.events);
       } catch {
         /* ignore */
       }
@@ -263,22 +319,7 @@ export function StudioClient() {
         const data = JSON.parse((ev as MessageEvent).data) as {
           events?: JobEvent[];
         };
-        if (!data.events?.length) return;
-        let latestDraft: string | null = null;
-        setLiveEvents((prev) => {
-          const seen = new Set(prev.map((e) => e.id));
-          const next = [...prev];
-          for (const e of data.events!) {
-            if (e.type === "token") {
-              latestDraft =
-                typeof e.data?.draft === "string" ? e.data.draft : e.message;
-              continue;
-            }
-            if (!seen.has(e.id)) next.push(e);
-          }
-          return next.slice(-120);
-        });
-        if (latestDraft !== null) setLiveDraft(latestDraft);
+        if (data.events?.length) mergeIncomingEvents(data.events);
       } catch {
         /* ignore */
       }
@@ -288,7 +329,11 @@ export function StudioClient() {
       setLiveDraft("");
       void refresh();
     });
-    return () => es.close();
+    return () => {
+      cancelled = true;
+      window.clearInterval(pollTimer);
+      es.close();
+    };
   }, [selectedId, selectedStatus, refresh]);
 
   // Keep the play-by-play scrolled to the newest line while a job runs.
@@ -1022,6 +1067,63 @@ export function StudioClient() {
                   </p>
                 )}
 
+                {/* Always above Output/Workspace tabs — don't hide while browsing files. */}
+                {(selected.status === "queued" ||
+                  selected.status === "claimed" ||
+                  selected.status === "running" ||
+                  liveEvents.length > 0) && (
+                  <div className="mt-4 border border-copper-700/50 bg-ink-950/70 p-3">
+                    <div className="flex flex-wrap items-baseline justify-between gap-2">
+                      <p className="font-mono text-[11px] uppercase tracking-widest text-copper-300">
+                        Live play-by-play
+                        {selected.modelResolved
+                          ? ` · ${selected.modelResolved}`
+                          : ""}
+                      </p>
+                      <p className="font-mono text-[10px] text-steel-500">
+                        {liveEvents.length > 0
+                          ? `${liveEvents.length} update${liveEvents.length === 1 ? "" : "s"}`
+                          : "waiting for worker…"}
+                      </p>
+                    </div>
+                    {liveEvents.length === 0 && !liveDraft ? (
+                      <p className="mt-2 animate-pulse-soft font-mono text-sm text-copper-300">
+                        {waitingMessage(selected.status)}
+                      </p>
+                    ) : (
+                      <ol className="mt-3 max-h-72 space-y-2.5 overflow-auto border-l border-copper-700/60 pl-3 font-mono text-xs leading-relaxed">
+                        {liveEvents.map((ev, i) => (
+                          <li key={ev.id} className="relative">
+                            <span className="absolute -left-[0.95rem] top-1.5 h-1.5 w-1.5 rounded-full bg-copper-500/80" />
+                            <div className="flex flex-wrap gap-x-2 gap-y-0.5">
+                              <span className="shrink-0 tabular-nums text-steel-500">
+                                {String(i + 1).padStart(2, "0")}
+                              </span>
+                              <span className="min-w-0 text-copper-100">
+                                {formatEventMessage(ev)}
+                              </span>
+                            </div>
+                          </li>
+                        ))}
+                        <div ref={progressEndRef} />
+                      </ol>
+                    )}
+                    {liveDraft && (
+                      <div className="mt-3 border-t border-copper-800/40 pt-3">
+                        <p className="font-mono text-[11px] uppercase tracking-widest text-steel-400">
+                          Draft answer (live)
+                        </p>
+                        <pre className="mt-2 whitespace-pre-wrap font-mono text-xs leading-relaxed text-steel-200">
+                          {liveDraft}
+                          <span className="animate-pulse-soft text-copper-400">
+                            ▍
+                          </span>
+                        </pre>
+                      </div>
+                    )}
+                  </div>
+                )}
+
                 <div className="mt-4 flex flex-wrap items-center gap-2">
                   <button
                     type="button"
@@ -1061,75 +1163,14 @@ export function StudioClient() {
                 <div className="mt-5 max-h-[32rem] space-y-4 overflow-auto">
                   {panel === "output" ? (
                     <>
-                      {(selected.status === "queued" ||
-                        selected.status === "claimed" ||
-                        selected.status === "running" ||
-                        liveEvents.length > 0) && (
-                        <div className="border border-copper-800/40 bg-ink-950/50 p-3">
-                          <div className="flex flex-wrap items-baseline justify-between gap-2">
-                            <p className="font-mono text-[11px] uppercase tracking-widest text-steel-400">
-                              Live play-by-play
-                              {selected.modelResolved
-                                ? ` · ${selected.modelResolved}`
-                                : ""}
-                            </p>
-                            {liveEvents.length > 0 && (
-                              <p className="font-mono text-[10px] text-steel-500">
-                                {liveEvents.length} update
-                                {liveEvents.length === 1 ? "" : "s"}
-                              </p>
-                            )}
-                          </div>
-                          {liveEvents.length === 0 && !liveDraft ? (
-                            <p className="mt-2 animate-pulse-soft font-mono text-sm text-copper-300">
-                              {waitingMessage(selected.status)}
-                            </p>
-                          ) : (
-                            <ol className="mt-3 max-h-64 space-y-2.5 overflow-auto border-l border-copper-800/50 pl-3 font-mono text-xs leading-relaxed">
-                              {liveEvents.map((ev, i) => (
-                                <li key={ev.id} className="relative">
-                                  <span className="absolute -left-[0.95rem] top-1.5 h-1.5 w-1.5 rounded-full bg-copper-500/80" />
-                                  <div className="flex gap-2 text-steel-500">
-                                    <span className="shrink-0 tabular-nums">
-                                      {String(i + 1).padStart(2, "0")}
-                                    </span>
-                                    <span className="shrink-0">
-                                      {friendlyEventLabel(ev.type)}
-                                    </span>
-                                    <span className="min-w-0 text-copper-100/90">
-                                      {ev.message}
-                                    </span>
-                                  </div>
-                                  {ev.data &&
-                                    typeof ev.data.summary === "string" &&
-                                    ev.type === "tool_result" && (
-                                      <p className="mt-0.5 pl-8 text-[10px] text-steel-500 line-clamp-2">
-                                        {ev.data.summary}
-                                      </p>
-                                    )}
-                                </li>
-                              ))}
-                              <div ref={progressEndRef} />
-                            </ol>
-                          )}
-                          {liveDraft && (
-                            <div className="mt-3 border-t border-copper-800/40 pt-3">
-                              <p className="font-mono text-[11px] uppercase tracking-widest text-steel-400">
-                                Draft answer (live)
-                              </p>
-                              <pre className="mt-2 whitespace-pre-wrap font-mono text-xs leading-relaxed text-steel-200">
-                                {liveDraft}
-                                <span className="animate-pulse-soft text-copper-400">
-                                  ▍
-                                </span>
-                              </pre>
-                            </div>
-                          )}
-                        </div>
-                      )}
                       {selected.status === "queued" ||
                       selected.status === "claimed" ||
-                      selected.status === "running" ? null : selected.error ? (
+                      selected.status === "running" ? (
+                        <p className="font-mono text-xs text-steel-500">
+                          Final answer appears here when the job finishes. Watch
+                          the play-by-play above for live steps.
+                        </p>
+                      ) : selected.error ? (
                         <pre className="whitespace-pre-wrap font-mono text-xs text-rose-300">
                           {selected.error}
                         </pre>
@@ -1226,25 +1267,50 @@ function latestPlayByPlay(events?: JobEvent[] | null) {
   for (let i = events.length - 1; i >= 0; i--) {
     const e = events[i];
     if (e.type === "token") continue;
-    const msg = String(e.message || "").trim();
+    const msg = formatEventMessage(e);
     if (msg) return msg;
   }
   return null;
 }
 
-function friendlyEventLabel(type: string) {
-  switch (type) {
-    case "tool":
-      return "Doing";
-    case "tool_result":
-      return "Done";
-    case "status":
-      return "Now";
-    case "log":
-      return "Note";
-    case "error":
-      return "Problem";
-    default:
-      return type;
+/** Turn raw worker events into a single readable line (incl. legacy `read_file: ok`). */
+function formatEventMessage(ev: JobEvent) {
+  const raw = String(ev.message || "").trim();
+  const legacy = raw.match(
+    /^(list_files|read_file|write_file|run|web_search|fetch_url|puzzle_hash|clvm_verify|spend_check)\s*:\s*(ok|error|fail(?:ed)?)\b/i,
+  );
+  if (legacy) {
+    const tool = legacy[1];
+    const ok = /^ok$/i.test(legacy[2]);
+    const path =
+      ev.data && typeof ev.data === "object" && ev.data !== null
+        ? String(
+            (ev.data as { args?: { path?: string }; name?: string }).args
+              ?.path || "",
+          )
+        : "";
+    const pretty =
+      tool === "read_file"
+        ? path
+          ? `Reading ${path}`
+          : "Reading a file"
+        : tool === "write_file"
+          ? path
+            ? `Writing ${path}`
+            : "Writing a file"
+          : tool === "list_files"
+            ? "Listing workspace files"
+            : tool === "puzzle_hash"
+              ? path
+                ? `Hashing ${path}`
+                : "Computing puzzle hash"
+              : tool.replace(/_/g, " ");
+    return ok ? `Done · ${pretty}` : `Issue · ${pretty}`;
   }
+  if (ev.type === "tool") return `Doing · ${raw}`;
+  if (ev.type === "tool_result") {
+    return raw.startsWith("Done") ? raw : `Done · ${raw}`;
+  }
+  if (ev.type === "error") return `Problem · ${raw}`;
+  return raw;
 }
