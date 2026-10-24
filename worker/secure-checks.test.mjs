@@ -111,4 +111,12 @@ const nullaryPay = checkTreasurySecure(
 );
 assert.ok(nullaryPay.some((f) => /pay-interest|inline/i.test(f)));
 
+const freeOwnerClaim = checkPayoutSecure(`(mod (AUTHORIZER_PK TREASURY_PH OWNER_PH interest_amount)
+  (defun claim-msg (owed)
+    (sha256tree (list 1 owed OWNER_PH))
+  )
+  (list (list 61 1) (list 51 (assert-b32 OWNER_PH) interest_amount))
+)`);
+assert.ok(freeOwnerClaim.some((f) => /claim-msg|owed owner|free OWNER/i.test(f)));
+
 console.log("secure-checks.test.mjs ok");

@@ -54,13 +54,13 @@ export function AuthForm({
     setError(null);
     setMessage(null);
     try {
-      if (!username.trim() || !email.trim()) {
-        throw new Error("Enter your DAT username and the email on the account.");
+      if (!email.trim()) {
+        throw new Error("Enter the email on your DAT account.");
       }
       const res = await fetch("/api/auth/password/forgot", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ username, email }),
+        body: JSON.stringify({ email }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "Could not send reset code");
@@ -81,6 +81,9 @@ export function AuthForm({
     setError(null);
     setMessage(null);
     try {
+      if (!email.trim()) {
+        throw new Error("Enter the email on your DAT account.");
+      }
       if (password !== confirmPassword) {
         throw new Error("New passwords do not match");
       }
@@ -91,7 +94,7 @@ export function AuthForm({
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          username,
+          email,
           resetCode,
           password,
         }),
@@ -105,7 +108,8 @@ export function AuthForm({
       setMode("login");
       setError(null);
       setMessage(
-        data.message ?? "Password updated. Sign in with your DAT password.",
+        data.message ??
+          "Password updated. Sign in with your DAT username and new password.",
       );
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not reset password");
@@ -209,27 +213,26 @@ export function AuthForm({
 
       <p className="font-mono text-[11px] leading-relaxed text-steel-500">
         {mode === "login"
-          ? "Sign in with your DAT username and DAT password."
+          ? "Sign in with your DAT username and DAT password (same account as datspiritpoker.com)."
           : mode === "register"
             ? "Create a DAT STARCODER account. New accounts start with 20 credits."
-            : "Reset your DAT password with the email on your account."}
+            : "Reset your DAT password with only the verified email on the account — works for accounts created on datspiritpoker.com or here."}
       </p>
-
-      <label className="block font-mono text-[11px] uppercase tracking-widest text-steel-400">
-        DAT username
-      </label>
-      <Input
-        value={username}
-        onChange={(e) => setUsername(e.target.value)}
-        required
-        minLength={3}
-        maxLength={20}
-        className="rounded-none border-copper-800/50 bg-ink-900/80 font-mono"
-        autoComplete="username"
-      />
 
       {mode !== "reset" && (
         <>
+          <label className="block font-mono text-[11px] uppercase tracking-widest text-steel-400">
+            DAT username
+          </label>
+          <Input
+            value={username}
+            onChange={(e) => setUsername(e.target.value)}
+            required
+            minLength={3}
+            maxLength={20}
+            className="rounded-none border-copper-800/50 bg-ink-900/80 font-mono"
+            autoComplete="username"
+          />
           <label className="block font-mono text-[11px] uppercase tracking-widest text-steel-400">
             DAT password
           </label>

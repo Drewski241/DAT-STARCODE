@@ -95,30 +95,28 @@ export async function fetchPokerPlayRequirements() {
   }>;
 }
 
-/** Shared DAT account password reset — same endpoints as the DAT ecosystem login. */
+/** Shared DAT account password reset — same poker endpoints (email only). */
 export async function pokerForgotPassword(input: {
-  username: string;
   email: string;
 }): Promise<{ message: string }> {
+  const email = input.email.trim();
   const res = await fetch(`${POKER_API_BASE}/v1/auth/password/forgot`, {
     method: "POST",
     headers: { "Content-Type": "application/json", Accept: "application/json" },
-    body: JSON.stringify({
-      username: input.username.trim(),
-      email: input.email.trim(),
-    }),
+    body: JSON.stringify({ email }),
   });
   const data = (await res.json().catch(() => ({}))) as {
     error?: string;
     message?: string;
+    ok?: boolean;
   };
   if (!res.ok) {
     throw new Error(friendlyEmailError(data.error, res.status));
   }
+  // Poker still returns a username-centric boilerplate; keep UX email-only.
   return {
     message:
-      data.message ??
-      "If that account exists, a reset code was sent to the email on file.",
+      "If that verified email is on a DAT account (including accounts created at datspiritpoker.com), a reset code was sent. Codes expire in 15 minutes.",
   };
 }
 
@@ -131,7 +129,7 @@ function friendlyEmailError(raw: string | undefined, status: number) {
 }
 
 export async function pokerResetPassword(input: {
-  username: string;
+  email: string;
   resetCode: string;
   password: string;
 }): Promise<{ message: string }> {
@@ -139,7 +137,7 @@ export async function pokerResetPassword(input: {
     method: "POST",
     headers: { "Content-Type": "application/json", Accept: "application/json" },
     body: JSON.stringify({
-      username: input.username.trim(),
+      email: input.email.trim(),
       resetCode: input.resetCode.trim(),
       password: input.password,
     }),
@@ -152,6 +150,8 @@ export async function pokerResetPassword(input: {
     throw new Error(friendlyEmailError(data.error, res.status));
   }
   return {
-    message: data.message ?? "Password updated. You can sign in now.",
+    message:
+      data.message ??
+      "Password updated. Sign in on DAT STARCODER with your DAT username and new password.",
   };
 }

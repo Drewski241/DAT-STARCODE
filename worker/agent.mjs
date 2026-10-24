@@ -1187,8 +1187,9 @@ export async function runAgentJob({
       ].join("\n");
     }
 
-    // 14b often leaves a stale vault (nullary mode defuns / free mod params)
-    // next to good treasury/payout (Studio zips 94408ee8–fdcb9b56). Re-seed.
+    // 14b often "tweaks" one of the three puzzles into a form that still
+    // passes static checks but cdv raises (zip a5e8ee26 claim-msg (owed)).
+    // Re-seed whenever puzzles/* diverge from templates or secure checks fail.
     if (goal.id === "secure_treasury" && !resultOnly) {
       try {
         const readRel = async (rel) => {
@@ -1198,21 +1199,46 @@ export async function runAgentJob({
             return "";
           }
         };
+        const tplRoot = path.join(
+          path.dirname(fileURLToPath(import.meta.url)),
+          "..",
+          "templates",
+          "secure-treasury",
+        );
         const vaultRel = "puzzles/savings_vault.clsp";
         const treasuryRel = "puzzles/treasury_coin.clsp";
         const payoutRel = "puzzles/interest_payout.clsp";
+        const vaultBody = await readRel(vaultRel);
+        const treasuryBody = await readRel(treasuryRel);
+        const payoutBody = await readRel(payoutRel);
         const rescueFails = [
-          ...checkVaultSecure(await readRel(vaultRel), vaultRel),
-          ...checkTreasurySecure(await readRel(treasuryRel), treasuryRel),
-          ...checkPayoutSecure(await readRel(payoutRel), payoutRel),
+          ...checkVaultSecure(vaultBody, vaultRel),
+          ...checkTreasurySecure(treasuryBody, treasuryRel),
+          ...checkPayoutSecure(payoutBody, payoutRel),
         ];
-        if (rescueFails.length) {
+        const diverged = [];
+        for (const rel of [vaultRel, treasuryRel, payoutRel]) {
+          const live = await readRel(rel);
+          let gold = "";
+          try {
+            gold = await fs.readFile(path.join(tplRoot, rel), "utf8");
+          } catch {
+            gold = "";
+          }
+          if (gold && live !== gold) diverged.push(rel);
+        }
+        if (rescueFails.length || diverged.length) {
           await emit(
             "status",
             "Restoring secure-treasury puzzles from templates…",
           );
           log(
-            `[agent] rescue treasury: ${rescueFails.slice(0, 4).join("; ")}`,
+            `[agent] rescue treasury: ${[
+              ...rescueFails.slice(0, 3),
+              ...diverged.map((d) => `${d} diverged from template`),
+            ]
+              .slice(0, 5)
+              .join("; ")}`,
           );
           await seedTemplatesForGoal(root, "secure_treasury", { log });
           // Drop compiled artifacts so hash-doc / spend fixtures cannot reuse
@@ -1236,7 +1262,7 @@ export async function runAgentJob({
             "",
             "## Repair",
             "",
-            "Restored `puzzles/*.clsp` from seeded templates — removed nullary mode/pay defuns or other patterns that make cdv/brun raise.",
+            "Restored `puzzles/*.clsp` from seeded templates — model edits that break cdv/brun were overwritten.",
           ].join("\n");
         }
       } catch (err) {

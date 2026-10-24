@@ -3,13 +3,13 @@ import { pokerResetPassword } from "@/lib/poker-auth";
 
 export async function POST(req: NextRequest) {
   const body = (await req.json()) as {
-    username?: string;
+    email?: string;
     resetCode?: string;
     password?: string;
   };
-  if (!body.username?.trim() || !body.resetCode?.trim() || !body.password) {
+  if (!body.email?.trim() || !body.resetCode?.trim() || !body.password) {
     return NextResponse.json(
-      { error: "DAT username, reset code, and new password are required" },
+      { error: "Email, reset code, and new password are required" },
       { status: 400 },
     );
   }
@@ -21,7 +21,7 @@ export async function POST(req: NextRequest) {
   }
   try {
     const result = await pokerResetPassword({
-      username: body.username,
+      email: body.email,
       resetCode: body.resetCode,
       password: body.password,
     });

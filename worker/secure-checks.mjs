@@ -171,6 +171,12 @@ export function checkPayoutSecure(body, path = "interest_payout.clsp") {
       `${path}: must ASSERT_PUZZLE_ANNOUNCEMENT (61) with the same claim-msg as treasury`,
     );
   }
+  // claim-msg (owed) that closes over free OWNER_PH → cdv "clvm raise" (zip a5e8ee26).
+  if (/\(defun\s+claim-msg\s*\(\s*owed\s*\)/i.test(code)) {
+    failures.push(
+      `${path}: claim-msg must take (owed owner) — free OWNER_PH inside the defun makes cdv/clvm raise`,
+    );
+  }
   return failures;
 }
 

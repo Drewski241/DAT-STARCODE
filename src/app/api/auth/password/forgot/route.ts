@@ -3,18 +3,16 @@ import { pokerForgotPassword } from "@/lib/poker-auth";
 
 export async function POST(req: NextRequest) {
   const body = (await req.json()) as {
-    username?: string;
     email?: string;
   };
-  if (!body.username?.trim() || !body.email?.trim()) {
+  if (!body.email?.trim()) {
     return NextResponse.json(
-      { error: "DAT username and email are required" },
+      { error: "Email is required" },
       { status: 400 },
     );
   }
   try {
     const result = await pokerForgotPassword({
-      username: body.username,
       email: body.email,
     });
     return NextResponse.json(result);
