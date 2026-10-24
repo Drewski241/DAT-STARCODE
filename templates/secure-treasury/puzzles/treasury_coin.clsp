@@ -1,17 +1,12 @@
 ; Singleton-safe treasury coin (educational, not Circuit source).
 ;
 ; Exactly ONE CREATE_COIN: recreate treasury with amount - interest.
-; Interest leaves via concurrent puzzles/interest_payout.clsp that asserts
-; our CREATE_PUZZLE_ANNOUNCEMENT — never a second CREATE_COIN here.
+; Interest via concurrent puzzles/interest_payout.clsp (puzzle announcements).
 ;
 ; Curry: MOD_HASH AUTHORIZER_PK
 ; Solution: mode amount interest_amount dest_ph
 ;
-; claim_msg is derived on-chain (not a free solution atom):
-;   (sha256tree (list 1 interest_amount dest_ph))
-; Must match savings_vault claim-msg / interest_payout assert.
-;
-; Build: cdv clsp build puzzles/treasury_coin.clsp (needs include/sha256tree.clib)
+; sha256tree is inlined — file must start with (mod (after comments).
 
 (mod (
   MOD_HASH
@@ -21,7 +16,12 @@
   interest_amount
   dest_ph
 )
-  (include sha256tree.clib)
+  (defun sha256tree (TREE)
+    (if (l TREE)
+      (sha256 2 (sha256tree (f TREE)) (sha256tree (r TREE)))
+      (sha256 1 TREE)
+    )
+  )
 
   (defun assert-b32 (atom)
     (if (= (strlen atom) 32) atom (x))
@@ -43,7 +43,6 @@
     (if (> interest_amount 0)
       (if (> amount (- interest_amount 1))
         (list
-          ; Bind the coin — do not trust solution amount alone.
           (list 73 amount)
           (list 50 AUTHORIZER_PK
             (sha256tree (list mode amount interest_amount dest_ph)))

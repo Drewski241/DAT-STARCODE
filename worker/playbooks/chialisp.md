@@ -64,7 +64,7 @@ Notes for a real MTT pool (Mode C):
 
 - Curry constants: buy-in, max players (500), splits (50/30/20), authorizer pubkey.
 - Integer percent math: `(/ (* amount pct) 100)` — never `(/ pct 100)` first. There is no `quotient` opcode; use `/` or `(f (divmod a b))`.
-- Tree hashes: `(include sha256tree.clib)` (seeded under `include/`) or define `sha256tree` inline — bare `sha256tree` without include fails `cdv clsp build`.
+- Tree hashes: **inline** `(defun sha256tree (TREE) …)` inside the `(mod`. Never put `(include …)` before `(mod` — verify and cdv both fail. Optional `include/sha256tree.clib` only if include is inside the mod body.
 - `f` / `r` for lists — never `[0]`.
 - Emit `(list 50 pubkey msg)` for AGG_SIG_ME; do not wrap it in `if`.
 - CREATE_COIN is `(list 51 puzzle_hash amount)`.

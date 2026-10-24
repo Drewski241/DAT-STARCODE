@@ -10,13 +10,9 @@
 ; Curry: MOD_HASH AUTHORIZER_PK MIN_HOLD_SECONDS INTEREST_BPS TREASURY_PH
 ;        PRINCIPAL DEPOSIT_SECONDS OWNER_PH
 ; Solution: mode now_seconds
-;   1 open/recreate (set DEPOSIT_SECONDS := now_seconds)
-;   2 withdraw principal → OWNER_PH (no interest)
-;   3 withdraw principal → OWNER_PH + assert treasury interest announcement
-;   4 claim interest only (recreate same vault; payout coin receives interest)
+;   1 open/recreate  2 withdraw principal  3 exit+interest  4 claim-only
 ;
-; Build: cdv clsp build puzzles/savings_vault.clsp
-;   (needs include/sha256tree.clib — seeded with this template)
+; sha256tree is inlined (do NOT put (include …) before (mod — that fails verify/cdv).
 
 (mod (
   MOD_HASH
@@ -30,7 +26,12 @@
   mode
   now_seconds
 )
-  (include sha256tree.clib)
+  (defun sha256tree (TREE)
+    (if (l TREE)
+      (sha256 2 (sha256tree (f TREE)) (sha256tree (r TREE)))
+      (sha256 1 TREE)
+    )
+  )
 
   (defun assert-b32 (atom)
     (if (= (strlen atom) 32) atom (x))
@@ -40,12 +41,10 @@
     (if (> n 0) n (x))
   )
 
-  ; Use CLVM `/` (not a fictional `quotient` op).
   (defun interest-due (principal elapsed bps)
     (/ (* (* principal bps) elapsed) (* 10000 31536000))
   )
 
-  ; Real curry treehash shape (not sha256tree of a flat list).
   (defun vault-ph (mod_hash auth min_hold bps treasury_ph principal deposit_seconds owner_ph)
     (sha256tree
       (c mod_hash
@@ -93,7 +92,6 @@
     )
   )
 
-  ; Keep principal in vault; concurrent interest_payout receives owed.
   (defun mode-claim-only (elapsed owed)
     (if (> elapsed (- MIN_HOLD_SECONDS 1))
       (if (> owed 0)

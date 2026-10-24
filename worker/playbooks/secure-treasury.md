@@ -9,14 +9,15 @@ Templates are **already seeded** into the workspace:
 - `puzzles/savings_vault.clsp`
 - `puzzles/treasury_coin.clsp`
 - `puzzles/interest_payout.clsp` (third spend — pays interest after asserting treasury announcement)
-- `include/sha256tree.clib` (required for `cdv clsp build`)
+- `include/sha256tree.clib` (optional; puzzles inline `sha256tree`)
 - `tests/spend-samples.json`
 - `VULNERABILITY.md`, `PLAN.md`, `README.md`
 
 1. `list_files` then `read_file` those puzzles.
 2. **Edit them in place** — do **not** invent a new `secure_treasury.clsp` mega-file.
-3. Each returned condition list must have **exactly one** `(list 51 …)` CREATE_COIN.
-4. Keep min-hold interest + **matched puzzle announcements** (treasury `63`, vault/payout `61`).
+3. Each file must start with `(mod` (after `;` comments). Keep `sha256tree` as an inner `defun` — never move `(include …)` above `(mod`.
+4. Each returned condition list must have **exactly one** `(list 51 …)` CREATE_COIN.
+5. Keep min-hold interest + **matched puzzle announcements** (treasury `63`, vault/payout `61`).
 
 ## Hard requirements (verification fails without these)
 

@@ -1,13 +1,10 @@
 ; Interest payout — third spend in the vault↔treasury claim bundle.
 ;
-; Asserts the treasury CREATE_PUZZLE_ANNOUNCEMENT, then CREATE_COINs interest
-; to OWNER_PH. Exactly one CREATE_COIN. No lineage fork.
-;
+; Asserts treasury CREATE_PUZZLE_ANNOUNCEMENT, then CREATE_COINs interest.
 ; Curry: AUTHORIZER_PK TREASURY_PH
 ; Solution: interest_amount dest_ph
-; claim_msg = (sha256tree (list 1 interest_amount dest_ph)) — must match treasury.
 ;
-; Build: cdv clsp build puzzles/interest_payout.clsp (needs include/sha256tree.clib)
+; sha256tree is inlined — file must start with (mod (after comments).
 
 (mod (
   AUTHORIZER_PK
@@ -15,7 +12,12 @@
   interest_amount
   dest_ph
 )
-  (include sha256tree.clib)
+  (defun sha256tree (TREE)
+    (if (l TREE)
+      (sha256 2 (sha256tree (f TREE)) (sha256tree (r TREE)))
+      (sha256 1 TREE)
+    )
+  )
 
   (defun assert-b32 (atom)
     (if (= (strlen atom) 32) atom (x))

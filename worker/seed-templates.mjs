@@ -29,8 +29,18 @@ async function writeFile(root, rel, body, written, log, { force = false } = {}) 
 async function needsClspRefresh(root, rel) {
   try {
     const body = await fs.readFile(path.join(root, rel), "utf8");
-    // Pre-fix templates used bare sha256tree / quotient and fail cdv build.
-    if (!/\(include\s+sha256tree\.clib\)/i.test(body)) return true;
+    const code = body
+      .split("\n")
+      .filter((line) => {
+        const t = line.trim();
+        return t.length > 0 && !t.startsWith(";");
+      })
+      .join("\n")
+      .trimStart();
+    // Must start with (mod — include-before-mod is a common 14b corruption.
+    if (!code.startsWith("(mod")) return true;
+    // Prefer inlined sha256tree (no include dependency for cdv).
+    if (!/\(defun\s+sha256tree\b/i.test(body)) return true;
     if (/\bquotient\b/i.test(body)) return true;
     return false;
   } catch {

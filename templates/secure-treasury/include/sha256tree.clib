@@ -1,5 +1,5 @@
-; Standard ChiaLisp tree-hash helper (same semantics as chia-dev-tools sha256tree.clib).
-; Seeded into workspaces so `cdv clsp build -i include` works offline.
+; Optional helper if a puzzle uses (include sha256tree.clib) inside (mod …).
+; Preferred templates inline sha256tree so cdv build needs no -i path.
 
 (defun sha256tree (TREE)
   (if (l TREE)
