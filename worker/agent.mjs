@@ -55,14 +55,10 @@ This turn is everyday Q&A / local how-to — NOT a coding job.
   - Rank the *process* to get the lowest honest price (which quotes, in what order) — e.g. get ICBC basic quote + 2 optional quotes same day
   - Do NOT invent dollar premiums. Exact price needs their details via a licensed quote.
   - Include a ## Sources section with real URLs from your tool observations
+  - Link label must match the real site (domain/title from OBSERVATION). Never rename a blog URL as a broker brand.
   - End with one "best next move for you" tied to their bike/city
-- Structure the final markdown as:
-  1) Direct recommendation (best path for their case)
-  2) Comparison table or bullets: option → pros/cons → when it wins
-  3) How to get comparable quotes (documents to bring, questions to ask)
-  4) Caveats (advice vs binding insurance; licensed broker when required)
-  5) ## Sources — markdown links only from research
-  6) ## Next steps — numbered actions today
+- Put plain markdown in "message" only (use \\n for newlines in JSON). Never leave the {"done":true...} wrapper visible.
+- Sections: recommendation → comparison → how to quote → caveats → ## Sources → ## Next steps
 `.trim();
 
 const SHOPPING_HINT =
@@ -747,7 +743,11 @@ export async function runAgentJob({
     };
 
     const polishDraft = (raw, { forceSources = false } = {}) => {
-      let draft = String(raw || "");
+      let draft = unwrapDoneMessage(raw);
+      // Fix common heading glitches from models ("### ## Sources").
+      draft = draft
+        .replace(/^#{1,6}\s+#{1,6}\s+/gm, "## ")
+        .replace(/\n#{1,6}\s+#{1,6}\s+/g, "\n## ");
       if (isGeneral && knownUrls.size > 0) {
         draft = draft.replace(
           /\[([^\]]+)\]\((https?:\/\/[^)]+)\)/g,
@@ -759,7 +759,9 @@ export async function runAgentJob({
             } catch {
               return label;
             }
-            if (knownUrls.has(clean) || knownUrls.has(host)) return full;
+            // Require the full URL (not just host) so a blog isn't labeled "Acera".
+            if (knownUrls.has(clean)) return `[${host}](${clean})`;
+            if (knownUrls.has(host)) return `[${host}](${clean})`;
             return `${label} (${host} — verify; link not confirmed in research)`;
           },
         );
@@ -768,15 +770,23 @@ export async function runAgentJob({
         const httpSources = [...knownUrls].filter((u) =>
           /^https?:\/\//i.test(u),
         );
-        if (httpSources.length && !/## Sources/i.test(draft)) {
+        if (httpSources.length) {
+          // Replace model Sources with confirmed research URLs only.
+          draft = draft.replace(/\n##\s*Sources\b[\s\S]*?(?=\n##\s|\s*$)/i, "");
           draft += [
             "",
             "## Sources",
-            ...httpSources.slice(0, 8).map((u) => `- ${u}`),
+            ...httpSources.slice(0, 8).map((u) => {
+              try {
+                return `- [${new URL(u).hostname.replace(/^www\./, "")}](${u})`;
+              } catch {
+                return `- ${u}`;
+              }
+            }),
           ].join("\n");
         }
       }
-      return draft;
+      return draft.trim();
     };
 
     const finishNudge = () =>
