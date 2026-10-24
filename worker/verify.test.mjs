@@ -8,6 +8,15 @@ import { inferGoal } from "./goals.mjs";
 
 assert.equal(wantsChialisp("write puzzles/mtt_pool.clsp"), true);
 assert.equal(inferGoal("Finish the MTT pool and show the puzzle hash").id, "mtt_pool");
+assert.equal(
+  inferGoal("Hey this treasury puzzle was compromised — find the vuln and secure fix")
+    .id,
+  "secure_treasury",
+);
+assert.equal(
+  inferGoal("secure the treasury savings vault in ChiaLisp").hard,
+  true,
+);
 assert.equal(inferGoal("refactor the typescript API module").id, "coding");
 
 assert.equal(

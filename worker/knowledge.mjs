@@ -106,6 +106,23 @@ export const KNOWLEDGE_CHUNKS = [
     text: `Done = (mod shape + f/r) AND clvm_verify samples AND bare 64-hex from cdv AND security checklist reviewed. Never invent hashes if tooling is missing.`,
   },
   {
+    id: "cl-9",
+    pack: "chialisp",
+    title: "Treasury / savings drain patterns (CircuitDAO)",
+    keywords: [
+      "treasury",
+      "savings",
+      "vault",
+      "circuit",
+      "byc",
+      "discounted",
+      "flash",
+      "interest",
+      "lineage",
+    ],
+    text: `Treasury drains via savings logic: (A) multi CREATE_COIN → forged discounted-balance sibling; fix = exactly one child. (B) same-block flash interest; fix = curried deposit time + min hold + interest from principal×rate×elapsed. Type-check 32-byte ph. See templates/secure-treasury/.`,
+  },
+  {
     id: "ops-nav",
     pack: "ops",
     title: "Cross-platform navigation habits",

@@ -2,7 +2,7 @@ import type { AgentProfile } from "@/lib/types";
 import type { KnowledgePack } from "@/lib/knowledge/packs";
 
 const CHIALISP_HINT =
-  /\b(chialisp|clvm|chia\b|coinset|puzzle hash|curry|agg_sig|create_coin|cat2?\b|offer\b|coin_id|softfork)\b/i;
+  /\b(chialisp|clvm|chia\b|coinset|puzzle hash|curry|agg_sig|create_coin|cat2?\b|offer\b|coin_id|softfork|treasury|savings\s*vault|circuit)\b/i;
 
 /** How-to / navigate-my-computer style tasks across major OSes. */
 const OPS_HINT =

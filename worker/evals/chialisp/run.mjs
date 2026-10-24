@@ -9,6 +9,7 @@ import path from "path";
 import { fileURLToPath } from "url";
 import { verifyWorkspaceFiles } from "../../verify.mjs";
 import { findBarePuzzleHash } from "../../verify.mjs";
+import { inferGoal } from "../../goals.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const fixtures = path.join(here, "fixtures");
@@ -135,8 +136,23 @@ assert.equal(
 );
 console.log("ok  bare-hash-helpers");
 
+try {
+  const g = inferGoal(
+    "Hey this treasury puzzle was compromised. Find the vulnerability and secure fix in ChiaLisp.",
+  );
+  assert.equal(g.id, "secure_treasury");
+  assert.equal(g.hard, true);
+  assert.ok(g.playbooks.includes("secure-treasury.md"));
+  console.log("ok  treasury-routing");
+} catch (err) {
+  failed += 1;
+  console.error(
+    `FAIL treasury-routing: ${err instanceof Error ? err.message : err}`,
+  );
+}
+
 if (failed) {
   console.error(`\n${failed} eval case(s) failed`);
   process.exit(1);
 }
-console.log(`\nchialisp evals: ${cases.length + 1} passed`);
+console.log(`\nchialisp evals: ${cases.length + 2} passed`);

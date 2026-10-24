@@ -92,6 +92,14 @@ export function verifyWorkspaceFiles(files, opts = {}) {
         `${f.path}: CREATE_COIN without AGG_SIG_ME or ASSERT_MY_* — confirm destinations are curried/derived, not attacker-chosen solution atoms`,
       );
     }
+    // Heuristic: more than one literal CREATE_COIN / (list 51 …) in a singleton-style vault
+    // often means lineage-spoof risk (CircuitDAO Zellic finding).
+    const createCoinHits = body.match(/\bCREATE_COIN\b|\(list\s+51\b/gi) || [];
+    if (createCoinHits.length > 2) {
+      warnings.push(
+        `${f.path}: multiple CREATE_COIN forms detected (${createCoinHits.length}) — singleton vaults/treasuries should emit exactly one child per spend (CircuitDAO lineage-spoof class)`,
+      );
+    }
   }
 
   // Hard-domain jobs: missing worker tooling is a hard fail (no "cdv missing" escape).

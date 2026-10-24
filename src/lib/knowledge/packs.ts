@@ -161,6 +161,26 @@ Treat every solution atom as attacker-controlled unless signed or curried.`,
 Never invent hashes or skip tools when the worker reports tooling missing.`,
   },
   {
+    id: "cl-9",
+    pack: "chialisp",
+    title: "Treasury / savings drain patterns (CircuitDAO)",
+    keywords: [
+      "treasury",
+      "savings",
+      "vault",
+      "circuit",
+      "byc",
+      "discounted",
+      "flash",
+      "interest",
+      "lineage",
+    ],
+    text: `CircuitDAO treasury was drained via savings↔treasury logic (not L1). Two classes:
+A) Multiple CREATE_COIN from a vault → forged curried DISCOUNTED_BALANCE sibling; lineage still proves; treasury pays fake interest. Fix: exactly one CREATE_COIN child.
+B) Same-block flash deposit/withdraw claiming interest. Fix: curry deposit time; require min hold; compute interest from principal×rate×elapsed only.
+Also: type-check 32-byte puzzle hashes. See templates/secure-treasury/.`,
+  },
+  {
     id: "ops-nav",
     pack: "ops",
     title: "Cross-platform navigation habits",
