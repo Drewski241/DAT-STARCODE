@@ -17,8 +17,9 @@ import type {
   Project,
   StoreSnapshot,
 } from "@/lib/types";
-import { CREDITS_PER_JOB, DAT_ASSET_ID } from "@/lib/config";
+import { DAT_ASSET_ID } from "@/lib/config";
 import { creditsForDat } from "@/lib/economy";
+import { priceJob } from "@/lib/job-pricing";
 import { resolveModel } from "@/lib/models";
 import { hashPassword, verifyPassword } from "@/lib/password";
 import { awsClientConfig } from "@/lib/aws-creds";
@@ -318,6 +319,9 @@ function normalizeAccount(raw: Account): Account {
     passwordHash: raw.passwordHash ?? null,
     pokerPlayerId: raw.pokerPlayerId ?? null,
     source: raw.source ?? (raw.username ? "local" : "local"),
+    githubLogin: raw.githubLogin ?? null,
+    githubTokenEnc: raw.githubTokenEnc ?? null,
+    githubConnectedAt: raw.githubConnectedAt ?? null,
   };
 }
 
@@ -337,6 +341,9 @@ export async function getOrCreateAccount(accountId?: string | null) {
       source: "local",
       walletAddress: null,
       credits: 0,
+      githubLogin: null,
+      githubTokenEnc: null,
+      githubConnectedAt: null,
       createdAt: now,
       updatedAt: now,
     };
@@ -384,6 +391,9 @@ export async function registerLocalAccount(input: {
       source: "local",
       walletAddress: null,
       credits: 20,
+      githubLogin: null,
+      githubTokenEnc: null,
+      githubConnectedAt: null,
       createdAt: now,
       updatedAt: now,
     };
@@ -441,10 +451,40 @@ export async function upsertPokerLinkedAccount(input: {
       source: "spirit-poker" satisfies AccountSource,
       walletAddress: input.sageAddress ?? null,
       credits: 20,
+      githubLogin: null,
+      githubTokenEnc: null,
+      githubConnectedAt: null,
       createdAt: now,
       updatedAt: now,
     };
     store.accounts.push(account);
+    return normalizeAccount(account);
+  });
+}
+
+export async function setGithubConnection(
+  accountId: string,
+  input: { login: string; tokenEnc: string },
+) {
+  return mutate((store) => {
+    const account = store.accounts.find((a) => a.id === accountId);
+    if (!account) throw new Error("Account not found");
+    account.githubLogin = input.login;
+    account.githubTokenEnc = input.tokenEnc;
+    account.githubConnectedAt = new Date().toISOString();
+    account.updatedAt = account.githubConnectedAt;
+    return normalizeAccount(account);
+  });
+}
+
+export async function clearGithubConnection(accountId: string) {
+  return mutate((store) => {
+    const account = store.accounts.find((a) => a.id === accountId);
+    if (!account) throw new Error("Account not found");
+    account.githubLogin = null;
+    account.githubTokenEnc = null;
+    account.githubConnectedAt = null;
+    account.updatedAt = new Date().toISOString();
     return normalizeAccount(account);
   });
 }
@@ -454,6 +494,16 @@ export async function linkWallet(accountId: string, walletAddress: string) {
     const account = store.accounts.find((a) => a.id === accountId);
     if (!account) throw new Error("Account not found");
     account.walletAddress = walletAddress;
+    account.updatedAt = new Date().toISOString();
+    return account;
+  });
+}
+
+export async function unlinkWallet(accountId: string) {
+  return mutate((store) => {
+    const account = store.accounts.find((a) => a.id === accountId);
+    if (!account) throw new Error("Account not found");
+    account.walletAddress = null;
     account.updatedAt = new Date().toISOString();
     return account;
   });
@@ -572,11 +622,22 @@ function normalizeJob(job: CodingJob): CodingJob {
       typeof job.workspaceFileCount === "number" ? job.workspaceFileCount : 0,
     events: Array.isArray(job.events) ? job.events : [],
     toolSteps: typeof job.toolSteps === "number" ? job.toolSteps : 0,
+    githubUrl: job.githubUrl ?? null,
+    githubBranch: job.githubBranch ?? null,
+    githubPrUrl: job.githubPrUrl ?? null,
+    stepsUsed: typeof job.stepsUsed === "number" ? job.stepsUsed : null,
   };
 }
 
 function normalizeProject(p: Project): Project {
-  return { ...p, title: p.title || "Untitled project" };
+  return {
+    ...p,
+    title: p.title || "Untitled project",
+    githubUrl: p.githubUrl ?? null,
+    githubRepo: p.githubRepo ?? null,
+    githubDefaultBranch: p.githubDefaultBranch ?? null,
+    githubOpenPr: p.githubOpenPr !== false,
+  };
 }
 
 export async function listProjects(accountId: string) {
@@ -612,6 +673,9 @@ export async function createProject(input: {
         source: "local",
         walletAddress: null,
         credits: 0,
+        githubLogin: null,
+        githubTokenEnc: null,
+        githubConnectedAt: null,
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
       },
@@ -624,6 +688,10 @@ export async function createProject(input: {
       id: randomUUID(),
       accountId: input.accountId,
       title,
+      githubUrl: null,
+      githubRepo: null,
+      githubDefaultBranch: null,
+      githubOpenPr: true,
       createdAt: now,
       updatedAt: now,
     };
@@ -637,6 +705,39 @@ export async function touchProject(projectId: string) {
     if (!store.projects) store.projects = [];
     const project = store.projects.find((p) => p.id === projectId);
     if (!project) return null;
+    project.updatedAt = new Date().toISOString();
+    return normalizeProject(project);
+  });
+}
+
+export async function updateProjectGithub(
+  projectId: string,
+  accountId: string,
+  input: {
+    githubUrl?: string | null;
+    githubRepo?: string | null;
+    githubDefaultBranch?: string | null;
+    githubOpenPr?: boolean;
+  },
+) {
+  return mutate((store) => {
+    if (!store.projects) store.projects = [];
+    const project = store.projects.find((p) => p.id === projectId);
+    if (!project || project.accountId !== accountId) {
+      throw new Error("Project not found");
+    }
+    if (input.githubUrl !== undefined) {
+      project.githubUrl = input.githubUrl;
+    }
+    if (input.githubRepo !== undefined) {
+      project.githubRepo = input.githubRepo;
+    }
+    if (input.githubDefaultBranch !== undefined) {
+      project.githubDefaultBranch = input.githubDefaultBranch;
+    }
+    if (typeof input.githubOpenPr === "boolean") {
+      project.githubOpenPr = input.githubOpenPr;
+    }
     project.updatedAt = new Date().toISOString();
     return normalizeProject(project);
   });
@@ -729,12 +830,19 @@ export async function enqueueJob(input: {
       account = ensureAccount(store, input.accountSeed);
     }
     if (!account) throw new Error("Account not found");
-    if (account.credits < CREDITS_PER_JOB) {
+    // Price from the resolved Ollama tag (Auto already picked 7B vs general).
+    const priced = priceJob({
+      prompt: input.prompt,
+      modelId: input.modelResolved,
+    });
+    const charge = priced.total;
+    if (account.credits < charge) {
       throw new Error(
-        `Need ${CREDITS_PER_JOB} credits; balance is ${account.credits}`,
+        `Need ${charge} credits (${priced.lines.join("; ")}); balance is ${account.credits}`,
       );
     }
     const projectId = input.projectId?.trim() || null;
+    let projectGithubUrl: string | null = null;
     if (projectId) {
       if (!store.projects) store.projects = [];
       const project = store.projects.find((p) => p.id === projectId);
@@ -742,9 +850,10 @@ export async function enqueueJob(input: {
         throw new Error("Project not found");
       }
       project.updatedAt = new Date().toISOString();
+      projectGithubUrl = project.githubUrl ?? project.githubRepo ?? null;
     }
     const now = new Date().toISOString();
-    account.credits -= CREDITS_PER_JOB;
+    account.credits -= charge;
     account.updatedAt = now;
     const id = randomUUID();
     const workspaceId = projectId
@@ -756,18 +865,22 @@ export async function enqueueJob(input: {
       projectId,
       prompt: input.prompt.trim(),
       repoHint: input.repoHint?.trim() || null,
+      githubUrl: projectGithubUrl,
       parentJobId: input.parentJobId?.trim() || null,
       context: input.context?.trim() || null,
       modelRequested: input.modelRequested?.trim() || "auto",
       modelResolved: input.modelResolved,
       modelReason: input.modelReason,
       status: "queued",
-      creditsCharged: CREDITS_PER_JOB,
+      creditsCharged: charge,
+      stepsUsed: null,
       result: null,
       error: null,
       workerId: null,
       workspaceId,
       workspaceFileCount: 0,
+      githubBranch: null,
+      githubPrUrl: null,
       createdAt: now,
       updatedAt: now,
       completedAt: null,
@@ -1001,6 +1114,9 @@ export async function completeJob(input: {
   error?: string | null;
   workspaceFileCount?: number;
   toolSteps?: number;
+  githubBranch?: string | null;
+  githubPrUrl?: string | null;
+  stepsUsed?: number | null;
   /** Claimed job snapshot from the worker — used if store.json lost the row. */
   snapshot?: CodingJob | null;
 }) {
@@ -1045,6 +1161,15 @@ export async function completeJob(input: {
       if (typeof input.workspaceFileCount === "number") {
         current.workspaceFileCount = input.workspaceFileCount;
       }
+      if (input.githubBranch !== undefined) {
+        current.githubBranch = input.githubBranch;
+      }
+      if (input.githubPrUrl !== undefined) {
+        current.githubPrUrl = input.githubPrUrl;
+      }
+    }
+    if (typeof input.stepsUsed === "number") {
+      current.stepsUsed = input.stepsUsed;
     }
     current.updatedAt = now;
     current.completedAt = now;
@@ -1083,4 +1208,110 @@ export async function getPayments(accountId: string) {
   return store.payments
     .filter((p) => p.accountId === accountId)
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+}
+
+/**
+ * Recompute credits from durable ledger rows so Amplify redeploys / store
+ * races cannot silently zero a balance when payments are still on S3.
+ *
+ * expected = signupBonus(20 if registered) + confirmed burns − spent on
+ * non-failed jobs (failed jobs already refunded into account.credits).
+ */
+export async function reconcileAccountCredits(accountId: string) {
+  return mutate((store) => {
+    const account = store.accounts.find((a) => a.id === accountId);
+    if (!account) return null;
+
+    const granted = store.payments
+      .filter(
+        (p) =>
+          p.accountId === accountId &&
+          (p.status === "confirmed" || p.status === "demo"),
+      )
+      .reduce((sum, p) => sum + (p.credits || 0), 0);
+
+    const spent = store.jobs
+      .filter(
+        (j) =>
+          j.accountId === accountId &&
+          (j.status === "queued" ||
+            j.status === "claimed" ||
+            j.status === "running" ||
+            j.status === "completed"),
+      )
+      .reduce((sum, j) => sum + (j.creditsCharged || 0), 0);
+
+    // Local/Spirit signup grants 20 once when the account is registered.
+    const signupBonus = account.username ? 20 : 0;
+    const expected = Math.max(0, signupBonus + granted - spent);
+
+    if (account.credits !== expected) {
+      account.credits = expected;
+      account.updatedAt = new Date().toISOString();
+    }
+    return normalizeAccount(account);
+  });
+}
+
+/** Operator/customer-safe snapshot: is the credit ledger on S3? */
+export async function getStorePersistenceInfo() {
+  const resolved = await resolveWorkspaceBucket();
+  const peek = peekWorkspaceBucketEnv();
+  if (!resolved.bucket) {
+    return {
+      mode: isAwsHosted() ? ("unconfigured" as const) : ("local" as const),
+      ok: !isAwsHosted(),
+      source: resolved.source,
+      error: resolved.error ?? null,
+      envPeek: peek,
+      key: getStoreS3Key(),
+    };
+  }
+  try {
+    const s3 = await getS3();
+    if (!s3) {
+      return {
+        mode: "unconfigured" as const,
+        ok: false,
+        source: resolved.source,
+        error: "bucket resolved but S3 client unavailable",
+        envPeek: peek,
+        key: getStoreS3Key(),
+      };
+    }
+    await s3.client.send(
+      new GetObjectCommand({
+        Bucket: s3.bucket,
+        Key: getStoreS3Key(),
+      }),
+    );
+    return {
+      mode: "s3" as const,
+      ok: true,
+      source: resolved.source,
+      bucketSuffix: s3.bucket.slice(-12),
+      error: null,
+      key: getStoreS3Key(),
+    };
+  } catch (err) {
+    if (isMissingS3Object(err)) {
+      return {
+        mode: "s3" as const,
+        ok: true,
+        source: resolved.source,
+        bucketSuffix: resolved.bucket.slice(-12),
+        error: null,
+        note: "store object not created yet — first write will create it",
+        key: getStoreS3Key(),
+      };
+    }
+    return {
+      mode: "s3" as const,
+      ok: false,
+      source: resolved.source,
+      bucketSuffix: resolved.bucket.slice(-12),
+      error: formatAwsError(err),
+      key: getStoreS3Key(),
+    };
+  }
 }

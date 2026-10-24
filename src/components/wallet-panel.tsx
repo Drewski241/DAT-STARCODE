@@ -12,7 +12,9 @@ import {
   disconnectSageWallet,
   getDatBalanceMojos,
   hasWalletConnectProjectId,
+  resetSageWalletConnect,
   restoreSageSession,
+  walletConnectDiagnostics,
 } from "@/lib/sage-wc";
 
 type Account = {
@@ -106,16 +108,19 @@ export function WalletPanel({
 
       if (!live) {
         setMessage(
-          "Add NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID to .env (free project at cloud.walletconnect.com), restart npm run dev, then Connect Sage again.",
+          "WalletConnect is not configured on this deploy. In Amplify set NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID (free at cloud.walletconnect.com), redeploy, then Connect Sage again.",
         );
         return;
       }
 
-      setMessage("Opening WalletConnect — approve the connection in Sage…");
+      setMessage(
+        "Connecting to WalletConnect relay… (QR appears next — usually under 10s)",
+      );
       const { uri, approval } = await connectSageWallet();
       setWcUri(uri);
+      setBusy("awaiting-sage");
       setMessage(
-        "Scan this QR with Sage (WalletConnect), or paste the URI into Sage.",
+        "Scan this QR in Sage (WalletConnect), or copy/paste the URI below. Keep this tab open until Sage approves.",
       );
 
       const { address } = await approval;
@@ -130,7 +135,19 @@ export function WalletPanel({
       setMessage(`Sage connected: ${shortAddress(address)}. Ready to burn DAT.`);
     } catch (err) {
       setWcUri(null);
+      await resetSageWalletConnect().catch(() => undefined);
       setMessage(err instanceof Error ? err.message : "Connect failed");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function cancelConnect() {
+    setBusy("disconnect");
+    try {
+      await resetSageWalletConnect();
+      setWcUri(null);
+      setMessage("Connection cancelled. Click Connect Sage to try again.");
     } finally {
       setBusy(null);
     }
@@ -138,10 +155,27 @@ export function WalletPanel({
 
   async function disconnect() {
     setBusy("disconnect");
+    setMessage(null);
     try {
-      if (live) await disconnectSageWallet();
+      await disconnectSageWallet();
       setDatBalance(null);
-      setMessage("Sage disconnected.");
+      setWcUri(null);
+      // Always clear the saved linked address so Reconnect is available.
+      const res = await fetch("/api/session", {
+        method: "PATCH",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ unlinkWallet: true }),
+      });
+      const data = await res.json();
+      if (res.ok && data.account) {
+        onAccount(data.account);
+      }
+      setMessage(
+        live
+          ? "Sage disconnected. Click Connect Sage to pair again."
+          : "Wallet unlinked. Set NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID in Amplify, redeploy, then Connect Sage.",
+      );
     } catch (err) {
       setMessage(err instanceof Error ? err.message : "Disconnect failed");
     } finally {
@@ -269,23 +303,35 @@ export function WalletPanel({
         <button
           type="button"
           onClick={() => void connectSage()}
-          disabled={busy === "connect"}
+          disabled={busy === "connect" || busy === "awaiting-sage"}
           className="relative z-20 inline-flex h-12 cursor-pointer items-center rounded-none bg-copper-500 px-5 font-mono text-xs uppercase tracking-widest text-ink-950 transition hover:bg-copper-400 disabled:cursor-wait disabled:opacity-60"
         >
           {busy === "connect"
-            ? "Connecting…"
-            : account?.walletAddress
-              ? "Reconnect Sage"
-              : "Connect Sage"}
+            ? "Connecting relay…"
+            : busy === "awaiting-sage"
+              ? "Waiting for Sage…"
+              : account?.walletAddress
+                ? "Reconnect Sage"
+                : "Connect Sage"}
         </button>
-        {account?.walletAddress && live && (
+        {(busy === "connect" || busy === "awaiting-sage" || wcUri) && (
+          <button
+            type="button"
+            onClick={() => void cancelConnect()}
+            disabled={busy === "disconnect"}
+            className="font-mono text-xs uppercase tracking-widest text-rose-300 hover:text-rose-200"
+          >
+            Cancel
+          </button>
+        )}
+        {account?.walletAddress && (
           <button
             type="button"
             onClick={() => void disconnect()}
             disabled={!!busy}
             className="font-mono text-xs uppercase tracking-widest text-steel-400 hover:text-copper-100"
           >
-            Disconnect
+            {busy === "disconnect" ? "Disconnecting…" : "Disconnect"}
           </button>
         )}
         <div className="font-mono text-xs text-steel-400">
@@ -295,6 +341,9 @@ export function WalletPanel({
               <span className="text-copper-200">
                 {shortAddress(account.walletAddress)}
               </span>
+              {!live && (
+                <span className="text-rose-300"> · WalletConnect offline</span>
+              )}
             </span>
           ) : (
             <span>Mode: {sage.mode}</span>
@@ -311,6 +360,34 @@ export function WalletPanel({
           )}
         </div>
       </div>
+
+      {!live && (
+        <p className="mt-4 max-w-3xl border-l-2 border-amber-500/80 bg-ink-900/60 py-3 pl-4 font-mono text-xs leading-relaxed text-amber-100">
+          Live burns need{" "}
+          <span className="text-copper-200">
+            NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID
+          </span>{" "}
+          in Amplify env (from{" "}
+          <a
+            href="https://dashboard.reown.com/"
+            target="_blank"
+            rel="noreferrer"
+            className="underline decoration-amber-700 underline-offset-2"
+          >
+            dashboard.reown.com
+          </a>
+          ), then a redeploy. Until then Disconnect still clears the saved
+          address.
+        </p>
+      )}
+
+      {live && (
+        <p className="mt-3 font-mono text-[10px] leading-relaxed text-steel-600">
+          WC build id {walletConnectDiagnostics().projectIdFingerprint ?? "missing"}{" "}
+          · page {typeof window !== "undefined" ? window.location.origin : ""}
+          . Reown allowlist must include this origin (and www if you use it).
+        </p>
+      )}
 
       <p className="mt-4 font-mono text-[11px] leading-relaxed text-steel-500">
         Burn address{" "}

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getWorkerApiKey } from "@/lib/config";
 import { getJob } from "@/lib/store";
 import {
+  deleteWorkspaceFiles,
   listWorkspaceFiles,
   readWorkspaceFile,
   writeWorkspaceFiles,
@@ -23,6 +24,8 @@ export async function POST(req: NextRequest) {
     workerId?: string;
     action?: "pull" | "push";
     files?: { path: string; content: string }[];
+    /** Paths removed on the worker that should be dropped from Studio/S3. */
+    deletePaths?: string[];
   };
 
   if (!body.jobId || !body.workerId) {
@@ -43,7 +46,13 @@ export async function POST(req: NextRequest) {
   const action = body.action ?? "pull";
   if (action === "push") {
     const written = await writeWorkspaceFiles(job, body.files ?? []);
-    return NextResponse.json({ ok: true, written: written.length });
+    const deleted = await deleteWorkspaceFiles(job, body.deletePaths ?? []);
+    return NextResponse.json({
+      ok: true,
+      written: written.length,
+      deleted: deleted.length,
+      deletedPaths: deleted,
+    });
   }
 
   const listed = await listWorkspaceFiles(job);

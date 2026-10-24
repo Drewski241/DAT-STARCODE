@@ -1,22 +1,25 @@
 import { NextResponse } from "next/server";
 import { DAT_ASSET_ID, APP_NAME } from "@/lib/config";
-
-function storeBackend() {
-  const bucket = (
-    process.env.WORKSPACE_S3_BUCKET ||
-    process.env.STORE_S3_BUCKET ||
-    ""
-  ).trim();
-  if (bucket) return { backend: "s3", bucket };
-  return { backend: "file" };
-}
+import { getStorePersistenceInfo } from "@/lib/store";
 
 export async function GET() {
+  let store = null;
+  try {
+    store = await getStorePersistenceInfo();
+  } catch (err) {
+    store = {
+      mode: "error",
+      ok: false,
+      error: err instanceof Error ? err.message : "store probe failed",
+    };
+  }
+
   return NextResponse.json({
     ok: true,
     app: APP_NAME,
     datAssetId: DAT_ASSET_ID,
-    store: storeBackend(),
     time: new Date().toISOString(),
+    /** Credits/accounts persist only when store.mode === "s3" and store.ok */
+    store,
   });
 }

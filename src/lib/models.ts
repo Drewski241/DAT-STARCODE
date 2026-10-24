@@ -3,6 +3,8 @@
  * Auto resolves to a concrete model before the job is queued.
  */
 
+import { inferGoal } from "@/lib/goals";
+
 export type ModelKind = "auto" | "coding" | "general";
 
 export type ModelOption = {
@@ -19,8 +21,7 @@ export const MODEL_OPTIONS: ModelOption[] = [
     label: "Auto",
     kind: "auto",
     ollamaTag: null,
-    blurb:
-      "Picks coding vs general (ChiaLisp / hard tasks prefer 14B when available)",
+    blurb: "Picks model from your prompt (hard ChiaLisp/MTT → Coder 14B)",
   },
   {
     id: "qwen2.5-coder:7b",
@@ -34,7 +35,7 @@ export const MODEL_OPTIONS: ModelOption[] = [
     label: "Coder 14B",
     kind: "coding",
     ollamaTag: "qwen2.5-coder:14b",
-    blurb: "Stronger coding / ChiaLisp; needs more VRAM",
+    blurb: "Stronger coding; needs more VRAM",
   },
   {
     id: "qwen2.5:7b",
@@ -54,14 +55,12 @@ export const MODEL_OPTIONS: ModelOption[] = [
 
 export const DEFAULT_MODEL_ID = "auto";
 export const DEFAULT_CODING_MODEL = "qwen2.5-coder:7b";
-export const DEFAULT_STRONG_CODING_MODEL = "qwen2.5-coder:14b";
+/** Stronger default when Auto detects ChiaLisp / MTT / other hard domains. */
+export const DEFAULT_HARD_CODING_MODEL = "qwen2.5-coder:14b";
 export const DEFAULT_GENERAL_MODEL = "llama3.1:8b";
 
 const CODING_HINT =
-  /\b(code|coding|function|bug|fix|refactor|implement|typescript|javascript|python|rust|go\b|api|endpoint|class|module|commit|diff|pr\b|pull request|compile|lint|test|unit test|css|html|sql|docker|kubernetes|cli|script|repo|github|stack trace|error:|npm|cargo|pytest|build|game|app|website|page|component|ui|frontend|backend|playable|browser|canvas|sprite|unicorn|bubbles?|jump|platformer|make me|create a|write a|chialisp|clvm)\b/i;
-
-const HARD_HINT =
-  /\b(chialisp|clvm|architecture|migrate|from scratch|multi-file|security|refactor (the |entire |whole )|production|consensus)\b/i;
+  /\b(code|coding|function|bug|fix|refactor|implement|typescript|javascript|python|rust|go\b|api|endpoint|class|module|commit|diff|pr\b|pull request|compile|lint|test|unit test|css|html|sql|docker|kubernetes|cli|script|repo|github|stack trace|error:|npm|cargo|pytest|build|game|app|website|page|component|ui|frontend|backend|playable|browser|canvas|sprite|unicorn|bubbles?|jump|platformer|make me|create a|write a|puzzle|chialisp|\.clsp)\b/i;
 
 /**
  * Resolve Auto (or an explicit id) to an Ollama model tag.
@@ -90,22 +89,23 @@ export function resolveModel(
     };
   }
 
-  const coding = CODING_HINT.test(prompt);
-  const hard = HARD_HINT.test(prompt) || prompt.trim().length > 900;
-  if (!coding) {
+  const goal = inferGoal(prompt);
+  if (goal.hard) {
     return {
       requested: "auto",
-      resolved: DEFAULT_GENERAL_MODEL,
-      reason: "Auto: prompt looks like general Q&A",
+      resolved: DEFAULT_HARD_CODING_MODEL,
+      reason: `Auto: hard domain (${goal.label}) → ${DEFAULT_HARD_CODING_MODEL}`,
     };
   }
-  const resolved = hard ? DEFAULT_STRONG_CODING_MODEL : DEFAULT_CODING_MODEL;
+
+  const coding = goal.id === "coding" || CODING_HINT.test(prompt);
+  const resolved = coding ? DEFAULT_CODING_MODEL : DEFAULT_GENERAL_MODEL;
   return {
     requested: "auto",
     resolved,
-    reason: hard
-      ? `Auto: hard coding task → ${resolved}`
-      : "Auto: prompt looks like a coding task",
+    reason: coding
+      ? "Auto: prompt looks like a coding task"
+      : "Auto: prompt looks like general Q&A",
   };
 }
 

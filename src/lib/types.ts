@@ -23,12 +23,19 @@ export interface Account {
   source: AccountSource;
   walletAddress: string | null;
   credits: number;
+  /** GitHub login when OAuth-connected */
+  githubLogin: string | null;
+  /** AES-GCM packed access token — never send to the browser */
+  githubTokenEnc: string | null;
+  githubConnectedAt: string | null;
   createdAt: string;
   updatedAt: string;
 }
 
-/** Public account shape returned to the browser (no password hash). */
-export type PublicAccount = Omit<Account, "passwordHash">;
+/** Public account shape returned to the browser (no password / token secrets). */
+export type PublicAccount = Omit<Account, "passwordHash" | "githubTokenEnc"> & {
+  githubConnected: boolean;
+};
 
 export interface PaymentIntent {
   id: string;
@@ -47,6 +54,16 @@ export interface Project {
   id: string;
   accountId: string;
   title: string;
+  /**
+   * Public GitHub repo the user pasted (URL or owner/name).
+   * Worker may clone it; user pushes with terminal commands (no OAuth required).
+   */
+  githubUrl: string | null;
+  /** Linked GitHub repo as owner/name (OAuth auto-PR path) */
+  githubRepo: string | null;
+  githubDefaultBranch: string | null;
+  /** When true (default), worker opens a PR after a successful turn (OAuth only) */
+  githubOpenPr: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -74,6 +91,8 @@ export interface CodingJob {
   projectId: string | null;
   prompt: string;
   repoHint: string | null;
+  /** Copied from project at enqueue — https://github.com/owner/repo */
+  githubUrl: string | null;
   /** Prior job this continues from (follow-up prompts). */
   parentJobId: string | null;
   /** Extra context injected for the worker (prior result / files). */
@@ -83,12 +102,18 @@ export interface CodingJob {
   modelReason: string;
   status: JobStatus;
   creditsCharged: number;
+  /** Agent loop steps used (reported by worker; for metering / future refunds). */
+  stepsUsed: number | null;
   result: string | null;
   error: string | null;
   workerId: string | null;
   /** Relative workspace key under account: `projects/{id}` or `{jobId}` */
   workspaceId: string | null;
   workspaceFileCount: number;
+  /** Branch the worker pushed for this turn (GitHub-linked projects). */
+  githubBranch: string | null;
+  /** Pull request URL opened by the worker, if any. */
+  githubPrUrl: string | null;
   /** Live tool / status events (durable subset). */
   events?: JobEvent[];
   toolSteps?: number;

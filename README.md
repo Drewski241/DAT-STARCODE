@@ -57,8 +57,9 @@ Open [http://localhost:43127](http://localhost:43127).
 
 1. **Sign in** at `/account` — DAT username / DAT password (shared DAT account), or create a new DAT STARCODER account. Password reset uses the shared DAT email reset flow.
 2. **Buy credits (live Sage burn)** — set `NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID`, Connect Sage, then Burn DAT. Sage sends DAT to the Chia burn address; credits are granted after you approve the send.
-3. **Studio** — create a **project**, pick a model, and send turns. Turns share one workspace; the worker runs a tool-using agent loop (list/read/write/run, plus web search, URL fetch, and CLVM verify). Progress and draft tokens stream live over SSE.
-4. **Live worker** (GPU box):
+3. **Studio** — create a **project**, pick a model, and send turns. Turns share one workspace; the worker runs a tool-using agent loop (list/read/write/run, plus web search, URL fetch, CLVM verify, and puzzle_hash via cdv). Progress and draft tokens stream live over SSE.
+4. **GitHub (optional)** — set `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET` ([setup](docs/github-oauth-setup.md)), Connect GitHub in Studio, create/link a playground repo; the worker clones, branches, and opens a PR.
+5. **Live worker** (GPU box):
 
 ```bash
 DISABLE_INLINE_WORKER=1 npm run dev   # website terminal
@@ -75,14 +76,43 @@ Pull the models you want users to select (Auto needs both a coder and a general 
 ```bash
 ollama pull qwen2.5-coder:7b
 ollama pull llama3.1:8b
-# optional:
+# optional (stronger coding — recommended for ChiaLisp / hard tasks):
 # ollama pull qwen2.5-coder:14b
 # ollama pull qwen2.5:7b
 ```
 
-**Auto** routing: coding-like prompts (including “build a … game”) → `qwen2.5-coder:7b`; hard / ChiaLisp prompts prefer `qwen2.5-coder:14b`; otherwise → `llama3.1:8b`. Routing is re-evaluated when a job is claimed so queued jobs pick up heuristic fixes.
+The worker **preflights** the selected Ollama tag before running (`ollama list`). If Studio picks `qwen2.5-coder:14b` and it is not pulled, the job fails immediately with pull instructions instead of burning agent steps.
 
-Optional worker agent knobs (see `.env.example`): `AGENT_MAX_STEPS`, `AGENT_ALLOW_SHELL`, `AGENT_REPO_ROOT`. Install `clvm_tools` (via `npm ci`) or put `brun`/`run` on `PATH` for ChiaLisp verification.
+**Credits (sticker price at enqueue):**
+
+| Signal | Effect |
+| --- | --- |
+| Base | `CREDITS_PER_JOB` (default **5**) |
+| Model `14b` | ×2 base |
+| Model `32b` / `70b` | ×3 base |
+| Hard domain (`.clsp` / ChiaLisp / `mtt_pool` / …) | +`CREDITS_HARD_DOMAIN` (default **10**) |
+
+Example: Coder 14B + ChiaLisp prompt → **5×2+10 = 20** credits. Studio shows the live total on **Send turn**. Worker reports `stepsUsed` on complete (for future settle/refund).
+
+**Niche domains:** prompts that mention `.clsp` / ChiaLisp load `worker/playbooks/chialisp.md` into the agent system prompt, raise the step budget (`AGENT_HARD_TASK_STEPS`, default **40**), and **verify** written `.clsp` files (must start with `(mod`, reject Common Lisp stubs). Failed verification is called out in the job result.
+
+**Workspace deletes:** when the agent `rm`s a file that was pulled from Studio, the worker sends `deletePaths` on push so S3/local storage drops it (otherwise stubs lingered forever across turns).
+
+**Goal router:** short prompts are classified (`mtt_pool` / `chialisp` / `coding` / `general`). Hard goals load playbooks under `worker/playbooks/`, require a `PLAN.md` first step, and enable the optional **`puzzle_hash`** tool (`cdv` on the worker).
+
+**cdv (optional, worker box):**
+
+```bash
+pipx install chia-dev-tools   # provides `cdv`
+cdv --help
+# restart npm run worker
+```
+
+When `cdv` is present, ChiaLisp turns must document a 64-char puzzle hash (or verification fails).
+
+**Auto** routing: hard domain (ChiaLisp / MTT) → `qwen2.5-coder:14b`; other coding → `qwen2.5-coder:7b`; otherwise → `llama3.1:8b`. Pull 14B on the worker or hard Auto jobs will 404 at preflight. Routing is re-evaluated when a job is claimed so queued jobs pick up heuristic fixes.
+
+Optional worker agent knobs (see `.env.example`): `AGENT_MAX_STEPS`, `AGENT_ALLOW_SHELL`, `AGENT_REPO_ROOT`. Install `clvm_tools` (via `npm ci`) or put `brun`/`run` on `PATH` for ChiaLisp verification / `clvm_verify`.
 
 If a worker dies mid-job, `claimed`/`running` jobs older than `STALE_JOB_CLAIM_MS` (default 45s) are reclaimed by the next worker poll. `GET /api/worker/queue` (worker key) dumps store vs sidecar queue state for debugging.
 
@@ -132,6 +162,7 @@ Then set Amplify env vars (from stack outputs):
 | `COOKIE_DOMAIN` | `.datstarcoder.com` when using the custom domain (apex + www) |
 | ~~`AWS_REGION`~~ | **Do not set** — Amplify reserves `AWS_*` and injects the region itself |
 | `NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID` | WalletConnect project id |
+| `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET` | OAuth App for Studio → Connect GitHub → worker PRs ([setup](docs/github-oauth-setup.md)) |
 | `ALLOW_DEMO_PAYMENTS` | `1` only for invite-only tester credits |
 
 **Amplify SSR must be able to call S3.** If `/api/worker/queue` reports `CredentialsProviderError`, the compute has no AWS credentials:

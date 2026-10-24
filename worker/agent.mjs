@@ -6,12 +6,26 @@ import { promises as fs } from "fs";
 import path from "path";
 import { spawn } from "child_process";
 import os from "os";
+import { fileURLToPath } from "url";
+import {
+  commitPushAndOpenPr,
+  formatPushCommands,
+  prepareGithubWorkspace,
+  preparePublicGithubWorkspace,
+} from "./github.mjs";
+import { cdvAvailable, puzzleHashWithCdv } from "./cdv.mjs";
+import { inferGoal } from "./goals.mjs";
+import { ensurePuzzleHashDocumented } from "./hash-doc.mjs";
+import { verifyWorkspaceFiles } from "./verify.mjs";
 import { clvmVerify } from "./clvm-verify.mjs";
 import { retrieveKnowledge, packsForProfile } from "./knowledge.mjs";
 
 const MAX_STEPS = Number(process.env.AGENT_MAX_STEPS || 12);
+const HARD_TASK_STEPS = Number(process.env.AGENT_HARD_TASK_STEPS || 40);
 const RUN_TIMEOUT_MS = Number(process.env.AGENT_RUN_TIMEOUT_MS || 20000);
 const MAX_FILE_BYTES = 200_000;
+const PLAYBOOK_MAX_CHARS = 8_000;
+const AGENTS_MD_MAX_CHARS = 4_000;
 
 const HOW_TO_RUN = `
 Always end your final answer with a section titled exactly: ## How to run / play
@@ -25,6 +39,50 @@ For everyday questions: be accurate and unbiased, separate facts from contested 
 and say when unsure. Use web_search for time-sensitive facts. Never ask for passwords or
 recovery keys. Medical/legal/financial topics = general info only + suggest professionals when stakes are high.
 `.trim();
+
+const QUALITY_RULES = `
+Quality rules:
+- Infer the user's end goal from a short prompt; use the domain playbook(s) below — do not wait for a novel-length spec.
+- For hard goals: FIRST write_file PLAN.md (Goal / Done when / Files), then implement.
+- Never claim you deleted or fixed a file unless you verified with list_files / read_file after.
+- rm / unlink of files that were pulled from Studio are synced back (workspace deletes). Prefer real deletes over leaving NOTE stubs.
+- If the user asks for ChiaLisp / .clsp: write real ChiaLisp starting with (mod — never Common Lisp.
+- When the puzzle_hash tool is available, use it after writing .clsp and document the hash under ## Pool puzzle hash.
+- Before {"done":true} on a .clsp task, read_file the puzzle and confirm it has (mod and no defparameter/let*/mapcar.
+`.trim();
+
+async function loadPlaybook(name) {
+  try {
+    const here = path.dirname(fileURLToPath(import.meta.url));
+    const p = path.join(here, "playbooks", name);
+    const text = await fs.readFile(p, "utf8");
+    return text.slice(0, PLAYBOOK_MAX_CHARS);
+  } catch {
+    return null;
+  }
+}
+
+async function loadPlaybooks(names) {
+  const chunks = [];
+  for (const name of names || []) {
+    const text = await loadPlaybook(name);
+    if (text) chunks.push(`### ${name}\n${text}`);
+  }
+  const joined = chunks.join("\n\n");
+  return joined ? joined.slice(0, PLAYBOOK_MAX_CHARS) : null;
+}
+
+async function loadRepoAgentsMd(root) {
+  for (const rel of ["AGENTS.md", "agents.md", ".cursorrules"]) {
+    try {
+      const text = await fs.readFile(path.join(root, rel), "utf8");
+      if (text.trim()) return `${rel}:\n${text.slice(0, AGENTS_MD_MAX_CHARS)}`;
+    } catch {
+      /* missing */
+    }
+  }
+  return null;
+}
 
 function safeRel(p) {
   const n = String(p || "")
@@ -83,16 +141,33 @@ async function toolWrite(root, rel, content) {
   return `OK wrote ${safe} (${Buffer.byteLength(text, "utf8")} bytes)`;
 }
 
+const BLOCKED_RUN =
+  /\b(sudo|pkexec|passwd|su\b|visudo|shutdown|reboot|halt|poweroff)\b/i;
+
 function runCommand(root, command) {
+  const cmd = String(command || "").trim();
+  if (!cmd) {
+    return Promise.resolve("ERROR: empty command");
+  }
+  if (BLOCKED_RUN.test(cmd)) {
+    return Promise.resolve(
+      "ERROR: interactive/privileged commands (sudo, su, passwd, …) are blocked. Use user-level tools only (npm, node, python, …).",
+    );
+  }
   return new Promise((resolve) => {
-    const child = spawn(command, {
+    const child = spawn(cmd, {
       cwd: root,
       shell: true,
       env: {
         ...process.env,
         PATH: process.env.PATH,
         HOME: process.env.HOME,
+        DEBIAN_FRONTEND: "noninteractive",
+        CI: "1",
+        npm_config_fund: "false",
+        npm_config_audit: "false",
       },
+      stdio: ["ignore", "pipe", "pipe"],
     });
     let stdout = "";
     let stderr = "";
@@ -162,7 +237,16 @@ function detectProfile(prompt) {
   return "general";
 }
 
-function agentSystem(job) {
+function agentSystem(job, github, githubClone, extras = {}) {
+  const repoLabel =
+    github?.repoFullName ||
+    githubClone?.fullName ||
+    null;
+  const githubMode = github
+    ? `This workspace is a clone of GitHub repo ${github.repoFullName}. After you finish, the worker will commit, push a branch, and open a pull request automatically — focus on making good file changes.`
+    : githubClone
+      ? `This workspace is a clone of public GitHub repo ${githubClone.fullName}. After you finish, the user will push with terminal commands printed in the result — focus on making good file changes. Do not commit or push yourself.`
+      : "This workspace syncs to Studio download zip (no GitHub repo linked).";
   const profile = detectProfile(job.prompt || "");
   const packs = packsForProfile(profile);
   const chunks = retrieveKnowledge(job.prompt || "", { packs, limit: 3 });
@@ -173,18 +257,18 @@ function agentSystem(job) {
           "Retrieved knowledge:",
           ...chunks.map((c) => `### ${c.title}\n${c.text}`),
         ].join("\n\n");
-
   return [
     "You are DAT STARCODER, a robust coding and help agent with tools.",
     "You work inside a real project workspace on disk when coding.",
     "You also help with Windows / macOS / ChromeOS / Linux how-tos and everyday questions.",
     UNBIASED_QNA,
+    githubMode,
     profile === "chialisp"
-      ? "For ChiaLisp/CLVM, prefer clvm_verify (brun/run) before finishing."
+      ? "For ChiaLisp/CLVM, prefer clvm_verify (brun/run) and puzzle_hash (cdv) before finishing."
       : "",
     "On every turn respond with ONLY one JSON object (optionally in a ```json fence):",
     "",
-    '1) Call a tool: {"thought":"...","tool":"list_files"|"read_file"|"write_file"|"run"|"web_search"|"fetch_url"|"clvm_verify","args":{...}}',
+    '1) Call a tool: {"thought":"...","tool":"list_files"|"read_file"|"write_file"|"run"|"web_search"|"fetch_url"|"clvm_verify"|"puzzle_hash","args":{...}}',
     '   - list_files args: {}',
     '   - read_file args: {"path":"relative/path"}',
     '   - write_file args: {"path":"relative/path","content":"full file contents"}',
@@ -192,6 +276,7 @@ function agentSystem(job) {
     '   - web_search args: {"query":"..."}',
     '   - fetch_url args: {"url":"https://..."}',
     '   - clvm_verify args: {"program":"...","solution":"()","mode":"brun"|"run","expect":"optional"}',
+    '   - puzzle_hash args: {"path":"puzzles/foo.clsp","curryArgs":["optional","cdv","-a","values"]}',
     "",
     '2) Finish: {"done":true,"message":"markdown answer for the user"}',
     "",
@@ -200,10 +285,26 @@ function agentSystem(job) {
     "- Prefer small, working changes. Write complete files when creating them.",
     "- Use run to install/build/test when helpful (keep commands short).",
     "- Use web_search when facts may be stale (OS menus, docs, current APIs).",
+    "- Never use sudo, su, passwd, or other interactive/privileged commands.",
+    "- Prefer static HTML/JS games/apps that need no system packages when possible.",
     "- For games/apps, make something runnable (often index.html).",
+    "- Do not commit or push yourself; the worker handles git/PR or prints push commands.",
+    QUALITY_RULES,
     HOW_TO_RUN,
     knowledge,
+    extras.goal
+      ? `\n## Inferred goal\n${extras.goal.label} (\`${extras.goal.id}\`)${extras.cdvAvailable ? " · cdv available (use puzzle_hash)" : " · cdv not installed on worker"}\n`
+      : "",
+    extras.playbook
+      ? `\n## Domain playbook (follow strictly)\n${extras.playbook}\n`
+      : "",
+    extras.agentsMd
+      ? `\n## Repository agent instructions\n${extras.agentsMd}\n`
+      : "",
     job.projectId ? `Project id: ${job.projectId}` : "",
+    repoLabel
+      ? `GitHub repo: ${repoLabel} (base ${github?.defaultBranch || githubClone?.defaultBranch || "main"})`
+      : "",
     job.context ? `\nPrior context:\n${job.context}\n` : "",
     "",
     "User request:",
@@ -215,15 +316,13 @@ function agentSystem(job) {
 
 async function webSearch(query) {
   const q = String(query || "").trim();
-  if (!q) return "ERROR: query required";
+  if (!q) return "ERROR: empty query";
   try {
-    const res = await fetch(
-      `https://api.duckduckgo.com/?q=${encodeURIComponent(q)}&format=json&no_html=1&skip_disambig=1`,
-      {
-        headers: { "User-Agent": "DAT-STARCODER-agent/0.1" },
-        signal: AbortSignal.timeout(12_000),
-      },
-    );
+    const url = `https://api.duckduckgo.com/?q=${encodeURIComponent(q)}&format=json&no_html=1&skip_disambig=1`;
+    const res = await fetch(url, {
+      headers: { "User-Agent": "DAT-STARCODER-agent/0.1" },
+      signal: AbortSignal.timeout(12_000),
+    });
     if (!res.ok) return `ERROR: search ${res.status}`;
     const data = await res.json();
     const lines = [];
@@ -320,24 +419,29 @@ async function ollamaChat(ollamaUrl, model, messages, onToken) {
   return full;
 }
 
+const SKIP_PUSH_NAME =
+  /(^|\/)(package-lock\.json|yarn\.lock|pnpm-lock\.yaml|\.DS_Store)$/i;
+const SKIP_PUSH_DIR = /(^|\/)(node_modules|dist|build|\.next|coverage|\.git)\//;
+
 async function collectLocalFiles(root) {
   const paths = await listTree(root);
   const files = [];
   for (const rel of paths) {
     if (rel.startsWith("turns/")) continue;
+    if (SKIP_PUSH_NAME.test(rel) || SKIP_PUSH_DIR.test(rel)) continue;
     try {
       const content = await fs.readFile(path.join(root, rel), "utf8");
       if (Buffer.byteLength(content, "utf8") > MAX_FILE_BYTES) continue;
       files.push({ path: rel, content });
     } catch {
-      /* skip */
+      /* skip binary / unreadable */
     }
   }
   return files;
 }
 
 /**
- * @returns {{ result: string, files: {path:string,content:string}[], toolSteps: number }}
+ * @returns {{ result: string, files: {path:string,content:string}[], githubBranch?: string|null, githubPrUrl?: string|null }}
  */
 export async function runAgentJob({
   job,
@@ -345,6 +449,8 @@ export async function runAgentJob({
   model,
   pullWorkspace,
   pushWorkspace,
+  github = null,
+  githubClone = null,
   log = console.log,
   onEvent,
 }) {
@@ -353,24 +459,94 @@ export async function runAgentJob({
   };
 
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "starcoder-"));
+  let githubBranch = null;
+  let githubPrUrl = null;
   let toolSteps = 0;
+  /** @type {"oauth"|"commands"|null} */
+  let githubPath = null;
   try {
     await emit("status", `Starting agent · ${model}`);
     const pulled = await pullWorkspace(job);
+    /** Paths that existed in Studio before this turn — used to detect deletes. */
+    const pulledPaths = [];
     for (const f of pulled.files || []) {
       const safe = safeRel(f.path);
       if (!safe) continue;
+      pulledPaths.push(safe);
       const full = path.join(root, safe);
       await fs.mkdir(path.dirname(full), { recursive: true });
       await fs.writeFile(full, f.content ?? "", "utf8");
     }
 
-    const messages = [{ role: "system", content: agentSystem(job) }];
-    let finalMessage = "";
+    if (github) {
+      githubPath = "oauth";
+      log(
+        `[agent] github prepare ${github.repoFullName} base=${github.defaultBranch}`,
+      );
+      try {
+        const prepared = await prepareGithubWorkspace(root, github, job);
+        githubBranch = prepared.branch;
+        log(`[agent] github branch ${githubBranch}`);
+      } catch (err) {
+        log(
+          `[agent] github prepare failed: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    } else if (githubClone) {
+      githubPath = "commands";
+      log(
+        `[agent] github public clone ${githubClone.fullName} base=${githubClone.defaultBranch}`,
+      );
+      try {
+        const prepared = await preparePublicGithubWorkspace(
+          root,
+          githubClone,
+          job,
+        );
+        githubBranch = prepared.branch;
+        log(`[agent] github branch ${githubBranch} (user will push)`);
+      } catch (err) {
+        // Private or missing repo — keep workspace files; still print push cmds.
+        githubBranch = `dat-starcoder/${job.id.slice(0, 8)}`;
+        log(
+          `[agent] github public clone failed (continuing): ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    }
 
-    for (let step = 0; step < MAX_STEPS; step++) {
-      log(`[agent] step ${step + 1}/${MAX_STEPS} job=${job.id.slice(0, 8)}`);
-      await emit("log", `Thinking (step ${step + 1}/${MAX_STEPS})…`);
+    const goal = inferGoal(job.prompt);
+    const hardTask = goal.hard;
+    const stepLimit = hardTask ? HARD_TASK_STEPS : MAX_STEPS;
+    const playbook = await loadPlaybooks(goal.playbooks);
+    const hasCdv = goal.wantCdv ? await cdvAvailable() : false;
+    if (playbook) {
+      log(
+        `[agent] goal=${goal.id} playbooks=${goal.playbooks.join(",") || "-"} (${playbook.length} chars) cdv=${hasCdv}`,
+      );
+    } else {
+      log(`[agent] goal=${goal.id}`);
+    }
+    const agentsMd = await loadRepoAgentsMd(root);
+    if (agentsMd) log(`[agent] loaded repo agent instructions`);
+
+    const messages = [
+      {
+        role: "system",
+        content: agentSystem(job, github, githubClone, {
+          playbook,
+          agentsMd,
+          goal,
+          cdvAvailable: hasCdv,
+        }),
+      },
+    ];
+    let finalMessage = "";
+    let stepsUsed = 0;
+
+    for (let step = 0; step < stepLimit; step++) {
+      stepsUsed = step + 1;
+      log(`[agent] step ${step + 1}/${stepLimit} job=${job.id.slice(0, 8)}`);
+      await emit("log", `Thinking (step ${step + 1}/${stepLimit})…`);
       let content;
       try {
         content = await ollamaChat(
@@ -392,7 +568,7 @@ export async function runAgentJob({
           "",
           "## How to run / play",
           "1. Open Studio → Workspace → Download zip if files exist.",
-          "2. Retry the job after confirming Ollama is running.",
+          "2. Retry the job after confirming Ollama is running and the selected model is pulled (`ollama list`).",
         ].join("\n");
         await emit(
           "error",
@@ -434,6 +610,15 @@ export async function runAgentJob({
         observation = await toolRead(root, args.path);
       } else if (tool === "write_file") {
         observation = await toolWrite(root, args.path, args.content);
+        // Nudge + precompute hash as soon as a .clsp lands (don't burn steps).
+        if (hasCdv && /\.clsp$/i.test(String(args.path || ""))) {
+          const result = await puzzleHashWithCdv(root, String(args.path || ""), {});
+          observation += `\n\nAUTO puzzle_hash:\n${JSON.stringify(result, null, 2)}`;
+          if (result.puzzleHash) {
+            observation +=
+              `\n\nNEXT: write_file docs/MTT_POOL.md with section:\n## Pool puzzle hash\n\n\`${result.puzzleHash}\`\n(no 0x prefix). Then done.`;
+          }
+        }
       } else if (tool === "run") {
         observation = await runCommand(root, String(args.command || "true"));
       } else if (tool === "web_search") {
@@ -443,6 +628,11 @@ export async function runAgentJob({
       } else if (tool === "clvm_verify") {
         const verified = await clvmVerify(args);
         observation = JSON.stringify(verified);
+      } else if (tool === "puzzle_hash") {
+        const result = await puzzleHashWithCdv(root, String(args.path || ""), {
+          curryArgs: args.curryArgs,
+        });
+        observation = JSON.stringify(result, null, 2);
       } else {
         observation = `ERROR: unknown tool ${tool}`;
       }
@@ -479,20 +669,135 @@ export async function runAgentJob({
       ].join("\n");
     }
 
-    const files = await collectLocalFiles(root);
-    await pushWorkspace(job, files);
+    // Deterministic: do not rely on the model to remember puzzle_hash.
+    let hashDoc = null;
+    if (hardTask && hasCdv) {
+      try {
+        hashDoc = await ensurePuzzleHashDocumented(root, { log });
+        if (hashDoc.ok && hashDoc.puzzleHash) {
+          finalMessage += [
+            "",
+            "## Pool puzzle hash",
+            "",
+            `\`${hashDoc.puzzleHash}\``,
+            "",
+            `_(auto-documented from cdv on \`${hashDoc.path}\`)_`,
+          ].join("\n");
+        } else if (hashDoc && !hashDoc.ok) {
+          log(`[agent] hash-doc: ${hashDoc.message}`);
+        }
+      } catch (err) {
+        log(
+          `[agent] hash-doc error: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    }
 
+    const files = await collectLocalFiles(root);
+    const verification = verifyWorkspaceFiles(files, {
+      requireHash: hardTask && hasCdv,
+      resultText: finalMessage,
+    });
+    if (!verification.ok) {
+      log(`[agent] verification failed: ${verification.failures.join("; ")}`);
+      finalMessage += [
+        "",
+        "## Verification failed",
+        "",
+        "DAT STARCODER checked the workspace and rejected these deliverables:",
+        ...verification.failures.map((f) => `- ${f}`),
+        "",
+        "Do not treat this turn as done. Re-run with a fix prompt (or a stronger model).",
+      ].join("\n");
+    } else if (hardTask) {
+      const clsp = files.filter((f) => /\.clsp$/i.test(f.path));
+      if (clsp.length === 0) {
+        finalMessage += [
+          "",
+          "## Verification failed",
+          "",
+          "- Hard-domain goal expected a `.clsp` (or ChiaLisp) deliverable, but none was written.",
+        ].join("\n");
+      }
+    }
+    if (verification.warnings?.length) {
+      finalMessage += [
+        "",
+        "## Verification notes",
+        ...verification.warnings.map((w) => `- ${w}`),
+      ].join("\n");
+    }
+
+    // Paths that were in Studio at pull but are gone on disk → delete from S3.
+    const deletePaths = [];
+    for (const rel of pulledPaths) {
+      try {
+        await fs.access(path.join(root, rel));
+      } catch {
+        deletePaths.push(rel);
+      }
+    }
+    if (deletePaths.length) {
+      log(
+        `[agent] workspace deletes (${deletePaths.length}): ${deletePaths.slice(0, 12).join(", ")}${deletePaths.length > 12 ? "…" : ""}`,
+      );
+    }
+    await pushWorkspace(job, files, deletePaths);
+
+    if (githubPath === "oauth" && github && githubBranch) {
+      try {
+        log(`[agent] github commit/push/PR on ${githubBranch}`);
+        const shipped = await commitPushAndOpenPr(
+          root,
+          github,
+          job,
+          githubBranch,
+        );
+        githubBranch = shipped.branch;
+        githubPrUrl = shipped.prUrl;
+        if (shipped.note) log(`[agent] github: ${shipped.note}`);
+        if (githubPrUrl) {
+          finalMessage += `\n\n## Pull request\n\n${githubPrUrl}\n`;
+        } else if (githubBranch) {
+          finalMessage += `\n\n## GitHub branch\n\n\`${githubBranch}\` pushed to ${github.repoFullName}.\n`;
+        }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        log(`[agent] github ship failed: ${msg}`);
+        finalMessage += `\n\n## GitHub\n\nPush/PR failed: ${msg}\n`;
+      }
+    } else if (githubPath === "commands" && githubClone && githubBranch) {
+      finalMessage += `\n\n${formatPushCommands({ githubClone, branch: githubBranch, job })}\n`;
+    }
+
+    const repoName =
+      github?.repoFullName || githubClone?.fullName || null;
     const header = [
       `Model: ${job.modelRequested || "auto"} → ${model}`,
       job.modelReason ? `Reason: ${job.modelReason}` : "",
       job.projectId ? `Project: ${job.projectId}` : "",
+      repoName ? `GitHub: ${repoName}` : "",
+      githubPrUrl
+        ? `PR: ${githubPrUrl}`
+        : githubBranch
+          ? `Branch: ${githubBranch}${githubPath === "commands" ? " (push with commands below)" : ""}`
+          : "",
+      `Steps: ${stepsUsed}/${stepLimit}`,
+      `Goal: ${goal.id}${hasCdv ? " · cdv" : ""}`,
       "Mode: tool agent loop",
       "",
     ]
       .filter(Boolean)
       .join("\n");
 
-    return { result: `${header}${finalMessage}`, files, toolSteps };
+    return {
+      result: `${header}${finalMessage}`,
+      files,
+      githubBranch,
+      githubPrUrl,
+      stepsUsed,
+      toolSteps,
+    };
   } finally {
     await fs.rm(root, { recursive: true, force: true }).catch(() => undefined);
   }
