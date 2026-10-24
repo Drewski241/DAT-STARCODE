@@ -718,11 +718,41 @@ export async function runAgentJob({
     /** @type {Set<string>} */
     const knownUrls = new Set();
 
+    const isUsefulSourceUrl = (u) => {
+      try {
+        const url = new URL(u);
+        const host = url.hostname.replace(/^www\./, "").toLowerCase();
+        const path = url.pathname.toLowerCase();
+        // Drop assets / CDNs that leak out of fetch_url HTML.
+        if (
+          /\.(css|js|mjs|map|woff2?|ttf|eot|png|jpe?g|gif|svg|ico|webp|mp4|webm)(\?|$)/i.test(
+            path,
+          )
+        ) {
+          return false;
+        }
+        if (
+          /(^|\.)(typekit\.net|googleapis\.com|gstatic\.com|google-analytics\.com|googletagmanager\.com|facebook\.com|doubleclick\.net|scorecardresearch\.com|hotjar\.com|cloudflareinsights\.com)$/i.test(
+            host,
+          )
+        ) {
+          return false;
+        }
+        if (host === "duckduckgo.com" || host.endsWith(".duckduckgo.com")) {
+          return false;
+        }
+        return /^https?:$/i.test(url.protocol);
+      } catch {
+        return false;
+      }
+    };
+
     const rememberUrls = (text) => {
       const re = /https?:\/\/[^\s\)\]\>\"']+/gi;
       let m;
       while ((m = re.exec(String(text || "")))) {
-        const u = m[0].replace(/[.,;]+$/, "");
+        const u = m[0].replace(/[.,;\\]+$/, "");
+        if (!isUsefulSourceUrl(u)) continue;
         knownUrls.add(u);
         try {
           const host = new URL(u).hostname.replace(/^www\./, "");

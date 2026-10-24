@@ -267,24 +267,8 @@ export async function materializeWorkspaceFromResult(
   // Always keep a copy of the full agent transcript in the workspace.
   merged.set("RESULT.md", result);
 
-  if (merged.size === 1) {
-    // No code fences found — seed a starter file customers can open.
-    merged.set(
-      "src/main.ts",
-      [
-        `/**`,
-        ` * DAT STARCODER starter for job ${job.id.slice(0, 8)}`,
-        ` * Paste or refine the implementation from RESULT.md.`,
-        ` */`,
-        `export function main() {`,
-        `  console.log(${JSON.stringify(job.prompt.slice(0, 120))});`,
-        `}`,
-        ``,
-        `main();`,
-        ``,
-      ].join("\n"),
-    );
-  }
+  // Do NOT seed src/main.ts when there are no code fences — that polluted
+  // everyday Q&A / advice turns with a fake TypeScript starter.
 
   const files = [...merged.entries()].map(([p, content]) => ({
     path: p,
