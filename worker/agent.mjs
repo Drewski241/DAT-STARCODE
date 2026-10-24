@@ -646,10 +646,12 @@ export async function runAgentJob({
     const hardTask = goal.hard;
     const isGeneral = goal.id === "general";
     const isShopping = isGeneral && SHOPPING_HINT.test(job.prompt || "");
+    // Shopping needs a few tool calls + one synthesis — keep budget modest so
+    // the model finishes instead of tool-looping until the cap.
     const stepLimit = hardTask
       ? HARD_TASK_STEPS
       : isShopping
-        ? Math.max(MAX_STEPS, 16)
+        ? Math.max(MAX_STEPS, 10)
         : MAX_STEPS;
     const playbook = await loadPlaybooks(goal.playbooks);
     const hasCdv = goal.wantCdv ? await cdvAvailable() : false;
@@ -697,10 +699,74 @@ export async function runAgentJob({
       }
     };
 
+    const researchReady = () => {
+      if (!isGeneral) return true;
+      if (isShopping) {
+        // One solid search + one official fetch is enough to write the answer.
+        return searchSteps >= 1 && fetchSteps >= 1;
+      }
+      return searchSteps >= 1;
+    };
+
+    const polishDraft = (raw, { forceSources = false } = {}) => {
+      let draft = String(raw || "");
+      if (isGeneral && knownUrls.size > 0) {
+        draft = draft.replace(
+          /\[([^\]]+)\]\((https?:\/\/[^)]+)\)/g,
+          (full, label, url) => {
+            const clean = url.replace(/[.,;]+$/, "");
+            let host = "";
+            try {
+              host = new URL(clean).hostname.replace(/^www\./, "");
+            } catch {
+              return label;
+            }
+            if (knownUrls.has(clean) || knownUrls.has(host)) return full;
+            return `${label} (${host} — verify; link not confirmed in research)`;
+          },
+        );
+      }
+      if (isShopping || forceSources) {
+        const httpSources = [...knownUrls].filter((u) =>
+          /^https?:\/\//i.test(u),
+        );
+        if (httpSources.length && !/## Sources/i.test(draft)) {
+          draft += [
+            "",
+            "## Sources",
+            ...httpSources.slice(0, 8).map((u) => `- ${u}`),
+          ].join("\n");
+        }
+      }
+      return draft;
+    };
+
+    const finishNudge = () =>
+      [
+        "STOP calling tools.",
+        'Reply NOW with only: {"done":true,"message":"..."}',
+        "Use the OBSERVATION research already gathered.",
+        "Include ranked purchase paths, caveats (no invented premiums), ## Sources with real https URLs from observations, and ## Next steps.",
+      ].join(" ");
+
     for (let step = 0; step < stepLimit; step++) {
       stepsUsed = step + 1;
+      const stepsLeft = stepLimit - step;
       log(`[agent] step ${step + 1}/${stepLimit} job=${job.id.slice(0, 8)}`);
       await emit("log", `Thinking (step ${step + 1}/${stepLimit})…`);
+
+      // Force synthesis before the budget dies.
+      if (isGeneral && researchReady() && stepsLeft <= 3) {
+        messages.push({ role: "user", content: finishNudge() });
+      } else if (isGeneral && stepsLeft <= 2) {
+        messages.push({
+          role: "user",
+          content:
+            finishNudge() +
+            " If research is thin, still answer with best-effort paths and say what you could not verify.",
+        });
+      }
+
       let content;
       try {
         content = await ollamaChat(
@@ -749,63 +815,34 @@ export async function runAgentJob({
       }
 
       if (action.done) {
-        if (isGeneral && searchSteps < (isShopping ? 2 : 1)) {
+        const mustKeepResearching =
+          isGeneral &&
+          !researchReady() &&
+          stepsLeft > 2;
+        if (mustKeepResearching) {
           messages.push({
             role: "user",
             content: isShopping
-              ? 'Not done yet. For best/affordable shopping questions you need at least TWO web_search calls (e.g. "ICBC motorcycle insurance BC requirements" and "Victoria BC motorcycle insurance broker quote"), then fetch_url an official page, THEN compare purchase paths. Do not invent prices or URLs.'
-              : 'You must research before finishing. Call web_search now with a specific query that includes the city/region and product (e.g. "motorcycle insurance Victoria BC ICBC"), then synthesize a concrete answer. Do not tell the user to Google it themselves.',
-          });
-          continue;
-        }
-        if (isShopping && fetchSteps < 1) {
-          messages.push({
-            role: "user",
-            content:
-              "Not done yet. fetch_url at least one official page from your search results (prefer icbc.com or another primary insurer/broker page that appeared in OBSERVATION), then write a ranked comparison of purchase paths with a clear best-next-move. Only cite URLs from observations.",
+              ? 'Not done yet. Call web_search (if needed) and fetch_url one official page from results (prefer icbc.com), then {"done":true,...} with ranked paths. Do not invent prices or URLs.'
+              : 'You must research before finishing. Call web_search now, then synthesize a concrete answer. Do not tell the user to Google it themselves.',
           });
           continue;
         }
         let draft = String(action.message || content);
-        if (isGeneral && knownUrls.size > 0) {
-          // Drop markdown links whose URL never appeared in tool output.
-          draft = draft.replace(
-            /\[([^\]]+)\]\((https?:\/\/[^)]+)\)/g,
-            (full, label, url) => {
-              const clean = url.replace(/[.,;]+$/, "");
-              let host = "";
-              try {
-                host = new URL(clean).hostname.replace(/^www\./, "");
-              } catch {
-                return label;
-              }
-              if (knownUrls.has(clean) || knownUrls.has(host)) return full;
-              return `${label} (${host} — verify; link not confirmed in research)`;
-            },
-          );
-        }
-        if (isShopping && !/https?:\/\//i.test(draft)) {
+        if (
+          isShopping &&
+          !/https?:\/\//i.test(draft) &&
+          [...knownUrls].some((u) => /^https?:\/\//i.test(u)) &&
+          stepsLeft > 2
+        ) {
           messages.push({
             role: "user",
             content:
-              "Your draft has no real https links. Rewrite with a ## Sources section using ONLY URLs from the OBSERVATION tool results above, plus a ranked purchase path. Do not invent links.",
+              "Your draft has no real https links. Rewrite with ## Sources using ONLY URLs from OBSERVATION. Do not invent links.",
           });
           continue;
         }
-        // Always attach confirmed sources so the user can click through.
-        if (isShopping) {
-          const httpSources = [...knownUrls].filter((u) =>
-            /^https?:\/\//i.test(u),
-          );
-          if (httpSources.length && !/## Sources/i.test(draft)) {
-            draft += [
-              "",
-              "## Sources",
-              ...httpSources.slice(0, 8).map((u) => `- ${u}`),
-            ].join("\n");
-          }
-        }
-        finalMessage = draft;
+        finalMessage = polishDraft(draft, { forceSources: true });
         await emit("status", "Finishing answer");
         break;
       }
@@ -867,22 +904,55 @@ export async function runAgentJob({
         summary: String(observation).slice(0, 240),
       });
 
+      let obsMsg = `OBSERVATION:\n${observation}`;
+      if (isGeneral && researchReady()) {
+        obsMsg += `\n\n${finishNudge()}`;
+      }
       messages.push({
         role: "user",
-        content: `OBSERVATION:\n${observation}`,
+        content: obsMsg,
       });
+    }
+
+    // Last-chance synthesis so shopping Q&A never dies on "step limit" alone.
+    if (!finalMessage && isGeneral && researchSteps > 0) {
+      try {
+        await emit("status", "Synthesizing answer from research…");
+        messages.push({ role: "user", content: finishNudge() });
+        const content = await ollamaChat(ollamaUrl, model, messages);
+        messages.push({ role: "assistant", content });
+        const action = parseAction(content);
+        if (action?.done) {
+          finalMessage = polishDraft(action.message || content, {
+            forceSources: true,
+          });
+        } else if (content && content.length > 80) {
+          finalMessage = polishDraft(content, { forceSources: true });
+        }
+      } catch (err) {
+        log(
+          `[agent] final synthesis failed: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
     }
 
     if (!finalMessage) {
       finalMessage = isGeneral
-        ? [
-            "# Reached step limit",
-            "",
-            "I researched partially but hit the step budget. Ask a follow-up with more detail (budget, new vs used bike, your license class) and I will continue.",
-            "",
-            "## Next steps",
-            "1. Retry with a shorter question focused on one decision (e.g. ICBC quote vs broker).",
-          ].join("\n")
+        ? polishDraft(
+            [
+              "# Partial research",
+              "",
+              "I gathered some sources but could not finish a full ranked comparison in time.",
+              researchSteps
+                ? "Use the Sources below, or send a follow-up like “finish the ICBC vs BCAA vs broker ranking”."
+                : "Retry the question — I did not get useful search results.",
+              "",
+              "## Next steps",
+              "1. Follow-up: ask me to finish the ranking from research already done.",
+              "2. Or tell me licence class / new vs used bike for a tighter recommendation.",
+            ].join("\n"),
+            { forceSources: true },
+          )
         : [
             "# Reached step limit",
             "",
