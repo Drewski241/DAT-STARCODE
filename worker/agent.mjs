@@ -17,6 +17,8 @@ import { cdvAvailable, puzzleHashWithCdv } from "./cdv.mjs";
 import { inferGoal } from "./goals.mjs";
 import { ensurePuzzleHashDocumented } from "./hash-doc.mjs";
 import { verifyWorkspaceFiles } from "./verify.mjs";
+import { clvmVerify } from "./clvm-verify.mjs";
+import { retrieveKnowledge, packsForProfile } from "./knowledge.mjs";
 
 const MAX_STEPS = Number(process.env.AGENT_MAX_STEPS || 12);
 const HARD_TASK_STEPS = Number(process.env.AGENT_HARD_TASK_STEPS || 40);
@@ -30,6 +32,12 @@ Always end your final answer with a section titled exactly: ## How to run / play
 Write numbered steps for a non-technical user. Include: download zip from Studio
 Workspace (if needed), unzip, which file to open or command to run, controls/usage,
 and common fixes. Never stop at only "download the zip".
+`.trim();
+
+const UNBIASED_QNA = `
+For everyday questions: be accurate and unbiased, separate facts from contested opinions,
+and say when unsure. Use web_search for time-sensitive facts. Never ask for passwords or
+recovery keys. Medical/legal/financial topics = general info only + suggest professionals when stakes are high.
 `.trim();
 
 const QUALITY_RULES = `
@@ -211,6 +219,24 @@ function parseAction(text) {
   return null;
 }
 
+function detectProfile(prompt) {
+  if (/\b(chialisp|clvm|chia\b|coinset|curry|agg_sig|create_coin)\b/i.test(prompt))
+    return "chialisp";
+  if (
+    /\b(windows|macos|mac\b|chromebook|chromeos|ubuntu|linux|how do i|wifi|settings)\b/i.test(
+      prompt,
+    )
+  )
+    return "ops";
+  if (
+    /\b(code|bug|fix|implement|typescript|python|game|app|website|build)\b/i.test(
+      prompt,
+    )
+  )
+    return "coding";
+  return "general";
+}
+
 function agentSystem(job, github, githubClone, extras = {}) {
   const repoLabel =
     github?.repoFullName ||
@@ -221,17 +247,35 @@ function agentSystem(job, github, githubClone, extras = {}) {
     : githubClone
       ? `This workspace is a clone of public GitHub repo ${githubClone.fullName}. After you finish, the user will push with terminal commands printed in the result — focus on making good file changes. Do not commit or push yourself.`
       : "This workspace syncs to Studio download zip (no GitHub repo linked).";
+  const profile = detectProfile(job.prompt || "");
+  const packs = packsForProfile(profile);
+  const chunks = retrieveKnowledge(job.prompt || "", { packs, limit: 3 });
+  const knowledge =
+    chunks.length === 0
+      ? ""
+      : [
+          "Retrieved knowledge:",
+          ...chunks.map((c) => `### ${c.title}\n${c.text}`),
+        ].join("\n\n");
   return [
-    "You are DAT STARCODER, a robust coding agent with tools.",
-    "You work inside a real project workspace on disk.",
+    "You are DAT STARCODER, a robust coding and help agent with tools.",
+    "You work inside a real project workspace on disk when coding.",
+    "You also help with Windows / macOS / ChromeOS / Linux how-tos and everyday questions.",
+    UNBIASED_QNA,
     githubMode,
+    profile === "chialisp"
+      ? "For ChiaLisp/CLVM, prefer clvm_verify (brun/run) and puzzle_hash (cdv) before finishing."
+      : "",
     "On every turn respond with ONLY one JSON object (optionally in a ```json fence):",
     "",
-    '1) Call a tool: {"thought":"...","tool":"list_files"|"read_file"|"write_file"|"run"|"puzzle_hash","args":{...}}',
+    '1) Call a tool: {"thought":"...","tool":"list_files"|"read_file"|"write_file"|"run"|"web_search"|"fetch_url"|"clvm_verify"|"puzzle_hash","args":{...}}',
     '   - list_files args: {}',
     '   - read_file args: {"path":"relative/path"}',
     '   - write_file args: {"path":"relative/path","content":"full file contents"}',
     '   - run args: {"command":"shell command in the workspace"}',
+    '   - web_search args: {"query":"..."}',
+    '   - fetch_url args: {"url":"https://..."}',
+    '   - clvm_verify args: {"program":"...","solution":"()","mode":"brun"|"run","expect":"optional"}',
     '   - puzzle_hash args: {"path":"puzzles/foo.clsp","curryArgs":["optional","cdv","-a","values"]}',
     "",
     '2) Finish: {"done":true,"message":"markdown answer for the user"}',
@@ -240,12 +284,14 @@ function agentSystem(job, github, githubClone, extras = {}) {
     "- Explore with list_files/read_file before editing when files may already exist.",
     "- Prefer small, working changes. Write complete files when creating them.",
     "- Use run to install/build/test when helpful (keep commands short).",
+    "- Use web_search when facts may be stale (OS menus, docs, current APIs).",
     "- Never use sudo, su, passwd, or other interactive/privileged commands.",
     "- Prefer static HTML/JS games/apps that need no system packages when possible.",
     "- For games/apps, make something runnable (often index.html).",
     "- Do not commit or push yourself; the worker handles git/PR or prints push commands.",
     QUALITY_RULES,
     HOW_TO_RUN,
+    knowledge,
     extras.goal
       ? `\n## Inferred goal\n${extras.goal.label} (\`${extras.goal.id}\`)${extras.cdvAvailable ? " · cdv available (use puzzle_hash)" : " · cdv not installed on worker"}\n`
       : "",
@@ -268,14 +314,54 @@ function agentSystem(job, github, githubClone, extras = {}) {
     .join("\n");
 }
 
-async function ollamaChat(ollamaUrl, model, messages) {
+async function webSearch(query) {
+  const q = String(query || "").trim();
+  if (!q) return "ERROR: empty query";
+  try {
+    const url = `https://api.duckduckgo.com/?q=${encodeURIComponent(q)}&format=json&no_html=1&skip_disambig=1`;
+    const res = await fetch(url, {
+      headers: { "User-Agent": "DAT-STARCODER-agent/0.1" },
+      signal: AbortSignal.timeout(12_000),
+    });
+    if (!res.ok) return `ERROR: search ${res.status}`;
+    const data = await res.json();
+    const lines = [];
+    if (data.AbstractText) lines.push(data.AbstractText);
+    for (const t of data.RelatedTopics || []) {
+      if (t.Text) lines.push(t.Text);
+      for (const x of t.Topics || []) if (x.Text) lines.push(x.Text);
+    }
+    return lines.slice(0, 8).join("\n") || "(no results)";
+  } catch (err) {
+    return `ERROR: ${err instanceof Error ? err.message : String(err)}`;
+  }
+}
+
+async function fetchUrl(url) {
+  if (!/^https?:\/\//i.test(String(url || ""))) return "ERROR: http(s) only";
+  try {
+    const res = await fetch(url, {
+      headers: { "User-Agent": "DAT-STARCODER-agent/0.1" },
+      signal: AbortSignal.timeout(15_000),
+    });
+    const text = (await res.text())
+      .replace(/<[^>]+>/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+    return `status ${res.status}\n${text.slice(0, 12000)}`;
+  } catch (err) {
+    return `ERROR: ${err instanceof Error ? err.message : String(err)}`;
+  }
+}
+
+async function ollamaChat(ollamaUrl, model, messages, onToken) {
   const res = await fetch(`${ollamaUrl}/api/chat`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       model,
       messages,
-      stream: false,
+      stream: true,
       options: { temperature: 0.2 },
     }),
   });
@@ -283,8 +369,54 @@ async function ollamaChat(ollamaUrl, model, messages) {
     const body = await res.text();
     throw new Error(`Ollama chat ${res.status}: ${body.slice(0, 200)}`);
   }
-  const data = await res.json();
-  return data.message?.content || "";
+  if (!res.body) throw new Error("Ollama returned no body");
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let full = "";
+  let pending = "";
+  let lastEmit = 0;
+
+  const flush = async (force = false) => {
+    if (!onToken || !pending) return;
+    const now = Date.now();
+    if (!force && now - lastEmit < 180 && pending.length < 48) return;
+    const chunk = pending;
+    pending = "";
+    lastEmit = now;
+    await onToken(chunk, full);
+  };
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split("\n");
+    buffer = lines.pop() || "";
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      let data;
+      try {
+        data = JSON.parse(trimmed);
+      } catch {
+        continue;
+      }
+      const piece = data.message?.content || "";
+      if (piece) {
+        full += piece;
+        pending += piece;
+        await flush(false);
+      }
+      if (data.done) {
+        await flush(true);
+        return full;
+      }
+    }
+  }
+  await flush(true);
+  return full;
 }
 
 const SKIP_PUSH_NAME =
@@ -320,13 +452,20 @@ export async function runAgentJob({
   github = null,
   githubClone = null,
   log = console.log,
+  onEvent,
 }) {
+  const emit = async (type, message, data = null) => {
+    if (onEvent) await onEvent({ type, message, data });
+  };
+
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "starcoder-"));
   let githubBranch = null;
   let githubPrUrl = null;
+  let toolSteps = 0;
   /** @type {"oauth"|"commands"|null} */
   let githubPath = null;
   try {
+    await emit("status", `Starting agent · ${model}`);
     const pulled = await pullWorkspace(job);
     /** Paths that existed in Studio before this turn — used to detect deletes. */
     const pulledPaths = [];
@@ -407,9 +546,20 @@ export async function runAgentJob({
     for (let step = 0; step < stepLimit; step++) {
       stepsUsed = step + 1;
       log(`[agent] step ${step + 1}/${stepLimit} job=${job.id.slice(0, 8)}`);
+      await emit("log", `Thinking (step ${step + 1}/${stepLimit})…`);
       let content;
       try {
-        content = await ollamaChat(ollamaUrl, model, messages);
+        content = await ollamaChat(
+          ollamaUrl,
+          model,
+          messages,
+          async (chunk, draft) => {
+            await emit("token", chunk, {
+              draft: draft.slice(-4000),
+              step: step + 1,
+            });
+          },
+        );
       } catch (err) {
         finalMessage = [
           `# Agent error`,
@@ -420,6 +570,10 @@ export async function runAgentJob({
           "1. Open Studio → Workspace → Download zip if files exist.",
           "2. Retry the job after confirming Ollama is running and the selected model is pulled (`ollama list`).",
         ].join("\n");
+        await emit(
+          "error",
+          err instanceof Error ? err.message : String(err),
+        );
         break;
       }
 
@@ -437,11 +591,18 @@ export async function runAgentJob({
 
       if (action.done) {
         finalMessage = String(action.message || content);
+        await emit("status", "Finishing answer");
         break;
       }
 
       const tool = action.tool;
       const args = action.args || {};
+      toolSteps += 1;
+      await emit("tool", String(tool || "unknown"), {
+        name: tool,
+        args: { ...args, content: args.content ? "[…]" : undefined },
+        step: toolSteps,
+      });
       let observation = "";
       if (tool === "list_files") {
         observation = await toolList(root);
@@ -460,6 +621,13 @@ export async function runAgentJob({
         }
       } else if (tool === "run") {
         observation = await runCommand(root, String(args.command || "true"));
+      } else if (tool === "web_search") {
+        observation = await webSearch(args.query);
+      } else if (tool === "fetch_url") {
+        observation = await fetchUrl(args.url);
+      } else if (tool === "clvm_verify") {
+        const verified = await clvmVerify(args);
+        observation = JSON.stringify(verified);
       } else if (tool === "puzzle_hash") {
         const result = await puzzleHashWithCdv(root, String(args.path || ""), {
           curryArgs: args.curryArgs,
@@ -468,6 +636,10 @@ export async function runAgentJob({
       } else {
         observation = `ERROR: unknown tool ${tool}`;
       }
+      await emit("tool_result", `${tool}: ok`, {
+        name: tool,
+        summary: String(observation).slice(0, 240),
+      });
 
       messages.push({
         role: "user",
@@ -624,6 +796,7 @@ export async function runAgentJob({
       githubBranch,
       githubPrUrl,
       stepsUsed,
+      toolSteps,
     };
   } finally {
     await fs.rm(root, { recursive: true, force: true }).catch(() => undefined);

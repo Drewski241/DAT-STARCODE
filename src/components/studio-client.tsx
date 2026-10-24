@@ -9,6 +9,7 @@ import { Input } from "@/components/ui/input";
 import { SiteHeader } from "@/components/site-header";
 import { priceJob } from "@/lib/job-pricing";
 import { DEFAULT_MODEL_ID, MODEL_OPTIONS, resolveModel } from "@/lib/models";
+import type { JobEvent } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 type Account = {
@@ -48,6 +49,8 @@ type Job = {
   githubBranch?: string | null;
   githubPrUrl?: string | null;
   stepsUsed?: number | null;
+  events?: JobEvent[];
+  toolSteps?: number;
   createdAt: string;
   completedAt: string | null;
 };
@@ -88,6 +91,8 @@ export function StudioClient() {
   const [repos, setRepos] = useState<GithubRepo[]>([]);
   const [repoPick, setRepoPick] = useState("");
   const [githubUrlDraft, setGithubUrlDraft] = useState("");
+  const [liveEvents, setLiveEvents] = useState<JobEvent[]>([]);
+  const [liveDraft, setLiveDraft] = useState("");
 
   const refresh = useCallback(async () => {
     // Retry briefly — Amplify/S3 can return a transient 401 while a job
@@ -148,6 +153,80 @@ export function StudioClient() {
     const t = setInterval(() => void refresh(), 4000);
     return () => clearInterval(t);
   }, [refresh]);
+
+  const selectedStatus =
+    jobs.find((j) => j.id === selectedId)?.status ?? null;
+
+  // Seed events from polled job payload (completed jobs / reconnect).
+  useEffect(() => {
+    if (!selectedId) {
+      setLiveEvents([]);
+      setLiveDraft("");
+      return;
+    }
+    const job = jobs.find((j) => j.id === selectedId);
+    if (job?.events?.length) {
+      setLiveEvents((prev) =>
+        job.events!.length >= prev.length ? job.events! : prev,
+      );
+    }
+    if (job?.status === "completed" || job?.status === "failed") {
+      setLiveDraft("");
+    }
+  }, [selectedId, jobs]);
+
+  // Live tool stream while the selected job is in flight.
+  useEffect(() => {
+    if (!selectedId || !selectedStatus) return;
+    const active =
+      selectedStatus === "queued" ||
+      selectedStatus === "claimed" ||
+      selectedStatus === "running";
+    if (!active) return;
+
+    const es = new EventSource(`/api/jobs/${selectedId}/stream`);
+    es.addEventListener("hello", (ev) => {
+      try {
+        const data = JSON.parse((ev as MessageEvent).data) as {
+          events?: JobEvent[];
+        };
+        if (data.events) setLiveEvents(data.events);
+      } catch {
+        /* ignore */
+      }
+    });
+    es.addEventListener("events", (ev) => {
+      try {
+        const data = JSON.parse((ev as MessageEvent).data) as {
+          events?: JobEvent[];
+        };
+        if (!data.events?.length) return;
+        let latestDraft: string | null = null;
+        setLiveEvents((prev) => {
+          const seen = new Set(prev.map((e) => e.id));
+          const next = [...prev];
+          for (const e of data.events!) {
+            if (e.type === "token") {
+              latestDraft =
+                typeof e.data?.draft === "string" ? e.data.draft : e.message;
+              continue;
+            }
+            if (!seen.has(e.id)) next.push(e);
+          }
+          return next.slice(-120);
+        });
+        if (latestDraft !== null) setLiveDraft(latestDraft);
+      } catch {
+        /* ignore */
+      }
+    });
+    es.addEventListener("done", () => {
+      es.close();
+      setLiveDraft("");
+      void refresh();
+    });
+    return () => es.close();
+  }, [selectedId, selectedStatus, refresh]);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -859,27 +938,69 @@ export function StudioClient() {
                   )}
                 </div>
 
-                <div className="mt-5 max-h-[32rem] overflow-auto">
+                <div className="mt-5 max-h-[32rem] space-y-4 overflow-auto">
                   {panel === "output" ? (
-                    selected.status === "queued" ||
-                    selected.status === "claimed" ||
-                    selected.status === "running" ? (
-                      <p className="animate-pulse-soft font-mono text-sm text-copper-300">
-                        Worker is on it
-                        {selected.modelResolved
-                          ? ` (${selected.modelResolved})`
-                          : ""}
-                        …
-                      </p>
-                    ) : selected.error ? (
-                      <pre className="whitespace-pre-wrap font-mono text-xs text-rose-300">
-                        {selected.error}
-                      </pre>
-                    ) : (
-                      <pre className="whitespace-pre-wrap font-mono text-xs leading-relaxed text-steel-200">
-                        {selected.result}
-                      </pre>
-                    )
+                    <>
+                      {(selected.status === "queued" ||
+                        selected.status === "claimed" ||
+                        selected.status === "running" ||
+                        liveEvents.length > 0) && (
+                        <div className="border border-copper-800/40 bg-ink-950/50 p-3">
+                          <p className="font-mono text-[11px] uppercase tracking-widest text-steel-400">
+                            Progress
+                            {selected.modelResolved
+                              ? ` · ${selected.modelResolved}`
+                              : ""}
+                          </p>
+                          {liveEvents.length === 0 && !liveDraft ? (
+                            <p className="mt-2 animate-pulse-soft font-mono text-sm text-copper-300">
+                              Working on your request…
+                            </p>
+                          ) : (
+                            <ul className="mt-2 space-y-2 font-mono text-xs leading-relaxed text-steel-300">
+                              {liveEvents.map((ev) => (
+                                <li key={ev.id}>
+                                  <span className="text-steel-500">
+                                    {friendlyEventLabel(ev.type)}:{" "}
+                                  </span>
+                                  <span className="text-copper-100/90">
+                                    {ev.message}
+                                    {ev.data &&
+                                    typeof ev.data.summary === "string"
+                                      ? ` — ${ev.data.summary}`
+                                      : ""}
+                                  </span>
+                                </li>
+                              ))}
+                            </ul>
+                          )}
+                          {liveDraft && (
+                            <div className="mt-3 border-t border-copper-800/40 pt-3">
+                              <p className="font-mono text-[11px] uppercase tracking-widest text-steel-400">
+                                Draft answer (live)
+                              </p>
+                              <pre className="mt-2 whitespace-pre-wrap font-mono text-xs leading-relaxed text-steel-200">
+                                {liveDraft}
+                                <span className="animate-pulse-soft text-copper-400">
+                                  ▍
+                                </span>
+                              </pre>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                      {selected.status === "queued" ||
+                      selected.status === "claimed" ||
+                      selected.status === "running" ? null : selected.error ? (
+                        <pre className="whitespace-pre-wrap font-mono text-xs text-rose-300">
+                          {selected.error}
+                        </pre>
+                      ) : (
+                        <pre className="whitespace-pre-wrap font-mono text-xs leading-relaxed text-steel-200">
+                          {selected.result}
+                        </pre>
+                      )}
+                    </>
                   ) : (
                     <div className="grid gap-4 md:grid-cols-[11rem_1fr]">
                       <ul className="space-y-1 border-r border-copper-900/60 pr-3">
@@ -939,4 +1060,21 @@ function StatusPill({ status }: { status: string }) {
       {status}
     </span>
   );
+}
+
+function friendlyEventLabel(type: string) {
+  switch (type) {
+    case "tool":
+      return "Using a tool";
+    case "tool_result":
+      return "Tool finished";
+    case "status":
+      return "Status";
+    case "log":
+      return "Note";
+    case "error":
+      return "Problem";
+    default:
+      return type;
+  }
 }

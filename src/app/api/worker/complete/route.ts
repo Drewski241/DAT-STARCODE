@@ -17,6 +17,7 @@ export async function POST(req: NextRequest) {
     result?: string;
     error?: string;
     files?: ExtractedFile[];
+    toolSteps?: number;
     githubBranch?: string | null;
     githubPrUrl?: string | null;
     stepsUsed?: number | null;
@@ -52,6 +53,7 @@ export async function POST(req: NextRequest) {
       result: body.result,
       error: body.error,
       workspaceFileCount,
+      toolSteps: body.toolSteps,
       githubBranch: body.githubBranch,
       githubPrUrl: body.githubPrUrl,
       stepsUsed: body.stepsUsed,

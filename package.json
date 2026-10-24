@@ -24,6 +24,7 @@
     "@walletconnect/types": "2.21.1",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
+    "clvm_tools": "^0.11.0",
     "jose": "^6.2.12",
     "jszip": "^3.10.2",
     "lucide-react": "^1.59.0",

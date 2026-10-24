@@ -6,6 +6,9 @@ export type JobStatus =
   | "failed"
   | "cancelled";
 
+/** How the worker should specialize for this job. */
+export type AgentProfile = "coding" | "general" | "chialisp" | "ops";
+
 export type PaymentStatus = "pending" | "confirmed" | "failed" | "demo";
 
 export type AccountSource = "local" | "spirit-poker";
@@ -65,6 +68,22 @@ export interface Project {
   updatedAt: string;
 }
 
+export type JobEventType =
+  | "status"
+  | "tool"
+  | "tool_result"
+  | "log"
+  | "token"
+  | "error";
+
+export interface JobEvent {
+  id: string;
+  t: string;
+  type: JobEventType;
+  message: string;
+  data?: Record<string, unknown> | null;
+}
+
 export interface CodingJob {
   id: string;
   accountId: string;
@@ -95,6 +114,9 @@ export interface CodingJob {
   githubBranch: string | null;
   /** Pull request URL opened by the worker, if any. */
   githubPrUrl: string | null;
+  /** Live tool / status events (durable subset). */
+  events?: JobEvent[];
+  toolSteps?: number;
   createdAt: string;
   updatedAt: string;
   completedAt: string | null;

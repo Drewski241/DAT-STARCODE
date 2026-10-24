@@ -169,7 +169,28 @@ async function workspaceAction(job, action, files, deletePaths) {
   return workspacePost(job, action, files);
 }
 
-async function complete(job, { result, error, githubBranch, githubPrUrl, stepsUsed }) {
+async function progress(jobId, { type, message, data }) {
+  try {
+    await fetch(`${API_BASE}/api/worker/progress`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-worker-key": WORKER_KEY,
+      },
+      body: JSON.stringify({
+        jobId,
+        workerId: WORKER_ID,
+        type,
+        message,
+        data: data ?? null,
+      }),
+    });
+  } catch (err) {
+    console.warn("[dat-starcoder-worker] progress failed", err);
+  }
+}
+
+async function complete(job, { result, error, githubBranch, githubPrUrl, stepsUsed, toolSteps }) {
   // Files are already on S3 via chunked workspace push — omit them here so
   // complete does not hit the same Amplify body limit. Server still writes RESULT.md.
   const payload = {
@@ -180,6 +201,7 @@ async function complete(job, { result, error, githubBranch, githubPrUrl, stepsUs
     githubBranch: githubBranch || null,
     githubPrUrl: githubPrUrl || null,
     stepsUsed: typeof stepsUsed === "number" ? stepsUsed : null,
+    toolSteps: typeof toolSteps === "number" ? toolSteps : undefined,
     snapshot: job,
   };
   let lastErr;
@@ -246,7 +268,7 @@ async function loop() {
         continue;
       }
 
-      const { result, files, githubBranch, githubPrUrl, stepsUsed } =
+      const { result, files, githubBranch, githubPrUrl, stepsUsed, toolSteps } =
         await runAgentJob({
           job,
           ollamaUrl: OLLAMA_URL,
@@ -256,12 +278,25 @@ async function loop() {
           pullWorkspace: (j) => workspaceAction(j, "pull"),
           pushWorkspace: (j, f, dels) => workspaceAction(j, "push", f, dels),
           log: console.log,
+          onEvent: (e) =>
+            progress(job.id, {
+              type: e.type,
+              message: e.message,
+              data: e.data,
+            }),
         });
 
-      await complete(job, { result, githubBranch, githubPrUrl, stepsUsed });
+      await complete(job, {
+        result,
+        githubBranch,
+        githubPrUrl,
+        stepsUsed,
+        toolSteps,
+      });
       console.log(
         `[dat-starcoder-worker] completed ${job.id} files=${files.length}` +
           (typeof stepsUsed === "number" ? ` steps=${stepsUsed}` : "") +
+          (typeof toolSteps === "number" ? ` tools=${toolSteps}` : "") +
           (githubPrUrl ? ` pr=${githubPrUrl}` : ""),
       );
     } catch (err) {

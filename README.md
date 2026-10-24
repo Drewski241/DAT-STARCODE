@@ -57,7 +57,7 @@ Open [http://localhost:43127](http://localhost:43127).
 
 1. **Sign in** at `/account` — DAT username / DAT password (shared DAT account), or create a new DAT STARCODER account. Password reset uses the shared DAT email reset flow.
 2. **Buy credits (live Sage burn)** — set `NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID`, Connect Sage, then Burn DAT. Sage sends DAT to the Chia burn address; credits are granted after you approve the send.
-3. **Studio** — create a **project**, pick a model, and send turns. Turns share one workspace; the worker runs a tool-using agent loop (list/read/write/run).
+3. **Studio** — create a **project**, pick a model, and send turns. Turns share one workspace; the worker runs a tool-using agent loop (list/read/write/run, plus web search, URL fetch, CLVM verify, and puzzle_hash via cdv). Progress and draft tokens stream live over SSE.
 4. **GitHub (optional)** — set `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET` ([setup](docs/github-oauth-setup.md)), Connect GitHub in Studio, create/link a playground repo; the worker clones, branches, and opens a PR.
 5. **Live worker** (GPU box):
 
@@ -110,7 +110,9 @@ cdv --help
 
 When `cdv` is present, ChiaLisp turns must document a 64-char puzzle hash (or verification fails).
 
-**Auto** routing: hard domain (ChiaLisp / MTT) → `qwen2.5-coder:14b`; other coding → `qwen2.5-coder:7b`; otherwise → `llama3.1:8b`. Pull 14B on the worker or hard Auto jobs will 404 at preflight.
+**Auto** routing: hard domain (ChiaLisp / MTT) → `qwen2.5-coder:14b`; other coding → `qwen2.5-coder:7b`; otherwise → `llama3.1:8b`. Pull 14B on the worker or hard Auto jobs will 404 at preflight. Routing is re-evaluated when a job is claimed so queued jobs pick up heuristic fixes.
+
+Optional worker agent knobs (see `.env.example`): `AGENT_MAX_STEPS`, `AGENT_ALLOW_SHELL`, `AGENT_REPO_ROOT`. Install `clvm_tools` (via `npm ci`) or put `brun`/`run` on `PATH` for ChiaLisp verification / `clvm_verify`.
 
 If a worker dies mid-job, `claimed`/`running` jobs older than `STALE_JOB_CLAIM_MS` (default 45s) are reclaimed by the next worker poll. `GET /api/worker/queue` (worker key) dumps store vs sidecar queue state for debugging.
 
@@ -194,7 +196,9 @@ Local demo uses `.data/store.json` and `.data/workspaces/`. Wire Amplify to Dyna
 | `GET/POST /api/projects` | browser | list / create persistent projects |
 | `GET /api/projects/:id` | browser | project + its turns |
 | `POST /api/jobs` | browser | enqueue a turn (`projectId` shares workspace) |
+| `GET /api/jobs/:id/stream` | browser | SSE live tool/token progress for a turn |
 | `POST /api/worker/workspace` | worker | pull/push workspace files for the agent loop |
+| `POST /api/worker/progress` | worker | push tool/token events (`x-worker-key`) |
 | `GET /api/jobs/:id/workspace` | browser | list workspace files |
 | `GET /api/jobs/:id/workspace/file?path=` | browser | read one file |
 | `GET /api/jobs/:id/workspace/download` | browser | zip download |
@@ -204,5 +208,4 @@ Local demo uses `.data/store.json` and `.data/workspaces/`. Wire Amplify to Dyna
 
 ## Next upgrades
 
-- Persist to DynamoDB instead of `.data/store.json`
-- Stream token output over SSE while the worker generates
+- Persist to DynamoDB instead of `.data/store.json` (S3 JSON store is the Amplify default today)
