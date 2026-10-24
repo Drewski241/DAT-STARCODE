@@ -69,6 +69,13 @@ async function claim() {
   });
   if (!res.ok) {
     const text = (await res.text()).trim();
+    if (res.status === 401) {
+      throw new Error(
+        `claim 401: Unauthorized — WORKER_API_KEY on this box must exactly match Amplify env WORKER_API_KEY (then Redeploy). ` +
+          `Check for quotes/whitespace. Key length here: ${WORKER_KEY.length}. ` +
+          `Test: curl -s -o /dev/null -w "%{http_code}" -X POST "$DAT_STARCODER_API_BASE/api/worker/claim" -H "content-type: application/json" -H "x-worker-key: $WORKER_API_KEY" -d '{"workerId":"probe"}'`,
+      );
+    }
     throw new Error(
       `claim ${res.status}: ${text || "(empty body — check Amplify logs)"}`,
     );

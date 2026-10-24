@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { randomUUID } from "crypto";
-import { WORKER_API_KEY } from "@/lib/config";
+import { getWorkerApiKey } from "@/lib/config";
 import { appendJobEvent, getJob } from "@/lib/store";
 import { pushLiveEvent } from "@/lib/job-live-bus";
 import type { JobEvent, JobEventType } from "@/lib/types";
@@ -15,8 +15,8 @@ const ALLOWED: JobEventType[] = [
 ];
 
 export async function POST(req: NextRequest) {
-  const key = req.headers.get("x-worker-key");
-  if (!key || key !== WORKER_API_KEY) {
+  const key = req.headers.get("x-worker-key")?.trim();
+  if (!key || key !== getWorkerApiKey()) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
