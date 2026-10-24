@@ -77,7 +77,7 @@ Quality rules:
 - Never claim you deleted or fixed a file unless you verified with list_files / read_file after.
 - rm / unlink of files that were pulled from Studio are synced back (workspace deletes). Prefer real deletes over leaving NOTE stubs.
 - If the user asks for ChiaLisp / .clsp: write real ChiaLisp starting with (mod — never Common Lisp.
-- When the puzzle_hash tool is available, use it after writing .clsp and document the hash under ## Pool puzzle hash.
+- When the puzzle_hash tool is available, use it after writing .clsp and document the hash under ## Puzzle hash in docs/PUZZLE_HASH.md.
 - Before {"done":true} on a .clsp task, read_file the puzzle and confirm it has (mod and no defparameter/let*/mapcar.
 `.trim();
 
@@ -984,7 +984,7 @@ export async function runAgentJob({
           observation += `\n\nAUTO puzzle_hash:\n${JSON.stringify(result, null, 2)}`;
           if (result.puzzleHash) {
             observation +=
-              `\n\nNEXT: write_file docs/MTT_POOL.md with section:\n## Pool puzzle hash\n\n\`${result.puzzleHash}\`\n(no 0x prefix). Then done.`;
+              `\n\nNEXT: write_file docs/PUZZLE_HASH.md with section:\n## Puzzle hash\n\n\`${result.puzzleHash}\`\n(no 0x prefix). Then done.`;
           }
         }
       } else if (tool === "run") {
@@ -1114,11 +1114,11 @@ export async function runAgentJob({
         if (hashDoc.ok && hashDoc.puzzleHash) {
           finalMessage += [
             "",
-            "## Pool puzzle hash",
+            "## Puzzle hash",
             "",
             `\`${hashDoc.puzzleHash}\``,
             "",
-            `_(auto-documented from cdv on \`${hashDoc.path}\`)_`,
+            `_(auto-documented from cdv on \`${hashDoc.path}\` → ${hashDoc.docsPath || "docs/PUZZLE_HASH.md"})_`,
           ].join("\n");
         } else if (hashDoc && !hashDoc.ok) {
           log(`[agent] hash-doc: ${hashDoc.message}`);

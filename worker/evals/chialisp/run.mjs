@@ -28,7 +28,7 @@ const cases = [
         content: await read("golden-minimal.clsp"),
       },
       {
-        path: "docs/MTT_POOL.md",
+        path: "docs/PUZZLE_HASH.md",
         content: await read("golden-pool-hash.md"),
       },
     ],
@@ -83,7 +83,7 @@ const cases = [
         content: await read("golden-minimal.clsp"),
       },
       {
-        path: "docs/MTT_POOL.md",
+        path: "docs/PUZZLE_HASH.md",
         content: await read("trap-fake-ox-hash.md"),
       },
     ],
@@ -98,7 +98,7 @@ const cases = [
         content: await read("golden-minimal.clsp"),
       },
       {
-        path: "docs/MTT_POOL.md",
+        path: "docs/PUZZLE_HASH.md",
         content: await read("golden-pool-hash.md"),
       },
     ],

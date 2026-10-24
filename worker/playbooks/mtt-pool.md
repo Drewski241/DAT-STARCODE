@@ -10,21 +10,21 @@ User goal (even from a short prompt): an on-chain **tournament pool** that takes
 3. Solution: `mode pool_amount count w1 w2 w3`  
    - mode 1 deposit: `count < MAX_PLAYERS` → `CREATE_COIN` back to **`POOL_PUZZLE_HASH`** with `pool_amount + BUY_IN`  
    - mode 2 settle: `AGG_SIG_ME` + three `CREATE_COIN`s; 3rd gets **remainder**
-4. `docs/MTT_POOL.md` matches the puzzle (including that **POOL_PUZZLE_HASH is computed at setup**, before buy-ins).
-5. Run `puzzle_hash` (cdv) and put the bare hex in `docs/MTT_POOL.md` under `## Pool puzzle hash`. Worker tooling is **required** — do not finish by noting "cdv missing".
+4. Protocol notes (curry order, deposit/settle atoms, numeric example) live in `docs/` as needed; the **hash** goes in `docs/PUZZLE_HASH.md`.
+5. Run `puzzle_hash` (cdv) and put the bare hex in `docs/PUZZLE_HASH.md` under `## Puzzle hash`. Worker tooling is **required** — do not finish by noting "cdv missing".
 6. Call `clvm_verify` on the puzzle (brun/run) before claiming settle/deposit works.
 7. Remove stub junk (`pool_coin.py`, fake `.cl`, duplicate sage files) with real `rm`.
 
-## Pool puzzle hash format (required)
+## Puzzle hash format (required)
 
 ```markdown
-## Pool puzzle hash
+## Puzzle hash
 
 `aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa`
 ```
 
 - Bare 64 hex chars only — **no** `0x` prefix, **no** invented placeholders.
-- Use the `puzzle_hash` tool. The worker also auto-documents via cdv when present; missing cdv fails verification.
+- Use the `puzzle_hash` tool. The worker also auto-documents via cdv into `docs/PUZZLE_HASH.md`; missing cdv fails verification.
 
 ## First action
 

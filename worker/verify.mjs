@@ -40,12 +40,12 @@ export function hasSiblingCreateCoins(source) {
 }
 
 /**
- * Extract a bare 64-char hex puzzle hash from a ## Pool puzzle hash section.
+ * Extract a bare 64-char hex puzzle hash from ## Puzzle hash (or legacy ## Pool puzzle hash).
  * Rejects `0x…` placeholders (x is a hex digit so naive {64} matches lie).
  */
 export function findBarePuzzleHash(text) {
   const s = String(text || "");
-  const section = s.match(/##\s*Pool puzzle hash\s*\n([\s\S]{0,500})/i);
+  const section = s.match(/##\s*(?:Pool\s+)?[Pp]uzzle hash\s*\n([\s\S]{0,500})/i);
   if (!section) return null;
   const chunk = section[1].split(/\n##\s+/)[0] || "";
   // Strip 0x-prefixed tokens so they cannot satisfy the bare-hash check.
@@ -144,15 +144,15 @@ export function verifyWorkspaceFiles(files, opts = {}) {
       .map((f) => f.content)
       .join("\n");
     const corpus = [opts.resultText || "", docs].join("\n");
-    const hasSection = /##\s*Pool puzzle hash/i.test(corpus);
+    const hasSection = /##\s*(?:Pool\s+)?[Pp]uzzle hash/i.test(corpus);
     const bareHash = findBarePuzzleHash(corpus);
     if (!hasSection) {
       failures.push(
-        "Wrote .clsp but missing ## Pool puzzle hash section — run puzzle_hash tool and document the bare hex",
+        "Wrote .clsp but missing ## Puzzle hash section in docs/PUZZLE_HASH.md — run puzzle_hash tool and document the bare hex",
       );
     } else if (!bareHash) {
       failures.push(
-        "## Pool puzzle hash must contain a bare 64-char hex from puzzle_hash/cdv (no 0x prefix / no placeholders)",
+        "## Puzzle hash must contain a bare 64-char hex from puzzle_hash/cdv (no 0x prefix / no placeholders)",
       );
     }
   }

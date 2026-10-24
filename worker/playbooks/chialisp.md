@@ -40,7 +40,7 @@ A puzzle file must start with `(mod (` and the program body must **return a list
     ; Caller must create a coin of exactly BUY_IN_MOJOS into this puzzle.
     ; Recreate THIS same puzzle hash with amount increased off-chain by the coin set;
     ; enforce count < MAX_PLAYERS. Emit CREATE_COIN back to (my puzzle hash) pattern
-    ; used by the project, or document lineage clearly in MTT_POOL.md.
+    ; used by the project, or document lineage clearly in docs/.
     (if (< arg1 MAX_PLAYERS)
       (list
         (list 51 MY_PUZZLE_HASH BUY_IN_MOJOS)
@@ -83,4 +83,4 @@ Put a short “Security” subsection in `PLAN.md` or the companion docs answeri
 
 ## Docs companion
 
-If asked for `docs/MTT_POOL.md`, document curry order, deposit solution atoms, settle solution atoms, a numeric example (500 × buy-in → top-3 mojos), and the security notes above.
+Document the bare puzzle hash in `docs/PUZZLE_HASH.md` under `## Puzzle hash`. For MTT-style pools, also document curry order, deposit/settle atoms, and a numeric example in docs as needed.

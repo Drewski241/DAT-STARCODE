@@ -30,12 +30,12 @@ assert.equal(
 assert.equal(inferGoal("refactor the typescript API module").id, "coding");
 
 assert.equal(
-  findBarePuzzleHash(`## Pool puzzle hash\n\n\` 0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef \`\n`),
+  findBarePuzzleHash(`## Puzzle hash\n\n\` 0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef \`\n`),
   null,
 );
 assert.equal(
   findBarePuzzleHash(
-    `## Pool puzzle hash\n\n\`aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\`\n`,
+    `## Puzzle hash\n\n\`aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\`\n`,
   ),
   "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 );
@@ -63,9 +63,9 @@ const fakeOx = verifyWorkspaceFiles(
       content: `(mod (POOL_PUZZLE_HASH)\n  (list (list 51 POOL_PUZZLE_HASH 1))\n)`,
     },
     {
-      path: "docs/MTT_POOL.md",
+      path: "docs/PUZZLE_HASH.md",
       content:
-        "## Pool puzzle hash\n` 0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef `\n",
+        "## Puzzle hash\n` 0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef `\n",
     },
   ],
   { requireHash: true },
@@ -79,9 +79,9 @@ const withHash = verifyWorkspaceFiles(
       content: `(mod (POOL_PUZZLE_HASH)\n  (list (list 51 POOL_PUZZLE_HASH 1))\n)`,
     },
     {
-      path: "docs/MTT_POOL.md",
+      path: "docs/PUZZLE_HASH.md",
       content:
-        "## Pool puzzle hash\n\n`aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa`\n",
+        "## Puzzle hash\n\n`aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa`\n",
     },
   ],
   { requireHash: true },
@@ -95,9 +95,9 @@ const toolingMissing = verifyWorkspaceFiles(
       content: `(mod (POOL_PUZZLE_HASH)\n  (list (list 51 POOL_PUZZLE_HASH 1))\n)`,
     },
     {
-      path: "docs/MTT_POOL.md",
+      path: "docs/PUZZLE_HASH.md",
       content:
-        "## Pool puzzle hash\n\n`aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa`\n",
+        "## Puzzle hash\n\n`aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa`\n",
     },
   ],
   {
@@ -138,9 +138,9 @@ const strictOk = verifyWorkspaceFiles(
     { path: "puzzles/savings_vault.clsp", content: vault },
     { path: "puzzles/treasury_coin.clsp", content: treasury },
     {
-      path: "docs/MTT_POOL.md",
+      path: "docs/PUZZLE_HASH.md",
       content:
-        "## Pool puzzle hash\n\n`aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa`\n",
+        "## Puzzle hash\n\n`aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa`\n",
     },
   ],
   { requireHash: true, strictSingleton: true },

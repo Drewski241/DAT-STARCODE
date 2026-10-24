@@ -7,11 +7,16 @@ import path from "path";
 import { puzzleHashWithCdv } from "./cdv.mjs";
 import { findBarePuzzleHash } from "./verify.mjs";
 
+/** Canonical hash doc path (was docs/MTT_POOL.md — MTT-specific name was misleading). */
+export const PUZZLE_HASH_DOC = "docs/PUZZLE_HASH.md";
+/** @deprecated legacy path still read for migration */
+export const LEGACY_MTT_POOL_DOC = "docs/MTT_POOL.md";
+
 /**
  * @param {string} docsBody
  * @param {string} bareHash 64 hex chars, no 0x
  */
-export function upsertPoolPuzzleHashSection(docsBody, bareHash) {
+export function upsertPuzzleHashSection(docsBody, bareHash) {
   const hash = String(bareHash || "")
     .trim()
     .toLowerCase()
@@ -19,19 +24,23 @@ export function upsertPoolPuzzleHashSection(docsBody, bareHash) {
   if (!/^[0-9a-f]{64}$/.test(hash)) {
     throw new Error(`invalid bare puzzle hash: ${bareHash}`);
   }
-  const block = `## Pool puzzle hash\n\n\`${hash}\`\n`;
+  const block = `## Puzzle hash\n\n\`${hash}\`\n`;
   const body = String(docsBody || "");
-  if (/##\s*Pool puzzle hash\b/i.test(body)) {
+  // Replace either modern or legacy section title.
+  if (/##\s*(?:Pool\s+)?[Pp]uzzle hash\b/i.test(body)) {
     return body.replace(
-      /##\s*Pool puzzle hash\s*\n[\s\S]*?(?=\n##\s+\S|$)/i,
+      /##\s*(?:Pool\s+)?[Pp]uzzle hash\s*\n[\s\S]*?(?=\n##\s+\S|$)/i,
       () => block.trimEnd() + "\n",
     );
   }
   return `${body.replace(/\s*$/, "")}\n\n${block}`;
 }
 
+/** @deprecated use upsertPuzzleHashSection */
+export const upsertPoolPuzzleHashSection = upsertPuzzleHashSection;
+
 /**
- * Prefer puzzles/mtt_pool.clsp, else first .clsp under puzzles/, else any .clsp.
+ * Prefer savings_vault / mtt_pool under puzzles/, else first .clsp under puzzles/, else any.
  * @param {string[]} relPaths
  */
 export function pickClspForHash(relPaths) {
@@ -46,8 +55,7 @@ export function pickClspForHash(relPaths) {
 }
 
 /**
- * Run cdv on the best .clsp and write bare hex into docs/MTT_POOL.md
- * (and optionally RESULT-facing note).
+ * Run cdv on the best .clsp and write bare hex into docs/PUZZLE_HASH.md.
  *
  * @param {string} root
  * @param {{ log?: (msg: string) => void }} [opts]
@@ -69,21 +77,32 @@ export async function ensurePuzzleHashDocumented(root, opts = {}) {
     return { ok: false, message: "no .clsp file to hash" };
   }
 
-  const docsPath = entries.includes("docs/MTT_POOL.md")
-    ? "docs/MTT_POOL.md"
-    : "docs/MTT_POOL.md";
-
+  const docsPath = PUZZLE_HASH_DOC;
   let existing = "";
   try {
     existing = await fs.readFile(path.join(root, docsPath), "utf8");
   } catch {
-    existing =
-      "# MTT pool coin\n\nDocumented by DAT STARCODER after `cdv` puzzle hash.\n";
+    // Migrate leftover MTT_POOL.md content once if present.
+    if (entries.includes(LEGACY_MTT_POOL_DOC)) {
+      try {
+        existing = await fs.readFile(path.join(root, LEGACY_MTT_POOL_DOC), "utf8");
+        log(`[hash-doc] migrating ${LEGACY_MTT_POOL_DOC} → ${docsPath}`);
+      } catch {
+        existing = "";
+      }
+    }
+    if (!existing) {
+      existing =
+        "# Puzzle hash\n\nDocumented by DAT STARCODER after `cdv` puzzle hash.\n";
+    }
     await fs.mkdir(path.join(root, "docs"), { recursive: true });
   }
 
   const already = findBarePuzzleHash(existing);
   if (already) {
+    // Ensure canonical path exists even if we only had legacy content in memory.
+    const next = upsertPuzzleHashSection(existing, already);
+    await fs.writeFile(path.join(root, docsPath), next, "utf8");
     return {
       ok: true,
       path: clspPath,
@@ -105,7 +124,7 @@ export async function ensurePuzzleHashDocumented(root, opts = {}) {
     };
   }
 
-  const next = upsertPoolPuzzleHashSection(existing, result.puzzleHash);
+  const next = upsertPuzzleHashSection(existing, result.puzzleHash);
   await fs.writeFile(path.join(root, docsPath), next, "utf8");
   log(`[hash-doc] wrote ${result.puzzleHash} into ${docsPath}`);
   return {

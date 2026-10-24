@@ -156,7 +156,7 @@ Treat every solution atom as attacker-controlled unless signed or curried.`,
     text: `Done means:
 - .clsp starts with (mod and uses f/r (not array index syntax).
 - clvm_verify brun/run succeeds for deposit and settle sample solutions.
-- puzzle_hash/cdv produced a bare 64-hex documented under ## Pool puzzle hash.
+- puzzle_hash/cdv produced a bare 64-hex in docs/PUZZLE_HASH.md under ## Puzzle hash.
 - Security checklist (cl-4) reviewed in PLAN.md or docs.
 Never invent hashes or skip tools when the worker reports tooling missing.`,
   },

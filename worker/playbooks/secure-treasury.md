@@ -20,7 +20,7 @@ Templates are **already seeded** into the workspace:
 1. Both `.clsp` files still start with `(mod`.
 2. No sibling CREATE_COIN in one spend (verification fails hard if you add a second child).
 3. Mode 3 still requires curried deposit time + MIN_HOLD_SECONDS.
-4. `docs/SECURITY.md` (short) + puzzle hash via `puzzle_hash` on `puzzles/savings_vault.clsp`.
+4. `docs/SECURITY.md` (short) + bare hash in `docs/PUZZLE_HASH.md` via `puzzle_hash` on `puzzles/savings_vault.clsp`.
 5. Call `clvm_verify` or `spend_check` once, then `done`.
 
 ## Forbidden

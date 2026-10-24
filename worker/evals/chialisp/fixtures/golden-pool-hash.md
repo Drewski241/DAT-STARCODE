@@ -1,3 +1,3 @@
-## Pool puzzle hash
+## Puzzle hash
 
 `aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa`
