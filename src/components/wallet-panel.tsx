@@ -38,16 +38,23 @@ export function WalletPanel({
   const [wcUri, setWcUri] = useState<string | null>(null);
   const [qrDataUrl, setQrDataUrl] = useState<string | null>(null);
   const [datBalance, setDatBalance] = useState<number | null>(null);
+  /** True when a WalletConnect session is active — not merely a linked address. */
+  const [sageSessionLive, setSageSessionLive] = useState(false);
 
   useEffect(() => {
     if (!live) return;
     void (async () => {
       try {
         const session = await restoreSageSession();
-        if (!session) return;
+        if (!session) {
+          setSageSessionLive(false);
+          return;
+        }
+        setSageSessionLive(true);
         const bal = await getDatBalanceMojos();
         setDatBalance(mojosToDat(bal));
       } catch {
+        setSageSessionLive(false);
         // no restored session
       }
     })();
@@ -126,6 +133,7 @@ export function WalletPanel({
       const { address } = await approval;
       setWcUri(null);
       await linkAddress(address);
+      setSageSessionLive(true);
       try {
         const bal = await getDatBalanceMojos();
         setDatBalance(mojosToDat(bal));
@@ -135,6 +143,7 @@ export function WalletPanel({
       setMessage(`Sage connected: ${shortAddress(address)}. Ready to burn DAT.`);
     } catch (err) {
       setWcUri(null);
+      setSageSessionLive(false);
       await resetSageWalletConnect().catch(() => undefined);
       setMessage(err instanceof Error ? err.message : "Connect failed");
     } finally {
@@ -147,6 +156,7 @@ export function WalletPanel({
     try {
       await resetSageWalletConnect();
       setWcUri(null);
+      setSageSessionLive(false);
       setMessage("Connection cancelled. Click Connect Sage to try again.");
     } finally {
       setBusy(null);
@@ -160,6 +170,7 @@ export function WalletPanel({
       await disconnectSageWallet();
       setDatBalance(null);
       setWcUri(null);
+      setSageSessionLive(false);
       // Always clear the saved linked address so Reconnect is available.
       const res = await fetch("/api/session", {
         method: "PATCH",
@@ -300,20 +311,39 @@ export function WalletPanel({
       </div>
 
       <div className="flex flex-wrap items-center gap-4 border-y border-copper-800/40 py-4">
-        <button
-          type="button"
-          onClick={() => void connectSage()}
-          disabled={busy === "connect" || busy === "awaiting-sage"}
-          className="relative z-20 inline-flex h-12 cursor-pointer items-center rounded-none bg-copper-500 px-5 font-mono text-xs uppercase tracking-widest text-ink-950 transition hover:bg-copper-400 disabled:cursor-wait disabled:opacity-60"
-        >
-          {busy === "connect"
-            ? "Connecting relay…"
-            : busy === "awaiting-sage"
-              ? "Waiting for Sage…"
-              : account?.walletAddress
-                ? "Reconnect Sage"
-                : "Connect Sage"}
-        </button>
+        {sageSessionLive &&
+        busy !== "connect" &&
+        busy !== "awaiting-sage" ? (
+          <>
+            <span className="inline-flex h-12 items-center border border-copper-700/50 bg-ink-900/80 px-5 font-mono text-xs uppercase tracking-widest text-copper-200">
+              Sage connected
+            </span>
+            <button
+              type="button"
+              onClick={() => void connectSage()}
+              disabled={!!busy}
+              className="font-mono text-xs uppercase tracking-widest text-steel-500 underline-offset-4 hover:text-steel-300 hover:underline disabled:opacity-50"
+              title="Only if burns fail — starts a new WalletConnect pair"
+            >
+              Reconnect
+            </button>
+          </>
+        ) : (
+          <button
+            type="button"
+            onClick={() => void connectSage()}
+            disabled={busy === "connect" || busy === "awaiting-sage"}
+            className="relative z-20 inline-flex h-12 cursor-pointer items-center rounded-none bg-copper-500 px-5 font-mono text-xs uppercase tracking-widest text-ink-950 transition hover:bg-copper-400 disabled:cursor-wait disabled:opacity-60"
+          >
+            {busy === "connect"
+              ? "Connecting relay…"
+              : busy === "awaiting-sage"
+                ? "Waiting for Sage…"
+                : account?.walletAddress
+                  ? "Reconnect Sage"
+                  : "Connect Sage"}
+          </button>
+        )}
         {(busy === "connect" || busy === "awaiting-sage" || wcUri) && (
           <button
             type="button"
@@ -428,7 +458,11 @@ export function WalletPanel({
             <button
               type="button"
               data-pack={pack.id}
-              className="relative z-20 mt-6 inline-flex h-12 w-full cursor-pointer items-center justify-center rounded-none border border-copper-600/60 bg-ink-900 px-4 font-mono text-xs uppercase tracking-widest text-copper-100 transition hover:border-copper-400 hover:bg-copper-900/50 hover:text-copper-50 disabled:cursor-wait disabled:opacity-60"
+              className={
+                sageSessionLive
+                  ? "relative z-20 mt-6 inline-flex h-12 w-full cursor-pointer items-center justify-center rounded-none bg-copper-500 px-4 font-mono text-xs uppercase tracking-widest text-ink-950 transition hover:bg-copper-400 disabled:cursor-wait disabled:opacity-60"
+                  : "relative z-20 mt-6 inline-flex h-12 w-full cursor-pointer items-center justify-center rounded-none border border-copper-600/60 bg-ink-900 px-4 font-mono text-xs uppercase tracking-widest text-copper-100 transition hover:border-copper-400 hover:bg-copper-900/50 hover:text-copper-50 disabled:cursor-wait disabled:opacity-60"
+              }
               disabled={!!busy}
               onClick={() => void buyPack(pack.id)}
             >
