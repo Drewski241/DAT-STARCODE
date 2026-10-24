@@ -113,6 +113,7 @@ export async function ensurePuzzleHashDocumented(root, opts = {}) {
     };
   }
 
+  // Two-phase when possible: uncurried mod → default curry args → curried PH.
   const result = await puzzleHashWithCdv(root, clspPath, {});
   if (!result.puzzleHash) {
     log(`[hash-doc] cdv did not return a hash for ${clspPath}: ${result.message}`);

@@ -7,10 +7,18 @@ import assert from "node:assert/strict";
 import { promises as fs } from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
-import { verifyWorkspaceFiles } from "../../verify.mjs";
-import { findBarePuzzleHash } from "../../verify.mjs";
+import {
+  verifyWorkspaceFiles,
+  findBarePuzzleHash,
+  hasSiblingCreateCoins,
+} from "../../verify.mjs";
 import { inferGoal } from "../../goals.mjs";
-import { secureTreasuryFailures } from "../../secure-checks.mjs";
+import {
+  secureTreasuryFailures,
+  checkVaultSecure,
+  checkTreasurySecure,
+  checkAnnouncementPairing,
+} from "../../secure-checks.mjs";
 import { promises as fsRoot } from "fs";
 import pathRoot from "path";
 
@@ -161,6 +169,10 @@ try {
     pathRoot.join(tpl, "treasury_coin.clsp"),
     "utf8",
   );
+  const payout = await fsRoot.readFile(
+    pathRoot.join(tpl, "interest_payout.clsp"),
+    "utf8",
+  );
   const missing = secureTreasuryFailures([
     { path: "puzzles/savings_vault.clsp", content: vault },
     { path: "puzzles/treasury_coin.clsp", content: treasury },
@@ -170,10 +182,60 @@ try {
     "expected missing interest_payout failure",
   );
   console.log("ok  trap-missing-payout");
+
+  const sibling = `(mod (A)
+  (list
+    (list 50 A msg)
+    (list 51 ph1 1)
+    (list 51 ph2 2)
+  )
+)`;
+  assert.equal(hasSiblingCreateCoins(sibling), true);
+  const siblingVerify = verifyWorkspaceFiles(
+    [{ path: "puzzles/bad.clsp", content: sibling }],
+    { strictSingleton: true },
+  );
+  assert.equal(siblingVerify.ok, false);
+  console.log("ok  trap-sibling-create");
+
+  const unboundOwner = checkVaultSecure(
+    `(mod (MOD_HASH OWNER_PH mode)\n  (list (list 51 MOD_HASH 1))\n)`,
+  );
+  assert.ok(unboundOwner.some((f) => /OWNER_PH/.test(f)));
+  console.log("ok  trap-unbound-owner");
+
+  const noMyAmount = checkTreasurySecure(
+    `(mod (MOD_HASH AUTHORIZER_PK mode amount interest_amount dest_ph)\n  (list (list 63 1) (list 51 MOD_HASH (- amount 1)))\n)`,
+  );
+  assert.ok(noMyAmount.some((f) => /ASSERT_MY_AMOUNT/.test(f)));
+  console.log("ok  trap-missing-assert-my-amount");
+
+  const pairFail = checkAnnouncementPairing(
+    `(mod ()\n  (list (list 61 (sha256 TREASURY_PH msg)) (list 51 OWNER_PH 1))\n)`,
+    `(mod (A)\n  (list (list 62 claim) (list 51 A 1))\n)`,
+  );
+  assert.ok(pairFail.some((f) => /Announcement pairing/i.test(f)));
+  console.log("ok  trap-announcement-mismatch");
+
+  const golden = verifyWorkspaceFiles(
+    [
+      { path: "puzzles/savings_vault.clsp", content: vault },
+      { path: "puzzles/treasury_coin.clsp", content: treasury },
+      { path: "puzzles/interest_payout.clsp", content: payout },
+      {
+        path: "docs/PUZZLE_HASH.md",
+        content:
+          "## Puzzle hash\n\n`aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa`\n",
+      },
+    ],
+    { requireHash: true, secureTreasury: true, strictSingleton: true },
+  );
+  assert.equal(golden.ok, true, JSON.stringify(golden.failures));
+  console.log("ok  golden-secure-treasury-templates");
 } catch (err) {
   failed += 1;
   console.error(
-    `FAIL trap-missing-payout: ${err instanceof Error ? err.message : err}`,
+    `FAIL secure-treasury-traps: ${err instanceof Error ? err.message : err}`,
   );
 }
 
@@ -181,4 +243,4 @@ if (failed) {
   console.error(`\n${failed} eval case(s) failed`);
   process.exit(1);
 }
-console.log(`\nchialisp evals: ${cases.length + 3} passed`);
+console.log(`\nchialisp evals: ${cases.length + 8} passed`);

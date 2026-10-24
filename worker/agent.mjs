@@ -985,7 +985,7 @@ export async function runAgentJob({
           observation += `\n\nAUTO puzzle_hash:\n${JSON.stringify(result, null, 2)}`;
           if (result.puzzleHash) {
             observation +=
-              `\n\nNEXT: write_file docs/PUZZLE_HASH.md with section:\n## Puzzle hash\n\n\`${result.puzzleHash}\`\n(no 0x prefix). Then done.`;
+              `\n\nNEXT: write_file docs/PUZZLE_HASH.md with section:\n## Puzzle hash\n\n\`${result.puzzleHash}\`\n(no 0x prefix)${result.curried ? " — curried with demo args; re-run puzzle_hash with real curryArgs for mainnet." : ""}. Then done.`;
           }
         }
       } else if (tool === "run") {
