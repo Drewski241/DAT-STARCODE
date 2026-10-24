@@ -6,6 +6,8 @@ import type {
   AccountSource,
   AgentProfile,
   CodingJob,
+  JobEvent,
+  JobEventType,
   JobKind,
   PaymentIntent,
   Project,
@@ -37,6 +39,7 @@ function normalizeJob(raw: CodingJob): CodingJob {
     stepId: raw.stepId ?? null,
     agentProfile: raw.agentProfile ?? "coding",
     toolSteps: raw.toolSteps ?? 0,
+    events: Array.isArray(raw.events) ? raw.events : [],
   };
 }
 
@@ -383,6 +386,7 @@ export async function enqueueJob(input: {
       error: null,
       workerId: null,
       toolSteps: 0,
+      events: [],
       createdAt: now,
       updatedAt: now,
       completedAt: null,
@@ -431,6 +435,14 @@ export async function markJobRunning(jobId: string, workerId: string) {
     const now = new Date().toISOString();
     job.status = "running";
     job.updatedAt = now;
+    if (!job.events) job.events = [];
+    job.events.push({
+      id: randomUUID(),
+      t: now,
+      type: "status",
+      message: `Worker ${workerId} running`,
+      data: null,
+    });
     if (job.projectId && job.kind === "step" && job.stepId) {
       const project = store.projects.find((p) => p.id === job.projectId);
       const step = project?.steps.find((s) => s.id === job.stepId);
@@ -441,6 +453,43 @@ export async function markJobRunning(jobId: string, workerId: string) {
       }
     }
     return job;
+  });
+}
+
+const MAX_JOB_EVENTS = 200;
+
+export async function appendJobEvent(input: {
+  jobId: string;
+  workerId: string;
+  type: JobEventType;
+  message: string;
+  data?: Record<string, unknown> | null;
+}) {
+  return mutate((store) => {
+    const job = store.jobs.find((j) => j.id === input.jobId);
+    if (!job) throw new Error("Job not found");
+    if (job.workerId !== input.workerId) throw new Error("Worker mismatch");
+    if (job.status === "completed" || job.status === "failed") {
+      throw new Error("Job already finished");
+    }
+    const now = new Date().toISOString();
+    if (!job.events) job.events = [];
+    const event: JobEvent = {
+      id: randomUUID(),
+      t: now,
+      type: input.type,
+      message: String(input.message || "").slice(0, 2000),
+      data: input.data ?? null,
+    };
+    job.events.push(event);
+    if (job.events.length > MAX_JOB_EVENTS) {
+      job.events = job.events.slice(-MAX_JOB_EVENTS);
+    }
+    if (input.type === "tool" || input.type === "tool_result") {
+      // toolSteps is finalized on complete; live count from events is fine in UI
+    }
+    job.updatedAt = now;
+    return { job, event };
   });
 }
 

@@ -41,7 +41,6 @@ export function packsForProfile(profile: AgentProfile): KnowledgePack[] {
     case "coding":
       return ["playbook", "ops"];
     default:
-      // Everyday questions often are "help me do X on my computer"
-      return ["playbook", "ops", "windows", "macos", "chromeos", "linux"];
+      return ["everyday", "playbook", "ops"];
   }
 }

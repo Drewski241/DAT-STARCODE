@@ -23,7 +23,7 @@ export const MODEL_OPTIONS: ModelOption[] = [
     kind: "auto",
     ollamaTag: null,
     blurb:
-      "Picks model + specialty (coding, ChiaLisp, Windows/Mac/ChromeOS/Linux help)",
+      "Picks model + specialty (coding, ChiaLisp, systems help, everyday Q&A)",
   },
   {
     id: "qwen2.5-coder:7b",

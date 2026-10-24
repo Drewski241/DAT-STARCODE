@@ -64,10 +64,35 @@ async function complete(jobId, { result, error, toolSteps }) {
   return res.json();
 }
 
+async function progress(jobId, { type, message, data }) {
+  try {
+    const res = await fetch(`${API_BASE}/api/worker/progress`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-worker-key": WORKER_KEY,
+      },
+      body: JSON.stringify({
+        jobId,
+        workerId: WORKER_ID,
+        type,
+        message,
+        data: data ?? null,
+      }),
+    });
+    if (!res.ok) {
+      const text = await res.text();
+      console.warn(`[dat-starcoder-worker] progress ${res.status}: ${text}`);
+    }
+  } catch (err) {
+    console.warn("[dat-starcoder-worker] progress failed", err);
+  }
+}
+
 async function loop() {
   console.log(`[dat-starcoder-worker] ${WORKER_ID} → ${API_BASE}`);
   console.log(
-    `[dat-starcoder-worker] agent tools on · max_steps=${process.env.AGENT_MAX_STEPS || 8} shell=${process.env.AGENT_ALLOW_SHELL === "1" ? "allowlist" : "off"}`,
+    `[dat-starcoder-worker] agent tools on · max_steps=${process.env.AGENT_MAX_STEPS || 8} shell=${process.env.AGENT_ALLOW_SHELL === "1" ? "allowlist" : "off"} · clvm_verify=on · live progress=on`,
   );
   for (;;) {
     try {
@@ -76,11 +101,19 @@ async function loop() {
         await sleep(POLL_MS);
         continue;
       }
-      const model = job.modelResolved || process.env.OLLAMA_MODEL || "qwen2.5-coder:7b";
+      const model =
+        job.modelResolved || process.env.OLLAMA_MODEL || "qwen2.5-coder:7b";
       console.log(
         `[dat-starcoder-worker] claimed ${job.id} kind=${job.kind || "task"} profile=${job.agentProfile || "?"} model=${model}`,
       );
-      const { result, toolSteps } = await runAgentJob(job);
+      const { result, toolSteps } = await runAgentJob(job, {
+        onEvent: (e) =>
+          progress(job.id, {
+            type: e.type,
+            message: e.message,
+            data: e.data,
+          }),
+      });
       await complete(job.id, { result, toolSteps });
       console.log(
         `[dat-starcoder-worker] completed ${job.id} toolSteps=${toolSteps}`,

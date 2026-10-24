@@ -11,6 +11,7 @@ export type KnowledgePack =
   | "macos"
   | "chromeos"
   | "ops"
+  | "everyday"
   | "playbook";
 
 export type KnowledgeChunk = {
@@ -62,7 +63,7 @@ CAT2 wraps an inner puzzle; burns send the CAT to an unspendable burn puzzle has
 - Integer encoding: CLVM ints are not fixed-width; be careful with amount bytes in coin_id.
 - Softfork / unknown ops: prefer well-known opcodes for mainnet compatibility.
 - Never trust client-supplied puzzle hashes without asserting what you expect.
-- Test with clvm / chia dev tools before claiming a spend works.`,
+- Test with clvm_verify (brun/run) before claiming a spend works.`,
   },
   {
     id: "ops-nav",
@@ -287,6 +288,32 @@ CAT2 wraps an inner puzzle; burns send the CAT to an unspendable burn puzzle has
 - Ports: ss -tlnp or sudo lsof -i :<port>
 - Firewall: ufw (Ubuntu) or firewalld (Fedora) — status before opening ports
 - SSH: ~/.ssh at 700, private keys 600; check sshd if remote access fails`,
+  },
+  {
+    id: "ev-1",
+    pack: "everyday",
+    title: "Everyday Q&A standards",
+    keywords: [
+      "what",
+      "why",
+      "who",
+      "when",
+      "explain",
+      "mean",
+      "difference",
+      "should",
+      "opinion",
+      "news",
+      "fact",
+    ],
+    text: `Everyday questions:
+- Lead with the direct answer, then brief context
+- Separate established facts from contested claims; note uncertainty
+- For contested social/political topics, summarize leading positions fairly without taking a side unless asked for a personal recommendation
+- Prefer primary/reputable sources via web_search for time-sensitive facts
+- Do not moralize, scare, or sell; do not invent statistics
+- Medical/legal/financial: general info only + suggest professionals when decisions matter
+- If the question needs the user's OS or locale, ask one clarifying question`,
   },
   {
     id: "pb-1",

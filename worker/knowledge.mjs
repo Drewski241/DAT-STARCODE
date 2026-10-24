@@ -195,6 +195,25 @@ export const KNOWLEDGE_CHUNKS = [
     text: `Linux: ls/chown/chmod; df/du; ss/lsof ports; ufw or firewalld; SSH key modes 700/600.`,
   },
   {
+    id: "ev-1",
+    pack: "everyday",
+    title: "Everyday Q&A standards",
+    keywords: [
+      "what",
+      "why",
+      "who",
+      "when",
+      "explain",
+      "mean",
+      "difference",
+      "should",
+      "opinion",
+      "news",
+      "fact",
+    ],
+    text: `Everyday questions: direct answer first; separate facts from contested claims; fair summary of major views; web_search for time-sensitive facts; no invented stats; medical/legal/financial = general info + professionals when stakes are high.`,
+  },
+  {
     id: "pb-1",
     pack: "playbook",
     title: "Agent playbook",
@@ -241,6 +260,6 @@ export function packsForProfile(profile) {
     case "coding":
       return ["playbook", "ops"];
     default:
-      return ["playbook", "ops", "windows", "macos", "chromeos", "linux"];
+      return ["everyday", "playbook", "ops"];
   }
 }

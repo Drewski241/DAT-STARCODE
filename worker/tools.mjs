@@ -10,6 +10,7 @@ import { promises as fs } from "fs";
 import path from "path";
 import { execFile } from "child_process";
 import { promisify } from "util";
+import { clvmVerify } from "./clvm-verify.mjs";
 
 const execFileAsync = promisify(execFile);
 
@@ -62,6 +63,17 @@ export const TOOL_SPECS = [
     args: { command: "string" },
   },
   {
+    name: "clvm_verify",
+    description:
+      "Compile/run ChiaLisp or evaluate CLVM (run|brun). Optional expect= to assert output.",
+    args: {
+      program: "string",
+      solution: "string?",
+      mode: "brun|run",
+      expect: "string?",
+    },
+  },
+  {
     name: "done",
     description: "Finish the job with the final markdown answer",
     args: { answer: "string" },
@@ -80,6 +92,8 @@ export async function executeTool(name, args = {}) {
       return listDirTool(String(args.path || "."));
     case "run_command":
       return runCommandTool(String(args.command || ""));
+    case "clvm_verify":
+      return clvmVerify(args);
     case "done":
       return { ok: true, answer: String(args.answer || "") };
     default:

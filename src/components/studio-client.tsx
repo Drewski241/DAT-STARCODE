@@ -18,6 +18,14 @@ type Account = {
   credits: number;
 };
 
+type JobEvent = {
+  id: string;
+  t: string;
+  type: string;
+  message: string;
+  data?: Record<string, unknown> | null;
+};
+
 type Job = {
   id: string;
   prompt: string;
@@ -29,6 +37,7 @@ type Job = {
   agentProfile?: string;
   projectId?: string | null;
   toolSteps?: number;
+  events?: JobEvent[];
   status: string;
   creditsCharged: number;
   result: string | null;
@@ -84,6 +93,7 @@ export function StudioClient() {
   const [planCredits, setPlanCredits] = useState(
     Math.max(1, Math.floor(CREDITS_PER_JOB / 2)),
   );
+  const [liveEvents, setLiveEvents] = useState<JobEvent[]>([]);
 
   const refresh = useCallback(async () => {
     const [jobsRes, projectsRes] = await Promise.all([
@@ -127,6 +137,69 @@ export function StudioClient() {
     const t = setInterval(() => void refresh(), 2500);
     return () => clearInterval(t);
   }, [refresh]);
+
+  const selectedStatus =
+    jobs.find((j) => j.id === selectedId)?.status ?? null;
+
+  // Seed events from polled job payload (completed jobs / reconnect).
+  useEffect(() => {
+    if (!selectedId) {
+      setLiveEvents([]);
+      return;
+    }
+    const job = jobs.find((j) => j.id === selectedId);
+    if (job?.events?.length) {
+      setLiveEvents((prev) =>
+        job.events!.length >= prev.length ? job.events! : prev,
+      );
+    }
+  }, [selectedId, jobs]);
+
+  // Live tool stream while the selected job is in flight.
+  useEffect(() => {
+    if (!selectedId || !selectedStatus) return;
+    const active =
+      selectedStatus === "queued" ||
+      selectedStatus === "claimed" ||
+      selectedStatus === "running";
+    if (!active) return;
+
+    const es = new EventSource(`/api/jobs/${selectedId}/stream`);
+    es.addEventListener("hello", (ev) => {
+      try {
+        const data = JSON.parse((ev as MessageEvent).data) as {
+          events?: JobEvent[];
+        };
+        if (data.events) setLiveEvents(data.events);
+      } catch {
+        /* ignore */
+      }
+    });
+    es.addEventListener("events", (ev) => {
+      try {
+        const data = JSON.parse((ev as MessageEvent).data) as {
+          events?: JobEvent[];
+        };
+        if (data.events?.length) {
+          setLiveEvents((prev) => {
+            const seen = new Set(prev.map((e) => e.id));
+            const next = [...prev];
+            for (const e of data.events!) {
+              if (!seen.has(e.id)) next.push(e);
+            }
+            return next.slice(-200);
+          });
+        }
+      } catch {
+        /* ignore */
+      }
+    });
+    es.addEventListener("done", () => {
+      es.close();
+      void refresh();
+    });
+    return () => es.close();
+  }, [selectedId, selectedStatus, refresh]);
 
   async function submitJob() {
     setBusy(true);
@@ -259,9 +332,9 @@ export function StudioClient() {
               Dispatch work
             </h1>
             <p className="mt-3 text-sm leading-relaxed text-steel-300">
-              Single jobs or multi-step projects. The worker can search the web,
-              guide Windows / macOS / ChromeOS / Linux tasks, use ChiaLisp packs,
-              and route hard work to stronger models.
+              Single jobs, everyday questions, or multi-step projects. Live tool
+              stream, CLVM verify, systems help (Windows / Mac / ChromeOS /
+              Linux), and ChiaLisp specialty routing.
             </p>
 
             <div className="mt-6 flex flex-wrap gap-2">
@@ -534,18 +607,60 @@ export function StudioClient() {
                   </div>
                   <StatusPill status={selected.status} />
                 </div>
-                <div className="mt-5 max-h-[32rem] overflow-auto">
+                <div className="mt-5 max-h-[32rem] space-y-4 overflow-auto">
+                  {(selected.status === "queued" ||
+                    selected.status === "claimed" ||
+                    selected.status === "running" ||
+                    liveEvents.length > 0) && (
+                    <div className="border border-copper-800/40 bg-ink-950/50 p-3">
+                      <p className="font-mono text-[10px] uppercase tracking-widest text-steel-500">
+                        Live tool stream
+                      </p>
+                      {liveEvents.length === 0 ? (
+                        <p className="mt-2 animate-pulse-soft font-mono text-xs text-copper-300">
+                          Waiting for worker
+                          {selected.modelResolved
+                            ? ` (${selected.modelResolved})`
+                            : ""}
+                          …
+                        </p>
+                      ) : (
+                        <ul className="mt-2 space-y-1.5 font-mono text-[11px] leading-relaxed text-steel-300">
+                          {liveEvents.map((ev) => (
+                            <li key={ev.id} className="flex gap-2">
+                              <span className="shrink-0 text-steel-600">
+                                {ev.t.slice(11, 19)}
+                              </span>
+                              <span
+                                className={cn(
+                                  "shrink-0 uppercase tracking-wider",
+                                  ev.type === "error"
+                                    ? "text-rose-300"
+                                    : ev.type === "tool"
+                                      ? "text-copper-300"
+                                      : ev.type === "tool_result"
+                                        ? "text-emerald-300/90"
+                                        : "text-steel-500",
+                                )}
+                              >
+                                {ev.type}
+                              </span>
+                              <span className="text-copper-100/90">
+                                {ev.message}
+                                {ev.data &&
+                                typeof ev.data.summary === "string"
+                                  ? ` — ${ev.data.summary}`
+                                  : ""}
+                              </span>
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </div>
+                  )}
                   {selected.status === "queued" ||
                   selected.status === "claimed" ||
-                  selected.status === "running" ? (
-                    <p className="animate-pulse-soft font-mono text-sm text-copper-300">
-                      Worker is on it
-                      {selected.modelResolved
-                        ? ` (${selected.modelResolved})`
-                        : ""}
-                      …
-                    </p>
-                  ) : selected.error ? (
+                  selected.status === "running" ? null : selected.error ? (
                     <pre className="whitespace-pre-wrap font-mono text-xs text-rose-300">
                       {selected.error}
                     </pre>

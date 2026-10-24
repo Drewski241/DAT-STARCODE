@@ -24,16 +24,27 @@ function profileSystem(profile, kind) {
   const base = {
     coding:
       "You are DAT STARCODER, a careful coding agent. Prefer concrete patches, commands, and tests.",
-    general:
-      "You are DAT STARCODER, a helpful technical assistant. Answer clearly with markdown.",
-    chialisp:
-      "You are DAT STARCODER specializing in Chia, ChiaLisp, and CLVM. Be precise about puzzles, solutions, conditions, curry vs solution args, and verification steps.",
+    general: [
+      "You are DAT STARCODER answering everyday and general questions.",
+      "Be accurate, clear, and unbiased: present major viewpoints fairly when a topic is contested,",
+      "distinguish facts from opinions, and say when you are unsure.",
+      "Do not push politics, religion, or product pitches. Avoid stereotypes.",
+      "For changing facts (news, prices, versions, laws), use web_search and cite what you found.",
+      "For medical, legal, or financial topics, give general information only and suggest a qualified professional when stakes are high.",
+      "Never invent citations or pretend to have private knowledge of the user.",
+    ].join(" "),
+    chialisp: [
+      "You are DAT STARCODER specializing in Chia, ChiaLisp, and CLVM.",
+      "Be precise about puzzles, solutions, conditions, curry vs solution args.",
+      "When you propose CLVM/ChiaLisp, call clvm_verify (mode=run or brun) before finishing.",
+      "If verification fails, fix the program or explain the failure clearly.",
+    ].join(" "),
     ops: "You are DAT STARCODER helping people navigate their computers — Windows, macOS, ChromeOS/Chromebook, and Linux. Infer or ask which OS they use. Prefer Settings/UI click paths first, then Terminal/PowerShell. Never ask for passwords or recovery keys. Use web_search when menus may have changed by version.",
   }[profile] || "You are DAT STARCODER.";
 
   return [
     base,
-    "You can call tools to search the web, fetch docs, and inspect local files.",
+    "You can call tools to search the web, fetch docs, inspect local files, and verify CLVM.",
     "Work step-by-step. Use tools when unsure or when facts may be stale.",
     "When you have the final answer, call the done tool.",
   ].join(" ");
@@ -82,12 +93,12 @@ function buildMessages(job) {
 
 function parseAction(text) {
   const trimmed = String(text || "").trim();
-  const toolMatch = trimmed.match(
-    /TOOL\s*(\{[\s\S]*\})\s*$/i,
-  ) || trimmed.match(/TOOL\s*(\{[\s\S]*\})/i);
-  const doneMatch = trimmed.match(
-    /DONE\s*(\{[\s\S]*\})\s*$/i,
-  ) || trimmed.match(/DONE\s*(\{[\s\S]*\})/i);
+  const toolMatch =
+    trimmed.match(/TOOL\s*(\{[\s\S]*\})\s*$/i) ||
+    trimmed.match(/TOOL\s*(\{[\s\S]*\})/i);
+  const doneMatch =
+    trimmed.match(/DONE\s*(\{[\s\S]*\})\s*$/i) ||
+    trimmed.match(/DONE\s*(\{[\s\S]*\})/i);
 
   if (toolMatch) {
     try {
@@ -113,7 +124,6 @@ function parseAction(text) {
     }
   }
 
-  // Native-ish JSON object fallback
   try {
     const obj = JSON.parse(trimmed);
     if (obj.name === "done" || obj.type === "done") {
@@ -129,7 +139,6 @@ function parseAction(text) {
     /* ignore */
   }
 
-  // If the model forgot the protocol but wrote a long answer, treat as done.
   if (trimmed.length > 400 && !/^TOOL\b/i.test(trimmed)) {
     return { type: "done", answer: trimmed };
   }
@@ -165,25 +174,32 @@ async function ollamaChat(model, messages) {
 }
 
 /**
+ * @param {object} job
+ * @param {{ onEvent?: (e: {type:string,message:string,data?:object|null}) => Promise<void>|void }} [hooks]
  * @returns {{ result: string, toolSteps: number }}
  */
-export async function runAgentJob(job) {
-  const model = job.modelResolved || process.env.OLLAMA_MODEL || "qwen2.5-coder:7b";
+export async function runAgentJob(job, hooks = {}) {
+  const model =
+    job.modelResolved || process.env.OLLAMA_MODEL || "qwen2.5-coder:7b";
   const messages = buildMessages(job);
   const trace = [];
   let toolSteps = 0;
+  const emit = async (type, message, data = null) => {
+    if (hooks.onEvent) await hooks.onEvent({ type, message, data });
+  };
 
   try {
+    await emit("status", `Starting agent · ${model} · ${job.agentProfile || "auto"}`);
+
     for (let i = 0; i < MAX_STEPS; i++) {
+      await emit("log", `Thinking (step ${i + 1}/${MAX_STEPS})…`);
       const content = await ollamaChat(model, messages);
       messages.push({ role: "assistant", content });
       const action = parseAction(content);
 
       if (action.type === "done" || action.name === "done") {
-        const answer =
-          action.answer ||
-          action.args?.answer ||
-          content;
+        const answer = action.answer || action.args?.answer || content;
+        await emit("status", "Finishing answer");
         const header = [
           `Model: ${job.modelRequested || "auto"} → ${model}`,
           job.modelReason ? `Reason: ${job.modelReason}` : "",
@@ -206,7 +222,21 @@ export async function runAgentJob(job) {
       toolSteps += 1;
       const name = action.name;
       const args = action.args || {};
+      await emit("tool", `${name}`, {
+        name,
+        args: truncateData(args),
+        step: toolSteps,
+      });
       const observation = await executeTool(name, args);
+      await emit(
+        "tool_result",
+        `${name}: ${observation.ok === false ? "error" : "ok"}`,
+        {
+          name,
+          ok: observation.ok !== false,
+          summary: summarizeObservation(observation),
+        },
+      );
 
       if (name === "done") {
         const answer = observation.answer || "";
@@ -233,6 +263,7 @@ export async function runAgentJob(job) {
       });
     }
 
+    await emit("error", `Hit AGENT_MAX_STEPS=${MAX_STEPS}`);
     return {
       result: [
         `# Partial result (hit AGENT_MAX_STEPS=${MAX_STEPS})`,
@@ -241,17 +272,12 @@ export async function runAgentJob(job) {
         "",
         "### Trace",
         ...trace,
-        "",
-        "### Last messages",
-        messages
-          .slice(-2)
-          .map((m) => `**${m.role}**: ${String(m.content).slice(0, 1500)}`)
-          .join("\n\n"),
       ].join("\n"),
       toolSteps,
     };
   } catch (err) {
     const reason = err instanceof Error ? err.message : String(err);
+    await emit("error", reason);
     return {
       result: [
         `# Offline fallback (Ollama/tools error: ${reason})`,
@@ -268,5 +294,29 @@ export async function runAgentJob(job) {
       ].join("\n"),
       toolSteps,
     };
+  }
+}
+
+function truncateData(obj) {
+  try {
+    const s = JSON.stringify(obj);
+    if (s.length <= 800) return obj;
+    return { _truncated: s.slice(0, 800) };
+  } catch {
+    return null;
+  }
+}
+
+function summarizeObservation(obs) {
+  if (!obs || typeof obs !== "object") return String(obs).slice(0, 240);
+  if (obs.error) return String(obs.error).slice(0, 240);
+  if (obs.output) return String(obs.output).slice(0, 240);
+  if (obs.answer) return String(obs.answer).slice(0, 240);
+  if (Array.isArray(obs.results)) return `${obs.results.length} search hits`;
+  if (obs.text) return String(obs.text).slice(0, 240);
+  try {
+    return JSON.stringify(obs).slice(0, 240);
+  } catch {
+    return "ok";
   }
 }

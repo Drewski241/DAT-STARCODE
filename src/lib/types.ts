@@ -84,6 +84,22 @@ export interface Project {
   updatedAt: string;
 }
 
+export type JobEventType =
+  | "status"
+  | "tool"
+  | "tool_result"
+  | "log"
+  | "token"
+  | "error";
+
+export interface JobEvent {
+  id: string;
+  t: string;
+  type: JobEventType;
+  message: string;
+  data?: Record<string, unknown> | null;
+}
+
 export interface CodingJob {
   id: string;
   accountId: string;
@@ -102,6 +118,8 @@ export interface CodingJob {
   error: string | null;
   workerId: string | null;
   toolSteps: number;
+  /** Live tool / status stream for Studio SSE. */
+  events: JobEvent[];
   createdAt: string;
   updatedAt: string;
   completedAt: string | null;

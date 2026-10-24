@@ -75,7 +75,7 @@ ollama pull llama3.1:8b
 - Standard coding → `qwen2.5-coder:7b`
 - OS / general → `llama3.1:8b`
 
-**Stronger agent (worker tools):** the live worker runs a tool loop — `web_search`, `fetch_url`, `read_file`, `list_dir`, optional allowlisted `run_command` (`AGENT_ALLOW_SHELL=1`), then `done`. Knowledge packs (ChiaLisp + cross-platform systems help for Windows, macOS, ChromeOS, and Linux) are retrieved into the prompt. Studio **Project** mode plans a checklist, then you run steps one credit at a time.
+**Stronger agent (worker tools):** the live worker runs a tool loop — `web_search`, `fetch_url`, `read_file`, `list_dir`, `clvm_verify` (brun/run via `clvm_tools`), optional allowlisted `run_command` (`AGENT_ALLOW_SHELL=1`), then `done`. Progress streams live into Studio over SSE (`/api/jobs/:id/stream`). Knowledge packs cover ChiaLisp, everyday Q&A standards, and systems help for Windows, macOS, ChromeOS, and Linux. Studio **Project** mode plans a checklist, then you run steps one credit at a time.
 
 ## DAT + Sage (live burns)
 
@@ -136,10 +136,11 @@ Local demo uses `.data/store.json`. Wire Amplify to DynamoDB when you leave demo
 | `POST /api/projects/:id/run-next` | browser | enqueue next checklist step |
 | `POST /api/projects/:id/steps/:stepId/skip` | browser | skip a step |
 | `POST /api/worker/claim` | worker | claim next job (`x-worker-key`) |
+| `POST /api/worker/progress` | worker | append live tool/status event |
 | `POST /api/worker/complete` | worker | post result (+ optional `toolSteps`) |
+| `GET /api/jobs/:id/stream` | browser | SSE live tool stream |
 
 ## Next upgrades
 
 - Persist to DynamoDB instead of `.data/store.json`
-- Stream token output / tool trace over SSE while the worker runs
-- Optional CLVM verify tool for ChiaLisp steps
+- Token-level streaming from Ollama into the SSE feed
