@@ -1,18 +1,19 @@
-; Legacy alias — prefer puzzles/savings_vault.clsp (v2 closable bundle).
-; Secure savings vault — treasury-backed interest (educational, not Circuit source).
+; Secure savings vault - treasury-backed interest (educational, not Circuit source).
 ;
 ; CircuitDAO-class fixes (v2 closable bundle):
-;   A) Exactly ONE (list 51 …) CREATE_COIN per spend path
+;   A) Exactly ONE (list 51 ...) CREATE_COIN per spend path
 ;   B) DEPOSIT_SECONDS curried; interest needs MIN_HOLD_SECONDS elapsed
 ;   C) Interest = principal * bps * elapsed / (10000 * year)
 ;   D) Principal + interest destinations are OWNER_PH only
-;   E) claim-msg = (sha256tree (list 1 owed OWNER_PH)) — same on treasury + payout
+;   E) claim-msg = (sha256tree (list 1 owed OWNER_PH)) - same on treasury + payout
 ;   F) Mode 4 claim-only recreates with DEPOSIT_SECONDS := now_seconds (accrual reset)
 ;
 ; Curry: MOD_HASH AUTHORIZER_PK MIN_HOLD_SECONDS INTEREST_BPS TREASURY_PH
 ;        PRINCIPAL DEPOSIT_SECONDS OWNER_PH
 ; Solution: mode now_seconds
 ;   1 open/recreate  2 withdraw principal  3 exit+interest  4 claim-only (reset clock)
+;
+; Mode branches stay inline - nullary defuns that close over mod params break cdv/brun.
 
 (mod (
   MOD_HASH
@@ -53,12 +54,11 @@
     )
   )
 
-  ; Shared with treasury_coin + interest_payout (must stay identical).
-  (defun claim-msg (owed)
-    (sha256tree (list 1 (assert-pos owed) (assert-b32 OWNER_PH)))
+  (defun claim-msg (owed owner)
+    (sha256tree (list 1 (assert-pos owed) (assert-b32 owner)))
   )
 
-  (defun mode-open ()
+  (if (= mode 1)
     (list
       (list 50 AUTHORIZER_PK (sha256tree (list 1 now_seconds PRINCIPAL)))
       (list 51
@@ -67,72 +67,58 @@
         (assert-pos PRINCIPAL)
       )
     )
-  )
-
-  (defun mode-withdraw ()
-    (list
-      (list 50 AUTHORIZER_PK (sha256tree (list 2 now_seconds OWNER_PH)))
-      (list 51 (assert-b32 OWNER_PH) (assert-pos PRINCIPAL))
-    )
-  )
-
-  (defun mode-exit-with-interest (elapsed owed)
-    (if (> elapsed (- MIN_HOLD_SECONDS 1))
-      (if (> owed 0)
-        (list
-          (list 50 AUTHORIZER_PK
-            (sha256tree (list 3 now_seconds owed OWNER_PH)))
-          (list 81 now_seconds)
-          (list 51 (assert-b32 OWNER_PH) (assert-pos PRINCIPAL))
-          (list 61
-            (sha256 (assert-b32 TREASURY_PH) (claim-msg owed)))
-        )
-        (x)
-      )
-      (x)
-    )
-  )
-
-  ; Recreate vault with deposit clock reset to now_seconds so accrual cannot
-  ; be claimed twice for the same hold window.
-  (defun mode-claim-only (elapsed owed)
-    (if (> elapsed (- MIN_HOLD_SECONDS 1))
-      (if (> owed 0)
-        (list
-          (list 50 AUTHORIZER_PK
-            (sha256tree (list 4 now_seconds owed OWNER_PH)))
-          (list 81 now_seconds)
-          (list 51
-            (vault-ph MOD_HASH AUTHORIZER_PK MIN_HOLD_SECONDS INTEREST_BPS TREASURY_PH
-              PRINCIPAL now_seconds OWNER_PH)
-            (assert-pos PRINCIPAL)
-          )
-          (list 61
-            (sha256 (assert-b32 TREASURY_PH) (claim-msg owed)))
-        )
-        (x)
-      )
-      (x)
-    )
-  )
-
-  (if (= mode 1)
-    (mode-open)
     (if (= mode 2)
-      (mode-withdraw)
+      (list
+        (list 50 AUTHORIZER_PK (sha256tree (list 2 now_seconds OWNER_PH)))
+        (list 51 (assert-b32 OWNER_PH) (assert-pos PRINCIPAL))
+      )
       (if (= mode 3)
         (if (> now_seconds DEPOSIT_SECONDS)
-          (mode-exit-with-interest
-            (- now_seconds DEPOSIT_SECONDS)
-            (interest-due PRINCIPAL (- now_seconds DEPOSIT_SECONDS) INTEREST_BPS)
+          (if (> (- now_seconds DEPOSIT_SECONDS) (- MIN_HOLD_SECONDS 1))
+            (if (> (interest-due PRINCIPAL (- now_seconds DEPOSIT_SECONDS) INTEREST_BPS) 0)
+              (list
+                (list 50 AUTHORIZER_PK
+                  (sha256tree (list 3 now_seconds
+                    (interest-due PRINCIPAL (- now_seconds DEPOSIT_SECONDS) INTEREST_BPS)
+                    OWNER_PH)))
+                (list 81 now_seconds)
+                (list 51 (assert-b32 OWNER_PH) (assert-pos PRINCIPAL))
+                (list 61
+                  (sha256 (assert-b32 TREASURY_PH)
+                    (claim-msg
+                      (interest-due PRINCIPAL (- now_seconds DEPOSIT_SECONDS) INTEREST_BPS)
+                      OWNER_PH)))
+              )
+              (x)
+            )
+            (x)
           )
           (x)
         )
         (if (= mode 4)
           (if (> now_seconds DEPOSIT_SECONDS)
-            (mode-claim-only
-              (- now_seconds DEPOSIT_SECONDS)
-              (interest-due PRINCIPAL (- now_seconds DEPOSIT_SECONDS) INTEREST_BPS)
+            (if (> (- now_seconds DEPOSIT_SECONDS) (- MIN_HOLD_SECONDS 1))
+              (if (> (interest-due PRINCIPAL (- now_seconds DEPOSIT_SECONDS) INTEREST_BPS) 0)
+                (list
+                  (list 50 AUTHORIZER_PK
+                    (sha256tree (list 4 now_seconds
+                      (interest-due PRINCIPAL (- now_seconds DEPOSIT_SECONDS) INTEREST_BPS)
+                      OWNER_PH)))
+                  (list 81 now_seconds)
+                  (list 51
+                    (vault-ph MOD_HASH AUTHORIZER_PK MIN_HOLD_SECONDS INTEREST_BPS TREASURY_PH
+                      PRINCIPAL now_seconds OWNER_PH)
+                    (assert-pos PRINCIPAL)
+                  )
+                  (list 61
+                    (sha256 (assert-b32 TREASURY_PH)
+                      (claim-msg
+                        (interest-due PRINCIPAL (- now_seconds DEPOSIT_SECONDS) INTEREST_BPS)
+                        OWNER_PH)))
+                )
+                (x)
+              )
+              (x)
             )
             (x)
           )

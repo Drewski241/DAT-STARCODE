@@ -1,11 +1,14 @@
-; Interest payout — third spend in the vault↔treasury claim bundle.
+; Interest payout - third spend in the vault/treasury claim bundle.
 ;
-; OWNER_PH is curried — interest cannot be redirected via a free dest_ph.
+; OWNER_PH is curried - interest cannot be redirected via a free dest_ph.
 ; Asserts treasury CREATE_PUZZLE_ANNOUNCEMENT, then CREATE_COINs to OWNER_PH.
 ;
 ; Curry: AUTHORIZER_PK TREASURY_PH OWNER_PH
 ; Solution: interest_amount
 ; claim-msg = (sha256tree (list 1 interest_amount OWNER_PH))
+;
+; Note: pass OWNER_PH into claim-msg as an arg - a free OWNER_PH inside a
+; defun makes cdv/clvm optimize raise (clvm raise) on this small module.
 
 (mod (
   AUTHORIZER_PK
@@ -28,15 +31,15 @@
     (if (> n 0) n (x))
   )
 
-  (defun claim-msg (owed)
-    (sha256tree (list 1 (assert-pos owed) (assert-b32 OWNER_PH)))
+  (defun claim-msg (owed owner)
+    (sha256tree (list 1 (assert-pos owed) (assert-b32 owner)))
   )
 
   (list
     (list 50 AUTHORIZER_PK
       (sha256tree (list interest_amount OWNER_PH)))
     (list 61
-      (sha256 (assert-b32 TREASURY_PH) (claim-msg interest_amount)))
+      (sha256 (assert-b32 TREASURY_PH) (claim-msg interest_amount OWNER_PH)))
     (list 51 (assert-b32 OWNER_PH) (assert-pos interest_amount))
   )
 )

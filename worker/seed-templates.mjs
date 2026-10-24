@@ -79,7 +79,16 @@ async function needsClspRefresh(root, rel) {
       // v2: claim-msg must bind OWNER_PH (not a free dest_ph arg).
       const cm = defunBody(body, "claim-msg");
       if (cm && /\bdest_ph\b/i.test(cm)) return true;
-      if (cm && !/\bOWNER_PH\b/.test(cm)) return true;
+      if (cm && !/\bOWNER_PH\b/.test(cm) && !/\bowner\b/i.test(cm)) {
+        return true;
+      }
+      // Nullary mode defuns that close over mod params break cdv/brun.
+      if (/\(defun\s+mode-(?:open|withdraw|claim-only)\s*\(\s*\)/i.test(codeOnly)) {
+        return true;
+      }
+    }
+    if (/treasury_coin\.clsp$/i.test(rel)) {
+      if (/\(defun\s+pay-interest\s*\(\s*\)/i.test(codeOnly)) return true;
     }
     return false;
   } catch {

@@ -5,7 +5,10 @@
 ;
 ; Curry: MOD_HASH AUTHORIZER_PK
 ; Solution: mode amount interest_amount OWNER_PH
-; claim-msg = (sha256tree (list 1 interest_amount OWNER_PH)) — must match vault/payout.
+; claim-msg = (sha256tree (list 1 interest_amount OWNER_PH)) - must match vault/payout.
+;
+; Keep mode logic inline (not a nullary defun over free mod params) - that
+; pattern makes cdv/clvm raise at compile or brun time.
 
 (mod (
   MOD_HASH
@@ -38,7 +41,7 @@
     (sha256tree (c mod_hash (list auth)))
   )
 
-  (defun pay-interest ()
+  (if (= mode 1)
     (if (> interest_amount 0)
       (if (> amount (- interest_amount 1))
         (list
@@ -55,10 +58,6 @@
       )
       (x)
     )
-  )
-
-  (if (= mode 1)
-    (pay-interest)
     (x)
   )
 )
