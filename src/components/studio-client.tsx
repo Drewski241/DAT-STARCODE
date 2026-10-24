@@ -94,6 +94,7 @@ export function StudioClient() {
     Math.max(1, Math.floor(CREDITS_PER_JOB / 2)),
   );
   const [liveEvents, setLiveEvents] = useState<JobEvent[]>([]);
+  const [liveDraft, setLiveDraft] = useState("");
 
   const refresh = useCallback(async () => {
     const [jobsRes, projectsRes] = await Promise.all([
@@ -145,6 +146,7 @@ export function StudioClient() {
   useEffect(() => {
     if (!selectedId) {
       setLiveEvents([]);
+      setLiveDraft("");
       return;
     }
     const job = jobs.find((j) => j.id === selectedId);
@@ -152,6 +154,9 @@ export function StudioClient() {
       setLiveEvents((prev) =>
         job.events!.length >= prev.length ? job.events! : prev,
       );
+    }
+    if (job?.status === "completed" || job?.status === "failed") {
+      setLiveDraft("");
     }
   }, [selectedId, jobs]);
 
@@ -180,22 +185,29 @@ export function StudioClient() {
         const data = JSON.parse((ev as MessageEvent).data) as {
           events?: JobEvent[];
         };
-        if (data.events?.length) {
-          setLiveEvents((prev) => {
-            const seen = new Set(prev.map((e) => e.id));
-            const next = [...prev];
-            for (const e of data.events!) {
-              if (!seen.has(e.id)) next.push(e);
+        if (!data.events?.length) return;
+        let latestDraft: string | null = null;
+        setLiveEvents((prev) => {
+          const seen = new Set(prev.map((e) => e.id));
+          const next = [...prev];
+          for (const e of data.events!) {
+            if (e.type === "token") {
+              latestDraft =
+                typeof e.data?.draft === "string" ? e.data.draft : e.message;
+              continue;
             }
-            return next.slice(-200);
-          });
-        }
+            if (!seen.has(e.id)) next.push(e);
+          }
+          return next.slice(-120);
+        });
+        if (latestDraft !== null) setLiveDraft(latestDraft);
       } catch {
         /* ignore */
       }
     });
     es.addEventListener("done", () => {
       es.close();
+      setLiveDraft("");
       void refresh();
     });
     return () => es.close();
@@ -326,22 +338,23 @@ export function StudioClient() {
         <main className="mx-auto grid max-w-6xl gap-8 px-5 pb-16 pt-4 md:grid-cols-[1fr_1.2fr] md:px-10">
           <section>
             <p className="font-mono text-xs uppercase tracking-[0.28em] text-copper-400">
-              Coding studio
+              Studio
             </p>
             <h1 className="mt-2 font-display text-4xl tracking-tight md:text-5xl">
-              Dispatch work
+              Ask DAT STARCODER
             </h1>
-            <p className="mt-3 text-sm leading-relaxed text-steel-300">
-              Single jobs, everyday questions, or multi-step projects. Live tool
-              stream, CLVM verify, systems help (Windows / Mac / ChromeOS /
-              Linux), and ChiaLisp specialty routing.
+            <p className="mt-3 text-base leading-relaxed text-steel-300">
+              Type a question or task below, then press{" "}
+              <span className="text-copper-200">Start</span>. Answers appear on
+              the right as the helper works — including computer how‑tos,
+              everyday questions, coding, and ChiaLisp.
             </p>
 
             <div className="mt-6 flex flex-wrap gap-2">
               {(
                 [
-                  ["job", "Single job"],
-                  ["project", "Project"],
+                  ["job", "Quick question"],
+                  ["project", "Step-by-step project"],
                 ] as const
               ).map(([id, label]) => (
                 <button
@@ -349,7 +362,7 @@ export function StudioClient() {
                   type="button"
                   onClick={() => setMode(id)}
                   className={cn(
-                    "rounded-none border px-3 py-2 font-mono text-[11px] uppercase tracking-widest transition",
+                    "rounded-none border px-4 py-3 text-sm transition",
                     mode === id
                       ? "border-copper-400 bg-copper-900/50 text-copper-100"
                       : "border-copper-800/60 text-steel-400 hover:border-copper-600 hover:text-copper-200",
@@ -360,8 +373,9 @@ export function StudioClient() {
               ))}
             </div>
 
-            <label className="mt-8 block font-mono text-[11px] uppercase tracking-widest text-steel-400">
-              Model
+            <label className="mt-8 block text-sm text-steel-300">
+              Helper strength{" "}
+              <span className="text-steel-500">(Auto is fine for most people)</span>
             </label>
             <div className="mt-2 flex flex-wrap gap-2">
               {MODEL_OPTIONS.map((m) => (
@@ -370,7 +384,7 @@ export function StudioClient() {
                   type="button"
                   onClick={() => setModelId(m.id)}
                   className={cn(
-                    "rounded-none border px-3 py-2 text-left font-mono text-[11px] uppercase tracking-widest transition",
+                    "rounded-none border px-3 py-2.5 text-left text-sm transition",
                     modelId === m.id
                       ? "border-copper-400 bg-copper-900/50 text-copper-100"
                       : "border-copper-800/60 text-steel-400 hover:border-copper-600 hover:text-copper-200",
@@ -381,9 +395,7 @@ export function StudioClient() {
               ))}
             </div>
             {selectedModel && (
-              <p className="mt-2 font-mono text-[11px] text-steel-500">
-                {selectedModel.blurb}
-              </p>
+              <p className="mt-2 text-sm text-steel-500">{selectedModel.blurb}</p>
             )}
 
             {mode === "job" ? (
@@ -394,39 +406,40 @@ export function StudioClient() {
                   void submitJob();
                 }}
               >
-                <label className="block font-mono text-[11px] uppercase tracking-widest text-steel-400">
-                  Prompt
+                <label className="block text-sm text-steel-300">
+                  Your question or task
                 </label>
                 <Textarea
                   value={prompt}
                   onChange={(e) => setPrompt(e.target.value)}
                   rows={8}
-                  className="mt-2 rounded-none border-copper-800/50 bg-ink-900/80 font-mono text-sm text-copper-50"
+                  className="mt-2 rounded-none border-copper-800/50 bg-ink-900/80 text-base text-copper-50"
+                  placeholder="Example: How do I connect to Wi‑Fi on my Windows laptop?"
                 />
 
-                <label className="mt-5 block font-mono text-[11px] uppercase tracking-widest text-steel-400">
-                  Repo / path hint (optional)
+                <label className="mt-5 block text-sm text-steel-500">
+                  Folder hint (optional — for coding tasks)
                 </label>
                 <Input
                   value={repoHint}
                   onChange={(e) => setRepoHint(e.target.value)}
                   placeholder="e.g. worker/"
-                  className="mt-2 rounded-none border-copper-800/50 bg-ink-900/80 font-mono text-sm"
+                  className="mt-2 rounded-none border-copper-800/50 bg-ink-900/80 text-sm"
                 />
 
                 <div className="mt-6 flex flex-wrap items-center gap-3">
                   <Button
                     type="submit"
                     disabled={busy}
-                    className="rounded-none bg-copper-500 font-mono text-xs uppercase tracking-widest text-ink-950 hover:bg-copper-400"
+                    className="h-12 rounded-none bg-copper-500 px-6 text-base text-ink-950 hover:bg-copper-400"
                   >
-                    {busy ? "Queuing…" : `Run · ${CREDITS_PER_JOB} cr`}
+                    {busy ? "Starting…" : `Start · uses ${CREDITS_PER_JOB} credits`}
                   </Button>
                   <Link
                     href="/#pay"
-                    className="font-mono text-xs uppercase tracking-widest text-steel-400 hover:text-copper-200"
+                    className="text-sm text-steel-400 hover:text-copper-200"
                   >
-                    Top up DAT
+                    Add credits
                   </Link>
                 </div>
               </form>
@@ -438,34 +451,36 @@ export function StudioClient() {
                   void submitProject();
                 }}
               >
-                <label className="block font-mono text-[11px] uppercase tracking-widest text-steel-400">
-                  Project goal
+                <label className="block text-sm text-steel-300">
+                  What do you want to get done?
                 </label>
                 <Textarea
                   value={projectGoal}
                   onChange={(e) => setProjectGoal(e.target.value)}
                   rows={8}
-                  className="mt-2 rounded-none border-copper-800/50 bg-ink-900/80 font-mono text-sm text-copper-50"
+                  className="mt-2 rounded-none border-copper-800/50 bg-ink-900/80 text-base text-copper-50"
+                  placeholder="Describe the bigger goal. We’ll break it into smaller steps."
                 />
-                <p className="mt-2 font-mono text-[11px] text-steel-500">
-                  Plans cost {planCredits} cr · each step costs{" "}
-                  {CREDITS_PER_JOB} cr. Approve the checklist, then run steps
-                  one at a time.
+                <p className="mt-2 text-sm text-steel-500">
+                  Making a plan uses {planCredits} credits. Each step uses{" "}
+                  {CREDITS_PER_JOB} credits. You control when each step runs.
                 </p>
                 <div className="mt-6 flex flex-wrap items-center gap-3">
                   <Button
                     type="submit"
                     disabled={busy}
                     data-testid="plan-project"
-                    className="rounded-none bg-copper-500 font-mono text-xs uppercase tracking-widest text-ink-950 hover:bg-copper-400"
+                    className="h-12 rounded-none bg-copper-500 px-6 text-base text-ink-950 hover:bg-copper-400"
                   >
-                    {busy ? "Planning…" : `Plan project · ${planCredits} cr`}
+                    {busy
+                      ? "Making a plan…"
+                      : `Make a plan · ${planCredits} credits`}
                   </Button>
                   <Link
                     href="/#pay"
-                    className="font-mono text-xs uppercase tracking-widest text-steel-400 hover:text-copper-200"
+                    className="text-sm text-steel-400 hover:text-copper-200"
                   >
-                    Top up DAT
+                    Add credits
                   </Link>
                 </div>
               </form>
@@ -613,37 +628,17 @@ export function StudioClient() {
                     selected.status === "running" ||
                     liveEvents.length > 0) && (
                     <div className="border border-copper-800/40 bg-ink-950/50 p-3">
-                      <p className="font-mono text-[10px] uppercase tracking-widest text-steel-500">
-                        Live tool stream
-                      </p>
-                      {liveEvents.length === 0 ? (
-                        <p className="mt-2 animate-pulse-soft font-mono text-xs text-copper-300">
-                          Waiting for worker
-                          {selected.modelResolved
-                            ? ` (${selected.modelResolved})`
-                            : ""}
-                          …
+                      <p className="text-sm text-steel-400">Progress</p>
+                      {liveEvents.length === 0 && !liveDraft ? (
+                        <p className="mt-2 animate-pulse-soft text-base text-copper-300">
+                          Working on your request…
                         </p>
                       ) : (
-                        <ul className="mt-2 space-y-1.5 font-mono text-[11px] leading-relaxed text-steel-300">
+                        <ul className="mt-2 space-y-2 text-sm leading-relaxed text-steel-300">
                           {liveEvents.map((ev) => (
-                            <li key={ev.id} className="flex gap-2">
-                              <span className="shrink-0 text-steel-600">
-                                {ev.t.slice(11, 19)}
-                              </span>
-                              <span
-                                className={cn(
-                                  "shrink-0 uppercase tracking-wider",
-                                  ev.type === "error"
-                                    ? "text-rose-300"
-                                    : ev.type === "tool"
-                                      ? "text-copper-300"
-                                      : ev.type === "tool_result"
-                                        ? "text-emerald-300/90"
-                                        : "text-steel-500",
-                                )}
-                              >
-                                {ev.type}
+                            <li key={ev.id}>
+                              <span className="text-steel-500">
+                                {friendlyEventLabel(ev.type)}:{" "}
                               </span>
                               <span className="text-copper-100/90">
                                 {ev.message}
@@ -656,16 +651,29 @@ export function StudioClient() {
                           ))}
                         </ul>
                       )}
+                      {liveDraft && (
+                        <div className="mt-3 border-t border-copper-800/40 pt-3">
+                          <p className="text-sm text-steel-400">
+                            Draft answer (live)
+                          </p>
+                          <pre className="mt-2 whitespace-pre-wrap text-sm leading-relaxed text-steel-200">
+                            {liveDraft}
+                            <span className="animate-pulse-soft text-copper-400">
+                              ▍
+                            </span>
+                          </pre>
+                        </div>
+                      )}
                     </div>
                   )}
                   {selected.status === "queued" ||
                   selected.status === "claimed" ||
                   selected.status === "running" ? null : selected.error ? (
-                    <pre className="whitespace-pre-wrap font-mono text-xs text-rose-300">
+                    <pre className="whitespace-pre-wrap text-sm text-rose-300">
                       {selected.error}
                     </pre>
                   ) : (
-                    <pre className="whitespace-pre-wrap font-mono text-xs leading-relaxed text-steel-200">
+                    <pre className="whitespace-pre-wrap text-sm leading-relaxed text-steel-200">
                       {selected.result}
                     </pre>
                   )}
@@ -717,13 +725,13 @@ function ProjectPanel({
           type="button"
           onClick={onRunNext}
           disabled={busy || inFlight || pendingCount === 0}
-          className="rounded-none bg-copper-500 font-mono text-xs uppercase tracking-widest text-ink-950 hover:bg-copper-400 disabled:opacity-40"
+          className="h-12 rounded-none bg-copper-500 px-5 text-base text-ink-950 hover:bg-copper-400 disabled:opacity-40"
         >
           {project.status === "planning"
-            ? "Planning…"
+            ? "Making a plan…"
             : pendingCount === 0
               ? "All steps done"
-              : `Run next step · ${CREDITS_PER_JOB} cr`}
+              : `Do next step · ${CREDITS_PER_JOB} credits`}
         </Button>
         <p className="font-mono text-[11px] text-steel-500">
           {project.steps.filter((s) => s.status === "completed").length}/
@@ -797,6 +805,47 @@ function StepMark({ status }: { status: string }) {
   return <span className="text-steel-500">[ ]</span>;
 }
 
+function friendlyEventLabel(type: string) {
+  switch (type) {
+    case "tool":
+      return "Using a tool";
+    case "tool_result":
+      return "Tool finished";
+    case "status":
+      return "Status";
+    case "log":
+      return "Note";
+    case "error":
+      return "Problem";
+    default:
+      return type;
+  }
+}
+
+function friendlyStatus(status: string) {
+  switch (status) {
+    case "queued":
+      return "waiting";
+    case "claimed":
+    case "running":
+      return "working";
+    case "completed":
+      return "done";
+    case "failed":
+      return "needs attention";
+    case "planning":
+      return "making a plan";
+    case "planned":
+      return "ready for steps";
+    case "pending":
+      return "not started";
+    case "skipped":
+      return "skipped";
+    default:
+      return status;
+  }
+}
+
 function StatusPill({ status }: { status: string }) {
   const tone =
     status === "completed" || status === "planned"
@@ -805,13 +854,8 @@ function StatusPill({ status }: { status: string }) {
         ? "text-rose-300"
         : "text-copper-300";
   return (
-    <span
-      className={cn(
-        "shrink-0 font-mono text-[10px] uppercase tracking-widest",
-        tone,
-      )}
-    >
-      {status}
+    <span className={cn("shrink-0 text-xs tracking-wide", tone)}>
+      {friendlyStatus(status)}
     </span>
   );
 }

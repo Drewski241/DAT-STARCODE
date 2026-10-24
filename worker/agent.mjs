@@ -154,14 +154,18 @@ function parseAction(text) {
   };
 }
 
-async function ollamaChat(model, messages) {
+/**
+ * Stream Ollama chat; optionally emit batched token events for Studio SSE.
+ * @param {(chunk: string, full: string) => Promise<void>|void} [onToken]
+ */
+async function ollamaChat(model, messages, onToken) {
   const res = await fetch(`${OLLAMA_URL}/api/chat`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       model,
       messages,
-      stream: false,
+      stream: true,
       options: { temperature: 0.2 },
     }),
   });
@@ -169,8 +173,56 @@ async function ollamaChat(model, messages) {
     const body = await res.text();
     throw new Error(`Ollama ${res.status}: ${body.slice(0, 200)}`);
   }
-  const data = await res.json();
-  return data.message?.content || "";
+  if (!res.body) {
+    throw new Error("Ollama returned no body");
+  }
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let full = "";
+  let pending = "";
+  let lastEmit = 0;
+
+  const flushTokens = async (force = false) => {
+    if (!onToken || !pending) return;
+    const now = Date.now();
+    if (!force && now - lastEmit < 180 && pending.length < 48) return;
+    const chunk = pending;
+    pending = "";
+    lastEmit = now;
+    await onToken(chunk, full);
+  };
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split("\n");
+    buffer = lines.pop() || "";
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      let data;
+      try {
+        data = JSON.parse(trimmed);
+      } catch {
+        continue;
+      }
+      const piece = data.message?.content || "";
+      if (piece) {
+        full += piece;
+        pending += piece;
+        await flushTokens(false);
+      }
+      if (data.done) {
+        await flushTokens(true);
+        return full;
+      }
+    }
+  }
+  await flushTokens(true);
+  return full;
 }
 
 /**
@@ -193,7 +245,12 @@ export async function runAgentJob(job, hooks = {}) {
 
     for (let i = 0; i < MAX_STEPS; i++) {
       await emit("log", `Thinking (step ${i + 1}/${MAX_STEPS})…`);
-      const content = await ollamaChat(model, messages);
+      const content = await ollamaChat(model, messages, async (chunk, draft) => {
+        await emit("token", chunk, {
+          draft: draft.slice(-4000),
+          step: i + 1,
+        });
+      });
       messages.push({ role: "assistant", content });
       const action = parseAction(content);
 

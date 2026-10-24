@@ -1,14 +1,14 @@
 import { NextRequest } from "next/server";
 import { requireRegisteredAccount } from "@/lib/require-auth";
 import { getJob } from "@/lib/store";
+import { getLiveEvents } from "@/lib/job-live-bus";
 
 export const dynamic = "force-dynamic";
 
 type Ctx = { params: Promise<{ id: string }> };
 
 /**
- * SSE stream of job tool/status events for Studio live updates.
- * Polls the store so it works with the JSON file backend / Amplify.
+ * SSE stream of job tool/token/status events for Studio live updates.
  */
 export async function GET(req: NextRequest, ctx: Ctx) {
   const auth = await requireRegisteredAccount();
@@ -31,8 +31,16 @@ export async function GET(req: NextRequest, ctx: Ctx) {
 
   const encoder = new TextEncoder();
   let closed = false;
-  let lastCount = 0;
+  const seen = new Set<string>();
   let ticks = 0;
+
+  const mergeEvents = () => {
+    const durable = job.events ?? [];
+    const live = getLiveEvents(id);
+    const byId = new Map<string, (typeof durable)[0]>();
+    for (const e of [...durable, ...live]) byId.set(e.id, e);
+    return [...byId.values()].sort((a, b) => a.t.localeCompare(b.t));
+  };
 
   const stream = new ReadableStream({
     start(controller) {
@@ -43,12 +51,13 @@ export async function GET(req: NextRequest, ctx: Ctx) {
         );
       };
 
+      const initial = mergeEvents();
+      for (const e of initial) seen.add(e.id);
       send("hello", {
         jobId: id,
         status: job.status,
-        events: job.events ?? [],
+        events: initial,
       });
-      lastCount = job.events?.length ?? 0;
 
       const timer = setInterval(async () => {
         if (closed) {
@@ -65,10 +74,15 @@ export async function GET(req: NextRequest, ctx: Ctx) {
             closed = true;
             return;
           }
-          const events = fresh.events ?? [];
-          if (events.length > lastCount) {
-            send("events", { events: events.slice(lastCount) });
-            lastCount = events.length;
+          const durable = fresh.events ?? [];
+          const live = getLiveEvents(id);
+          const combined = [...durable, ...live].sort((a, b) =>
+            a.t.localeCompare(b.t),
+          );
+          const novel = combined.filter((e) => !seen.has(e.id));
+          if (novel.length) {
+            for (const e of novel) seen.add(e.id);
+            send("events", { events: novel });
           }
           if (
             fresh.status === "completed" ||
@@ -86,11 +100,9 @@ export async function GET(req: NextRequest, ctx: Ctx) {
             closed = true;
             return;
           }
-          // Keep-alive comment every ~15s
           if (ticks % 15 === 0) {
             controller.enqueue(encoder.encode(": ping\n\n"));
           }
-          // Safety cap ~10 minutes
           if (ticks > 600) {
             send("error", { message: "Stream timeout" });
             clearInterval(timer);
@@ -102,7 +114,7 @@ export async function GET(req: NextRequest, ctx: Ctx) {
             message: err instanceof Error ? err.message : "stream error",
           });
         }
-      }, 1000);
+      }, 400);
 
       req.signal.addEventListener("abort", () => {
         closed = true;

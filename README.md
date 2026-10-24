@@ -113,7 +113,9 @@ aws cloudformation deploy \
   --capabilities CAPABILITY_NAMED_IAM
 ```
 
-Local demo uses `.data/store.json`. Wire Amplify to DynamoDB when you leave demo mode.
+**House / demo:** uses `.data/store.json` by default (no AWS needed).
+
+**DynamoDB:** deploy `infra/cloudformation.yml`, then set Amplify env `DAT_STARCODER_TABLE` to the stack output table name (and grant the Amplify role DynamoDB access). The app stores one versioned snapshot item (`pk` / `sk=SNAPSHOT`) so the existing API keeps working.
 
 ### Cost sketch (dev traffic)
 
@@ -142,5 +144,6 @@ Local demo uses `.data/store.json`. Wire Amplify to DynamoDB when you leave demo
 
 ## Next upgrades
 
-- Persist to DynamoDB instead of `.data/store.json`
-- Token-level streaming from Ollama into the SSE feed
+- Per-entity DynamoDB items (instead of one snapshot) if traffic grows
+- Richer citations UI for everyday answers
+- Guided first-run walkthrough for non-technical testers

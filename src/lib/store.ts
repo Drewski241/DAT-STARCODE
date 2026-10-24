@@ -1,5 +1,3 @@
-import { promises as fs } from "fs";
-import path from "path";
 import { randomUUID } from "crypto";
 import type {
   Account,
@@ -17,19 +15,12 @@ import type {
 import { CREDITS_PER_JOB, DAT_ASSET_ID } from "@/lib/config";
 import { creditsForDat } from "@/lib/economy";
 import { hashPassword, verifyPassword } from "@/lib/password";
-
-const DATA_DIR =
-  process.env.DAT_STARCODER_DATA_DIR ??
-  process.env.ANVIL_DATA_DIR ??
-  path.join(process.cwd(), ".data");
-const STORE_PATH = path.join(DATA_DIR, "store.json");
-
-const emptyStore = (): StoreSnapshot => ({
-  accounts: [],
-  payments: [],
-  jobs: [],
-  projects: [],
-});
+import {
+  getStoreBackendKind,
+  loadSnapshot,
+  saveSnapshot,
+} from "@/lib/store-backend";
+import { clearLiveEvents, pushLiveEvent } from "@/lib/job-live-bus";
 
 function normalizeJob(raw: CodingJob): CodingJob {
   return {
@@ -54,38 +45,40 @@ function normalizeStore(raw: StoreSnapshot): StoreSnapshot {
 
 let writeChain: Promise<void> = Promise.resolve();
 
-async function ensureDir() {
-  await fs.mkdir(DATA_DIR, { recursive: true });
-}
-
 async function readStore(): Promise<StoreSnapshot> {
-  try {
-    const raw = await fs.readFile(STORE_PATH, "utf8");
-    return normalizeStore(JSON.parse(raw) as StoreSnapshot);
-  } catch {
-    return emptyStore();
-  }
-}
-
-async function writeStore(store: StoreSnapshot) {
-  await ensureDir();
-  const tmp = `${STORE_PATH}.${process.pid}.tmp`;
-  await fs.writeFile(tmp, JSON.stringify(store, null, 2), "utf8");
-  await fs.rename(tmp, STORE_PATH);
+  const { store } = await loadSnapshot();
+  return normalizeStore(store);
 }
 
 function mutate<T>(fn: (store: StoreSnapshot) => T): Promise<T> {
   const run = writeChain.then(async () => {
-    const store = await readStore();
-    const result = fn(store);
-    await writeStore(store);
-    return result;
+    const maxAttempts = getStoreBackendKind() === "dynamodb" ? 5 : 1;
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      const loaded = await loadSnapshot();
+      const store = normalizeStore(loaded.store);
+      const result = fn(store);
+      try {
+        await saveSnapshot(store, loaded.version);
+        return result;
+      } catch (err) {
+        const code = (err as { code?: string })?.code;
+        if (code === "STORE_VERSION_CONFLICT" && attempt < maxAttempts - 1) {
+          continue;
+        }
+        throw err;
+      }
+    }
+    throw new Error("Store write failed after retries");
   });
   writeChain = run.then(
     () => undefined,
     () => undefined,
   );
   return run;
+}
+
+export function getStoreInfo() {
+  return { backend: getStoreBackendKind() };
 }
 
 function normalizeAccount(raw: Account): Account {
@@ -481,13 +474,17 @@ export async function appendJobEvent(input: {
       message: String(input.message || "").slice(0, 2000),
       data: input.data ?? null,
     };
-    job.events.push(event);
-    if (job.events.length > MAX_JOB_EVENTS) {
-      job.events = job.events.slice(-MAX_JOB_EVENTS);
+    // Tokens stay mostly on the live bus to avoid snapshot write storms.
+    const persist =
+      input.type !== "token" ||
+      Boolean((input.data as { persist?: boolean } | null)?.persist);
+    if (persist) {
+      job.events.push(event);
+      if (job.events.length > MAX_JOB_EVENTS) {
+        job.events = job.events.slice(-MAX_JOB_EVENTS);
+      }
     }
-    if (input.type === "tool" || input.type === "tool_result") {
-      // toolSteps is finalized on complete; live count from events is fine in UI
-    }
+    pushLiveEvent(job.id, event);
     job.updatedAt = now;
     return { job, event };
   });
@@ -537,7 +534,7 @@ export async function completeJob(input: {
   error?: string | null;
   toolSteps?: number;
 }) {
-  return mutate((store) => {
+  const finished = await mutate((store) => {
     const job = store.jobs.find((j) => j.id === input.jobId);
     if (!job) throw new Error("Job not found");
     if (job.workerId !== input.workerId) throw new Error("Worker mismatch");
@@ -611,6 +608,8 @@ export async function completeJob(input: {
     job.completedAt = now;
     return job;
   });
+  clearLiveEvents(input.jobId);
+  return finished;
 }
 
 export async function listProjects(accountId: string) {
