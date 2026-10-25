@@ -13,6 +13,7 @@ User is building or debugging an app/site (HTML, React, Next.js, Node API, CSS).
 - Runnable output: `index.html` or `npm run dev` / `npm run build`.
 - Small diffs; keep existing design unless asked.
 - Document how to run in the final message.
+- **Never** `xdg-open`, `gio open`, or any desktop browser launch — that opens windows on the worker machine. Start the server once if useful, then point the user at the URL or Studio Preview.
 
 ## Common fixes
 

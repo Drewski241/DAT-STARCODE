@@ -115,7 +115,9 @@ export function classifyErrorLog(text) {
     out.suggestedCommands = ["npm run lint", "npm run build"];
     return out;
   }
-  if (/exit [1-9]\d*|ERROR:|STDERR:/i.test(s)) {
+  // Exit code / ERROR: only — do NOT treat STDERR alone as failure
+  // (xdg-open Gtk noise, npm warnings, etc. often print on stderr with exit 0).
+  if (/^exit [1-9]/m.test(s) || /^ERROR:/im.test(s)) {
     out.kind = "command_failed";
     out.confidence = 0.55;
     out.hints = [
@@ -124,6 +126,19 @@ export function classifyErrorLog(text) {
     ];
   }
   return out;
+}
+
+/**
+ * Whether a `run` tool observation should trigger fix→re-run classification.
+ * Exit code is authoritative; benign stderr (Gtk, warnings) with exit 0 is OK.
+ * @param {string} observation
+ */
+export function observationLooksLikeFailedRun(observation) {
+  const s = String(observation || "");
+  if (/^ERROR:/im.test(s)) return true;
+  const m = s.match(/^exit (-?\d+)/m);
+  if (m && Number(m[1]) !== 0) return true;
+  return false;
 }
 
 /**

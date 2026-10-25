@@ -38,6 +38,7 @@ import {
 import {
   classifyErrorLog,
   formatClassificationNudge,
+  observationLooksLikeFailedRun,
   promptLooksLikeErrorDump,
 } from "./error-classify.mjs";
 import {
@@ -229,6 +230,10 @@ async function toolWrite(root, rel, content) {
 const BLOCKED_RUN =
   /\b(sudo|pkexec|passwd|su\b|visudo|shutdown|reboot|halt|poweroff)\b/i;
 
+/** Opening a desktop browser on the worker host spams the operator's GUI. */
+const BLOCKED_BROWSER_OPEN =
+  /\b(xdg-open|gio\s+open|sensible-browser|gnome-open|kde-open|xdg-email)\b|\bpython3?\s+-m\s+webbrowser\b|^(?:open|start)\s+https?:\/\//i;
+
 function runCommand(root, command) {
   const cmd = String(command || "").trim();
   if (!cmd) {
@@ -237,6 +242,12 @@ function runCommand(root, command) {
   if (BLOCKED_RUN.test(cmd)) {
     return Promise.resolve(
       "ERROR: interactive/privileged commands (sudo, su, passwd, …) are blocked. Use user-level tools only (npm, node, python, …).",
+    );
+  }
+  if (BLOCKED_BROWSER_OPEN.test(cmd)) {
+    return Promise.resolve(
+      "ERROR: opening a desktop browser (xdg-open / gio open / …) is blocked on the worker. " +
+        "Start the server if needed (e.g. node server.js / npm run dev), then tell the user to open the URL or use Studio Preview — do not launch a browser yourself.",
     );
   }
   return new Promise((resolve) => {
@@ -1132,10 +1143,7 @@ export async function runAgentJob({
         const cmd = String(args.command || "true");
         lastCommand = cmd;
         observation = await runCommand(root, cmd);
-        const failedRun =
-          /^ERROR:/i.test(observation) ||
-          /^exit [1-9]/m.test(observation) ||
-          /\nSTDERR:\n[\s\S]{20,}/.test(observation);
+        const failedRun = observationLooksLikeFailedRun(observation);
         if (failedRun && !isGeneral) {
           const classified = classifyErrorLog(observation);
           lastErrorKind = classified.kind;
