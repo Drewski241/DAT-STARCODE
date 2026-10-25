@@ -181,6 +181,22 @@ B) Same-block flash deposit/withdraw claiming interest. Fix: curry deposit time;
 Also: type-check 32-byte puzzle hashes; bind OWNER_PH on withdraw; treasury ASSERT_MY_AMOUNT; match puzzle announcements (63/61) across vault + treasury + interest_payout; recreate with (sha256tree (c MOD_HASH (list …))) and confirm via cdv. See templates/secure-treasury/ and tests/spend-samples.json.`,
   },
   {
+    id: "web-1",
+    pack: "playbook",
+    title: "Error-driven fix loop for apps/sites",
+    keywords: [
+      "fix this",
+      "build failed",
+      "failed to compile",
+      "typeerror",
+      "cannot find module",
+      "hydration",
+      "next.js",
+      "npm err",
+    ],
+    text: `When the user pastes a build/runtime error: (1) classify first real error, (2) read_file cited path, (3) minimal write_file fix, (4) re-run the same command, (5) done with cause→change→verify. Use checkpoint .datstarcoder/checkpoint.json across turns. Prefer web-app playbook for Next/React/HTML.`,
+  },
+  {
     id: "cl-11",
     pack: "chialisp",
     title: "Real-funds treasury ladder (train the agent)",

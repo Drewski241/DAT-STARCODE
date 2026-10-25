@@ -1,0 +1,43 @@
+:root {
+  --bg: #0f1419;
+  --fg: #e8eef4;
+  --muted: #8b9aab;
+  --accent: #c4a574;
+}
+* {
+  box-sizing: border-box;
+}
+body {
+  margin: 0;
+  min-height: 100vh;
+  font-family: "IBM Plex Sans", "Segoe UI", sans-serif;
+  background: radial-gradient(1200px 600px at 20% -10%, #1c2733, var(--bg));
+  color: var(--fg);
+}
+.shell {
+  max-width: 40rem;
+  margin: 0 auto;
+  padding: 4rem 1.25rem;
+}
+.brand {
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  font-size: 0.75rem;
+  color: var(--accent);
+}
+h1 {
+  font-weight: 560;
+  line-height: 1.15;
+  margin: 0.5rem 0 0.75rem;
+}
+.lede {
+  color: var(--muted);
+}
+button {
+  background: var(--accent);
+  color: #1a1208;
+  border: 0;
+  padding: 0.55rem 1rem;
+  font: inherit;
+  cursor: pointer;
+}

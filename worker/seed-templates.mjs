@@ -111,6 +111,9 @@ async function needsClspRefresh(root, rel) {
 export async function seedTemplatesForGoal(root, goalId, opts = {}) {
   const log = opts.log || (() => {});
   const preservePuzzleEdits = Boolean(opts.preservePuzzleEdits);
+  if (goalId === "coding") {
+    return seedWebAppIfEmpty(root, log);
+  }
   if (goalId !== "secure_treasury") return [];
 
   const base = path.join(repoRoot, "templates", "secure-treasury");
@@ -192,5 +195,34 @@ export async function seedTemplatesForGoal(root, goalId, opts = {}) {
     }
   }
 
+  return written;
+}
+
+/** Seed a minimal static web starter when the workspace has no entrypoint yet. */
+async function seedWebAppIfEmpty(root, log) {
+  const written = [];
+  const hasEntrypoint = async () => {
+    for (const rel of ["index.html", "package.json", "src/app/page.tsx", "app/page.tsx"]) {
+      try {
+        await fs.access(path.join(root, rel));
+        return true;
+      } catch {
+        /* missing */
+      }
+    }
+    return false;
+  };
+  if (await hasEntrypoint()) return written;
+  const base = path.join(repoRoot, "templates", "web-app");
+  for (const rel of ["index.html", "styles.css", "app.js", "README.md"]) {
+    try {
+      const body = await fs.readFile(path.join(base, rel), "utf8");
+      await writeFile(root, rel, body, written, log, { force: false });
+    } catch (err) {
+      log(
+        `[seed] web-app skip ${rel}: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }
   return written;
 }

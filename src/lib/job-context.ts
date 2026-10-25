@@ -46,6 +46,22 @@ export async function buildContinueContext(
     )
     .slice(0, MAX_FILES);
 
+  const checkpoint = await readWorkspaceFile(
+    parent,
+    ".datstarcoder/checkpoint.json",
+  );
+  if (checkpoint) {
+    parts.push(
+      "### Project checkpoint",
+      "```json",
+      checkpoint.length > 4_000
+        ? `${checkpoint.slice(0, 4_000)}\n…(truncated)`
+        : checkpoint,
+      "```",
+      "",
+    );
+  }
+
   if (codeFiles.length > 0) {
     parts.push("### Prior workspace files (continue from these)");
     for (const rel of codeFiles) {

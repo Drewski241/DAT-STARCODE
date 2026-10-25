@@ -167,6 +167,15 @@ try {
     `expected real-funds playbook, got ${rf.playbooks.join(",")}`,
   );
   console.log("ok  treasury-real-funds-routing");
+
+  const fix = inferGoal(
+    "Fix this: Failed to compile.\n./app/page.tsx\nType error: TS2322",
+  );
+  assert.equal(fix.id, "coding");
+  assert.equal(fix.hard, true);
+  assert.ok(fix.playbooks.includes("error-fix.md"));
+  assert.ok(fix.playbooks.includes("web-app.md"));
+  console.log("ok  coding-error-routing");
 } catch (err) {
   failed += 1;
   console.error(
@@ -286,4 +295,4 @@ if (failed) {
   console.error(`\n${failed} eval case(s) failed`);
   process.exit(1);
 }
-console.log(`\nchialisp evals: ${cases.length + 12} passed`);
+console.log(`\nchialisp evals: ${cases.length + 13} passed`);

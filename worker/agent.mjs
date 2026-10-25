@@ -35,6 +35,20 @@ import {
   goalAllowsTreasuryTemplateDiverge,
   shouldRescueTreasuryPuzzles,
 } from "./treasury-rescue.mjs";
+import {
+  classifyErrorLog,
+  formatClassificationNudge,
+  promptLooksLikeErrorDump,
+} from "./error-classify.mjs";
+import {
+  loadCheckpoint,
+  saveCheckpoint,
+  formatCheckpointForPrompt,
+} from "./project-memory.mjs";
+import {
+  shouldEarlyExit,
+  updateProgressState,
+} from "./progress-guard.mjs";
 
 const MAX_STEPS = Number(process.env.AGENT_MAX_STEPS || 12);
 const HARD_TASK_STEPS = Number(process.env.AGENT_HARD_TASK_STEPS || 40);
@@ -454,6 +468,10 @@ function agentSystem(job, github, githubClone, extras = {}) {
     extras.agentsMd
       ? `\n## Repository agent instructions\n${extras.agentsMd}\n`
       : "",
+    extras.checkpointMd ? `\n${extras.checkpointMd}\n` : "",
+    extras.errorNudge
+      ? `\n## Error-driven turn\n${extras.errorNudge}\n`
+      : "",
     job.projectId ? `Project id: ${job.projectId}` : "",
     repoLabel
       ? `GitHub repo: ${repoLabel} (base ${github?.defaultBranch || githubClone?.defaultBranch || "main"})`
@@ -760,14 +778,20 @@ export async function runAgentJob({
       `Goal: ${goal.id}${hardTask ? " (hard)" : ""} · up to ${stepLimit} steps`,
     );
 
-    if (!isGeneral && hardTask && !resultOnly) {
+    if (
+      !isGeneral &&
+      !resultOnly &&
+      (hardTask || goal.id === "coding" || goal.id === "secure_treasury")
+    ) {
       try {
         const preservePuzzleEdits = goalAllowsTreasuryTemplateDiverge(goal);
         await emit(
           "status",
-          preservePuzzleEdits
-            ? "Seeding secure templates (preserving puzzle edits)…"
-            : "Seeding secure templates…",
+          goal.id === "coding"
+            ? "Seeding web starter if workspace empty…"
+            : preservePuzzleEdits
+              ? "Seeding secure templates (preserving puzzle edits)…"
+              : "Seeding secure templates…",
         );
         const written = await seedTemplatesForGoal(root, goal.id, {
           log,
@@ -778,7 +802,7 @@ export async function runAgentJob({
             "status",
             `Seeded ${written.length} template file${written.length === 1 ? "" : "s"}`,
           );
-        } else {
+        } else if (goal.id !== "coding") {
           await emit("status", "Templates already up to date");
         }
       } catch (err) {
@@ -822,6 +846,24 @@ export async function runAgentJob({
     const agentsMd = isGeneral || resultOnly ? null : await loadRepoAgentsMd(root);
     if (agentsMd) log(`[agent] loaded repo agent instructions`);
 
+    const checkpoint = isGeneral ? null : await loadCheckpoint(root);
+    const checkpointMd = formatCheckpointForPrompt(checkpoint);
+    if (checkpointMd) {
+      log(`[agent] loaded project checkpoint`);
+      await emit("status", "Resumed project checkpoint");
+    }
+
+    let errorNudge = "";
+    if (!isGeneral && promptLooksLikeErrorDump(job.prompt || "")) {
+      const classified = classifyErrorLog(job.prompt || "");
+      errorNudge = formatClassificationNudge(classified);
+      await emit(
+        "status",
+        `Error class · ${classified.kind} (${Math.round(classified.confidence * 100)}%)`,
+      );
+      log(`[agent] error-class ${classified.kind}`);
+    }
+
     const messages = [
       {
         role: "system",
@@ -832,6 +874,8 @@ export async function runAgentJob({
           cdvAvailable: hasCdv,
           tooling,
           resultOnly,
+          checkpointMd,
+          errorNudge,
         }),
       },
     ];
@@ -840,6 +884,15 @@ export async function runAgentJob({
     let researchSteps = 0;
     let searchSteps = 0;
     let fetchSteps = 0;
+    /** @type {{ writes: number, runs: number, idleSteps: number, lastWritePath?: string }} */
+    let progress = { writes: 0, runs: 0, idleSteps: 0 };
+    /** @type {string[]} */
+    const filesTouched = Array.isArray(checkpoint?.filesTouched)
+      ? [...checkpoint.filesTouched]
+      : [];
+    let lastCommand = checkpoint?.lastCommand || null;
+    let lastErrorKind = checkpoint?.lastErrorKind || null;
+    let lastErrorSnippet = checkpoint?.lastErrorSnippet || null;
     /** @type {Set<string>} */
     const knownUrls = new Set();
 
@@ -1076,7 +1129,23 @@ export async function runAgentJob({
           }
         }
       } else if (tool === "run") {
-        observation = await runCommand(root, String(args.command || "true"));
+        const cmd = String(args.command || "true");
+        lastCommand = cmd;
+        observation = await runCommand(root, cmd);
+        const failedRun =
+          /^ERROR:/i.test(observation) ||
+          /^exit [1-9]/m.test(observation) ||
+          /\nSTDERR:\n[\s\S]{20,}/.test(observation);
+        if (failedRun && !isGeneral) {
+          const classified = classifyErrorLog(observation);
+          lastErrorKind = classified.kind;
+          lastErrorSnippet = String(observation).slice(0, 1500);
+          observation += `\n\n${formatClassificationNudge(classified)}`;
+          await emit("status", `Classified failure · ${classified.kind}`);
+        } else if (!failedRun && !isGeneral) {
+          lastErrorKind = null;
+          lastErrorSnippet = null;
+        }
       } else if (tool === "web_search") {
         observation = await webSearch(args.query);
         researchSteps += 1;
@@ -1120,14 +1189,88 @@ export async function runAgentJob({
         },
       );
 
+      if (tool === "write_file" && args.path) {
+        const p = String(args.path);
+        if (!filesTouched.includes(p)) filesTouched.push(p);
+      }
+      progress = updateProgressState(tool, observation, progress);
+      const early = !isGeneral && !resultOnly ? shouldEarlyExit(progress) : { exit: false };
       let obsMsg = `OBSERVATION:\n${observation}`;
       if (isGeneral && researchReady()) {
         obsMsg += `\n\n${finishNudge()}`;
+      }
+      if (early.exit) {
+        obsMsg += `\n\nEARLY_EXIT: ${early.reason}\nReply NOW with {"done":true,"message":"..."} summarizing progress and the exact next user action.`;
+        await emit("status", "Early exit · no productive progress");
+        log(`[agent] early-exit: ${early.reason}`);
       }
       messages.push({
         role: "user",
         content: obsMsg,
       });
+      if (early.exit) {
+        // Give the model one more turn to emit done, then break if still empty.
+        try {
+          const content = await ollamaChat(ollamaUrl, model, [
+            ...messages,
+            {
+              role: "user",
+              content:
+                'Stop tools. {"done":true,"message":"markdown summary of what failed / what to try next"}',
+            },
+          ]);
+          const action = parseAction(content);
+          if (action?.done) {
+            finalMessage = unwrapDoneMessage(action.message || content);
+          } else if (content && content.length > 40) {
+            finalMessage = unwrapDoneMessage(content);
+          }
+        } catch {
+          /* fall through to step-limit message */
+        }
+        if (!finalMessage) {
+          finalMessage = [
+            "# Paused — need a clearer target",
+            "",
+            early.reason,
+            lastCommand ? `\nLast command: \`${lastCommand}\`` : "",
+            lastErrorSnippet
+              ? `\n\`\`\`\n${String(lastErrorSnippet).slice(0, 800)}\n\`\`\``
+              : "",
+            "",
+            "Send a follow-up with the failing command output or a single file path to change.",
+          ]
+            .filter(Boolean)
+            .join("\n");
+        }
+        break;
+      }
+    }
+
+    // Persist checkpoint for coding / hard workspace turns.
+    if (!isGeneral) {
+      try {
+        const previewPath = filesTouched.find((p) =>
+          /(^|\/)index\.html$/i.test(p),
+        )
+          || (await fs.access(path.join(root, "index.html")).then(() => "index.html").catch(() => null));
+        await saveCheckpoint(root, {
+          goal: goal.id,
+          lastCommand,
+          lastErrorKind,
+          lastErrorSnippet,
+          filesTouched: filesTouched.slice(-40),
+          previewPath: previewPath || checkpoint?.previewPath || null,
+          notes: lastErrorKind
+            ? `Last turn classified as ${lastErrorKind}`
+            : checkpoint?.notes || null,
+        });
+        log(`[agent] saved checkpoint (${filesTouched.length} files touched)`);
+      } catch (err) {
+        log(
+          `[agent] checkpoint save failed: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
     }
 
     // Last-chance synthesis so shopping Q&A never dies on "step limit" alone.

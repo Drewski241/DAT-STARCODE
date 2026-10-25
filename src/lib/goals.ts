@@ -28,6 +28,10 @@ const CHIALISP_HINT =
 const PUZZLE_WORD = /\bpuzzles?\b/i;
 const CODING_HINT =
   /\b(code|coding|function|bug|fix|refactor|implement|typescript|javascript|python|rust|go\b|api|endpoint|class|module|commit|diff|pr\b|pull request|compile|lint|test|unit test|css|html|sql|docker|cli|script|repo|github|build|game|app|website|component|ui|frontend|backend|puzzles?|curry|treehash)\b/i;
+const WEB_APP_HINT =
+  /\b(next\.?js|react|website|web\s*app|landing\s*page|tailwind|vercel|hydration|npm\s+run\s+(?:dev|build)|create-next-app|frontend)\b/i;
+const ERROR_FIX_HINT =
+  /\b(fix\s+this|build\s+failed|failed\s+to\s+compile|typeerror|cannot\s+find\s+module|npm\s+err|stack\s+trace|TS\d{4}|help.*error)\b/i;
 
 export function inferGoal(prompt: string): InferredGoal {
   const text = String(prompt || "");
@@ -71,8 +75,18 @@ export function inferGoal(prompt: string): InferredGoal {
       hard: true,
     };
   }
-  if (CODING_HINT.test(text)) {
-    return { id: "coding", label: "Coding task", hard: false };
+  if (CODING_HINT.test(text) || WEB_APP_HINT.test(text) || ERROR_FIX_HINT.test(text)) {
+    const errorFix = ERROR_FIX_HINT.test(text);
+    const web = WEB_APP_HINT.test(text);
+    return {
+      id: "coding",
+      label: errorFix
+        ? "Fix build / runtime error"
+        : web
+          ? "Web app / website"
+          : "Coding task",
+      hard: errorFix,
+    };
   }
   return { id: "general", label: "General", hard: false };
 }

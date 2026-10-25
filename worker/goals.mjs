@@ -14,6 +14,10 @@ const CHIALISP_HINT =
 const PUZZLE_WORD = /\bpuzzles?\b/i;
 const CODING_HINT =
   /\b(code|coding|function|bug|fix|refactor|implement|typescript|javascript|python|rust|go\b|api|endpoint|class|module|commit|diff|pr\b|pull request|compile|lint|test|unit test|css|html|sql|docker|cli|script|repo|github|build|game|app|website|component|ui|frontend|backend|puzzles?|curry|treehash)\b/i;
+const WEB_APP_HINT =
+  /\b(next\.?js|react|website|web\s*app|landing\s*page|tailwind|vercel|hydration|npm\s+run\s+(?:dev|build)|create-next-app|frontend)\b/i;
+const ERROR_FIX_HINT =
+  /\b(fix\s+this|build\s+failed|failed\s+to\s+compile|typeerror|cannot\s+find\s+module|npm\s+err|stack\s+trace|TS\d{4}|help.*error)\b/i;
 
 /**
  * @param {string} prompt
@@ -70,12 +74,22 @@ export function inferGoal(prompt) {
       wantCdv: true,
     };
   }
-  if (CODING_HINT.test(text)) {
+  if (CODING_HINT.test(text) || WEB_APP_HINT.test(text) || ERROR_FIX_HINT.test(text)) {
+    const errorFix = ERROR_FIX_HINT.test(text);
+    const web = WEB_APP_HINT.test(text);
+    const playbooks = [];
+    if (errorFix) playbooks.push("error-fix.md");
+    if (web || errorFix) playbooks.push("web-app.md");
     return {
       id: "coding",
-      label: "Coding task",
-      hard: false,
-      playbooks: [],
+      label: errorFix
+        ? "Fix build / runtime error"
+        : web
+          ? "Web app / website"
+          : "Coding task",
+      // Error dumps need more steps + playbooks (hard routing → stronger model).
+      hard: errorFix,
+      playbooks,
       wantCdv: false,
     };
   }

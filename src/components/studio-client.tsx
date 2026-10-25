@@ -86,6 +86,7 @@ export function StudioClient() {
   const [workspaceFiles, setWorkspaceFiles] = useState<WorkspaceFile[]>([]);
   const [previewPath, setPreviewPath] = useState<string | null>(null);
   const [previewContent, setPreviewContent] = useState<string | null>(null);
+  const [htmlPreview, setHtmlPreview] = useState(false);
   const [panel, setPanel] = useState<"output" | "workspace">("output");
   const [githubConfigured, setGithubConfigured] = useState(false);
   const [repos, setRepos] = useState<GithubRepo[]>([]);
@@ -1150,6 +1151,39 @@ export function StudioClient() {
                   >
                     Workspace ({workspaceFiles.length})
                   </button>
+                  {extractFixableError(selected, liveEvents) && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const blob = extractFixableError(selected, liveEvents);
+                        if (!blob) return;
+                        setPrompt(
+                          `Fix this error in the project workspace.\n\n\`\`\`\n${blob.slice(0, 6000)}\n\`\`\`\n\nClassify the failure, open the cited file, apply a minimal fix, re-run the same command, then done.`,
+                        );
+                        setPanel("output");
+                      }}
+                      className="font-mono text-[11px] uppercase tracking-widest text-rose-300 hover:text-rose-200"
+                    >
+                      Fix this
+                    </button>
+                  )}
+                  {workspaceFiles.some((f) => /(^|\/)index\.html$/i.test(f.path)) && (
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        const htmlPath =
+                          workspaceFiles.find((f) =>
+                            /(^|\/)index\.html$/i.test(f.path),
+                          )?.path || "index.html";
+                        await openFile(selected.id, htmlPath);
+                        setHtmlPreview(true);
+                        setPanel("workspace");
+                      }}
+                      className="font-mono text-[11px] uppercase tracking-widest text-emerald-300/90 hover:text-emerald-200"
+                    >
+                      Preview HTML
+                    </button>
+                  )}
                   {workspaceFiles.length > 0 && (
                     <a
                       href={`/api/jobs/${selected.id}/workspace/download`}
@@ -1206,10 +1240,36 @@ export function StudioClient() {
                           </li>
                         ))}
                       </ul>
-                      <pre className="min-h-[12rem] whitespace-pre-wrap break-words font-mono text-xs leading-relaxed text-steel-200">
-                        {previewContent ??
-                          "Select a file to preview. Download the zip to use the full project locally."}
-                      </pre>
+                      {htmlPreview &&
+                      previewPath &&
+                      /\.html?$/i.test(previewPath) &&
+                      previewContent ? (
+                        <div className="min-h-[12rem] space-y-2">
+                          <div className="flex items-center justify-between gap-2">
+                            <p className="font-mono text-[11px] text-emerald-300/90">
+                              Live HTML preview · {previewPath}
+                            </p>
+                            <button
+                              type="button"
+                              className="font-mono text-[11px] text-steel-400 hover:text-copper-200"
+                              onClick={() => setHtmlPreview(false)}
+                            >
+                              Show source
+                            </button>
+                          </div>
+                          <iframe
+                            title="HTML preview"
+                            className="h-[28rem] w-full border border-copper-800/60 bg-white"
+                            sandbox="allow-scripts allow-same-origin"
+                            srcDoc={previewContent}
+                          />
+                        </div>
+                      ) : (
+                        <pre className="min-h-[12rem] whitespace-pre-wrap break-words font-mono text-xs leading-relaxed text-steel-200">
+                          {previewContent ??
+                            "Select a file to preview. Download the zip to use the full project locally."}
+                        </pre>
+                      )}
                     </div>
                   )}
                 </div>
@@ -1220,6 +1280,40 @@ export function StudioClient() {
       </div>
     </div>
   );
+}
+
+/** Pull a pasteable error blob from the selected job or live play-by-play. */
+function extractFixableError(
+  job: Job | null | undefined,
+  events: JobEvent[],
+): string | null {
+  if (job?.error?.trim()) return job.error.trim();
+  for (let i = events.length - 1; i >= 0; i--) {
+    const ev = events[i];
+    const msg = String(ev.message || "");
+    const dataSummary =
+      ev.data && typeof ev.data === "object" && ev.data !== null
+        ? String((ev.data as { summary?: string }).summary || "")
+        : "";
+    const blob = `${msg}\n${dataSummary}`;
+    if (
+      /ERROR_CLASS|Failed to compile|Cannot find module|TS\d{4}|exit [1-9]|STDERR:|TypeError|MODULE_NOT_FOUND/i.test(
+        blob,
+      )
+    ) {
+      return (dataSummary.length > msg.length ? dataSummary : msg).slice(0, 8000);
+    }
+    if (ev.type === "error" || /issue|classified failure|problem/i.test(msg)) {
+      return blob.trim().slice(0, 8000) || null;
+    }
+  }
+  if (
+    job?.result &&
+    /Failed to compile|Cannot find module|TS\d{4}|Paused — need/i.test(job.result)
+  ) {
+    return job.result.slice(0, 8000);
+  }
+  return null;
 }
 
 function StatusPill({
