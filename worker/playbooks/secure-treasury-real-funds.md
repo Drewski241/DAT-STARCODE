@@ -31,9 +31,14 @@ You do the work in the workspace — templates are the starting point, not the f
 2. `puzzle_hash` on `puzzles/savings_vault.clsp` → bare hex in `docs/PUZZLE_HASH.md`.
 3. Spend fixtures green; then `done`.
 
+## Worker rescue
+
+Real-funds turns **keep** puzzle edits that diverge from v2 templates (OWNER_PK / TREASURY_PK). The worker only force-reseeds if static secure-checks fail. Finish Phase B renames even if the files no longer match `templates/secure-treasury/puzzles/*`.
+
 ## Forbidden
 
 - Mega-file with sibling `CREATE_COIN`s
 - Claiming “impenetrable” / mainnet-ready without documenting review gaps
 - Burning all steps on Phase D before B and C are done
 - Free `dest_ph` on interest
+- Reverting to `AUTHORIZER_PK` just to match the seeded template

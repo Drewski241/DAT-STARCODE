@@ -31,6 +31,10 @@ import {
   checkTreasurySecure,
   checkPayoutSecure,
 } from "./secure-checks.mjs";
+import {
+  goalAllowsTreasuryTemplateDiverge,
+  shouldRescueTreasuryPuzzles,
+} from "./treasury-rescue.mjs";
 
 const MAX_STEPS = Number(process.env.AGENT_MAX_STEPS || 12);
 const HARD_TASK_STEPS = Number(process.env.AGENT_HARD_TASK_STEPS || 40);
@@ -1227,19 +1231,27 @@ export async function runAgentJob({
           }
           if (gold && live !== gold) diverged.push(rel);
         }
-        if (rescueFails.length || diverged.length) {
+        // Real-funds turns must keep OWNER_PK / TREASURY_PK edits (zip 4aecd8f4
+        // was wiped by diverge-reseed). Only force templates on secure-check fail.
+        const allowTemplateDiverge = goalAllowsTreasuryTemplateDiverge(goal);
+        const decision = shouldRescueTreasuryPuzzles({
+          rescueFails,
+          diverged,
+          allowTemplateDiverge,
+        });
+        if (!decision.rescue && allowTemplateDiverge && diverged.length) {
+          log(`[agent] rescue treasury skipped: ${decision.reason}`);
+          await emit(
+            "status",
+            "Keeping real-funds puzzle edits (template diverge allowed)…",
+          );
+        }
+        if (decision.rescue) {
           await emit(
             "status",
             "Restoring secure-treasury puzzles from templates…",
           );
-          log(
-            `[agent] rescue treasury: ${[
-              ...rescueFails.slice(0, 3),
-              ...diverged.map((d) => `${d} diverged from template`),
-            ]
-              .slice(0, 5)
-              .join("; ")}`,
-          );
+          log(`[agent] rescue treasury: ${decision.reason}`);
           await seedTemplatesForGoal(root, "secure_treasury", { log });
           // Drop compiled artifacts so hash-doc / spend fixtures cannot reuse
           // stale .hex from the pre-repair vault (zip 199278a5).

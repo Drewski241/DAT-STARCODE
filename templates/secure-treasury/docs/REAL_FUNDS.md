@@ -18,6 +18,8 @@ When the user asks for real funds / production / owner-bound / singleton / CAT,
 4. Update curry comments + `vault-ph` / `treasury-ph` argument names.
 5. Re-run spend fixtures; refresh bare hash in `docs/PUZZLE_HASH.md`.
 
+Worker note: on real-funds turns, template **diverge is kept** (OWNER_PK edits must not be wiped). Rescue still runs if static secure-checks fail (e.g. bad `claim-msg (owed)`).
+
 ## Phase C — three-spend integration tests
 
 1. Extend `tests/three-spend-claim.json` with explicit half sample names + shared `claim-msg`.
