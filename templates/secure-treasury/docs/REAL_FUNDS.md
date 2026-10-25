@@ -18,7 +18,9 @@ When the user asks for real funds / production / owner-bound / singleton / CAT,
 4. Update curry comments + `vault-ph` / `treasury-ph` argument names.
 5. Re-run spend fixtures; refresh bare hash in `docs/PUZZLE_HASH.md`.
 
-Worker note: on real-funds turns, template **diverge is kept** (OWNER_PK edits must not be wiped). Rescue still runs if static secure-checks fail (e.g. bad `claim-msg (owed)`).
+Worker notes:
+- End of turn: template **diverge is kept** (OWNER_PK edits must not be wiped). Rescue still runs if static secure-checks fail (e.g. bad `claim-msg (owed)`).
+- Start of turn: real-funds seed **preserves** live `puzzles/*` (does not force tip-gold overwrite). Prior Phase B work accumulates across turns (zip c6b6658d).
 
 ## Phase C — three-spend integration tests
 

@@ -104,15 +104,22 @@ async function needsClspRefresh(root, rel) {
 /**
  * @param {string} root workspace root
  * @param {string} goalId
- * @param {{ log?: Function }} [opts]
+ * @param {{ log?: Function, preservePuzzleEdits?: boolean }} [opts]
+ *   preservePuzzleEdits — real-funds: do not force-overwrite puzzles/ (zip c6b6658d)
  * @returns {Promise<string[]>}
  */
 export async function seedTemplatesForGoal(root, goalId, opts = {}) {
   const log = opts.log || (() => {});
+  const preservePuzzleEdits = Boolean(opts.preservePuzzleEdits);
   if (goalId !== "secure_treasury") return [];
 
   const base = path.join(repoRoot, "templates", "secure-treasury");
   const written = [];
+  if (preservePuzzleEdits) {
+    log(
+      "[seed] preservePuzzleEdits — skip force-overwrite of puzzles/ unless secure-check refresh needed",
+    );
+  }
 
   const always = [
     ["VULNERABILITY.md", "VULNERABILITY.md", false],
@@ -169,13 +176,14 @@ export async function seedTemplatesForGoal(root, goalId, opts = {}) {
   for (const [fromRel, toRel] of puzzles) {
     try {
       const body = await fs.readFile(path.join(base, fromRel), "utf8");
-      // Always force primary puzzles/ and the templates/secure-treasury/puzzles/
-      // mirrors — Studio zip 8b6c5e70 kept a stale claim-msg (owed) mirror next
-      // to a good puzzles/interest_payout.clsp (needsClspRefresh used to miss it).
-      const force =
+      // Default: always force puzzles/ + templates mirrors (zip 8b6c5e70 stale
+      // claim-msg). Real-funds: preserve live Phase B+ edits unless needsClspRefresh.
+      const forceDefault =
         /^puzzles\//i.test(toRel) ||
-        /^templates\/secure-treasury\/puzzles\//i.test(toRel) ||
-        (await needsClspRefresh(root, toRel));
+        /^templates\/secure-treasury\/puzzles\//i.test(toRel);
+      const force = preservePuzzleEdits
+        ? await needsClspRefresh(root, toRel)
+        : forceDefault || (await needsClspRefresh(root, toRel));
       await writeFile(root, toRel, body, written, log, { force });
     } catch (err) {
       log(

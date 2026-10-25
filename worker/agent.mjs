@@ -762,8 +762,17 @@ export async function runAgentJob({
 
     if (!isGeneral && hardTask && !resultOnly) {
       try {
-        await emit("status", "Seeding secure templates…");
-        const written = await seedTemplatesForGoal(root, goal.id, { log });
+        const preservePuzzleEdits = goalAllowsTreasuryTemplateDiverge(goal);
+        await emit(
+          "status",
+          preservePuzzleEdits
+            ? "Seeding secure templates (preserving puzzle edits)…"
+            : "Seeding secure templates…",
+        );
+        const written = await seedTemplatesForGoal(root, goal.id, {
+          log,
+          preservePuzzleEdits,
+        });
         if (written?.length) {
           await emit(
             "status",

@@ -71,4 +71,43 @@ const realFunds = await fs.readFile(path.join(root, realFundsRel), "utf8");
 assert.ok(/OWNER_PK/i.test(realFunds) && /Phase B/i.test(realFunds));
 
 await fs.rm(root, { recursive: true, force: true });
+
+// Real-funds preserve: Phase B OWNER_PK vault must not be force-wiped (zip c6b6658d).
+const rootRf = await fs.mkdtemp(path.join(os.tmpdir(), "dat-seed-rf-"));
+const vaultRel = "puzzles/savings_vault.clsp";
+const goldVault = await fs.readFile(
+  path.join(here, "..", "templates", "secure-treasury", "puzzles", "savings_vault.clsp"),
+  "utf8",
+);
+const phaseBVault = goldVault.replace(/AUTHORIZER_PK/g, "OWNER_PK");
+assert.ok(/OWNER_PK/.test(phaseBVault) && !/AUTHORIZER_PK/.test(phaseBVault));
+await fs.mkdir(path.join(rootRf, "puzzles"), { recursive: true });
+await fs.writeFile(path.join(rootRf, vaultRel), phaseBVault, "utf8");
+await fs.writeFile(
+  path.join(rootRf, "puzzles/interest_payout.clsp"),
+  goldPayout.replace(/AUTHORIZER_PK/g, "OWNER_PK"),
+  "utf8",
+);
+await fs.writeFile(
+  path.join(rootRf, "puzzles/treasury_coin.clsp"),
+  await fs.readFile(
+    path.join(here, "..", "templates", "secure-treasury", "puzzles", "treasury_coin.clsp"),
+    "utf8",
+  ),
+  "utf8",
+);
+
+const writtenRf = await seedTemplatesForGoal(rootRf, "secure_treasury", {
+  log: () => {},
+  preservePuzzleEdits: true,
+});
+assert.ok(
+  !writtenRf.includes(vaultRel),
+  `preservePuzzleEdits must not refresh good vault, wrote: ${writtenRf.join(", ")}`,
+);
+const keptVault = await fs.readFile(path.join(rootRf, vaultRel), "utf8");
+assert.equal(keptVault, phaseBVault);
+assert.ok(/OWNER_PK/.test(keptVault));
+
+await fs.rm(rootRf, { recursive: true, force: true });
 console.log("seed-templates.test.mjs ok");
