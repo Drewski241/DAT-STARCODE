@@ -64,6 +64,11 @@ async function needsClspRefresh(root, rel) {
       if (!/\bOWNER_PH\b/.test(codeOnly) || /\bdest_ph\b/i.test(codeOnly)) {
         return true;
       }
+      // claim-msg (owed) closing over free OWNER_PH → cdv "clvm raise"
+      // (Studio zip a5e8ee26 / 8b6c5e70 stale templates/ mirror).
+      if (/\(defun\s+claim-msg\s*\(\s*owed\s*\)/i.test(codeOnly)) {
+        return true;
+      }
     }
     if (/treasury_coin\.clsp$/i.test(rel)) {
       if (/\bdest_ph\b/i.test(codeOnly) && !/\bOWNER_PH\b/.test(codeOnly)) {
@@ -162,10 +167,13 @@ export async function seedTemplatesForGoal(root, goalId, opts = {}) {
   for (const [fromRel, toRel] of puzzles) {
     try {
       const body = await fs.readFile(path.join(base, fromRel), "utf8");
-      // Always force the primary puzzles/ copies — agents often leave a stale
-      // vault next to a refreshed templates/ tree (see Studio zip 94408ee8).
+      // Always force primary puzzles/ and the templates/secure-treasury/puzzles/
+      // mirrors — Studio zip 8b6c5e70 kept a stale claim-msg (owed) mirror next
+      // to a good puzzles/interest_payout.clsp (needsClspRefresh used to miss it).
       const force =
-        /^puzzles\//i.test(toRel) || (await needsClspRefresh(root, toRel));
+        /^puzzles\//i.test(toRel) ||
+        /^templates\/secure-treasury\/puzzles\//i.test(toRel) ||
+        (await needsClspRefresh(root, toRel));
       await writeFile(root, toRel, body, written, log, { force });
     } catch (err) {
       log(
