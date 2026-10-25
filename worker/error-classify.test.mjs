@@ -34,6 +34,22 @@ const nudge = formatClassificationNudge(
 assert.match(nudge, /ERROR_CLASS/);
 assert.match(nudge, /npm install|deps/i);
 
+assert.equal(
+  classifyErrorLog(
+    `Fix this error\n\nexit 0\n\nSTDERR:\nGtk-Message: 13:40:45.888: Not loading module "atk-bridge"`,
+  ).kind,
+  "benign_noise",
+);
+assert.equal(
+  observationLooksLikeFailedRun(
+    "POLICY: opening a desktop browser is blocked on the worker.",
+  ),
+  false,
+);
+assert.match(
+  formatClassificationNudge(classifyErrorLog("Gtk-Message: atk-bridge\nexit 0")),
+  /Studio Preview|xdg-open/i,
+);
 console.log("error-classify.test.mjs ok");
 
 

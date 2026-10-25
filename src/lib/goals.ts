@@ -78,14 +78,22 @@ export function inferGoal(prompt: string): InferredGoal {
   if (CODING_HINT.test(text) || WEB_APP_HINT.test(text) || ERROR_FIX_HINT.test(text)) {
     const errorFix = ERROR_FIX_HINT.test(text);
     const web = WEB_APP_HINT.test(text);
+    const benignOnly =
+      errorFix &&
+      /Gtk-Message:|atk-bridge|xdg-open|desktop browser/i.test(text) &&
+      !/Cannot find module|Failed to compile|TypeError|TS\d{4}|MODULE_NOT_FOUND|exit [1-9]/i.test(
+        text,
+      );
     return {
       id: "coding",
-      label: errorFix
-        ? "Fix build / runtime error"
-        : web
-          ? "Web app / website"
-          : "Coding task",
-      hard: errorFix,
+      label: benignOnly
+        ? "Web app / website"
+        : errorFix
+          ? "Fix build / runtime error"
+          : web
+            ? "Web app / website"
+            : "Coding task",
+      hard: errorFix && !benignOnly,
     };
   }
   return { id: "general", label: "General", hard: false };

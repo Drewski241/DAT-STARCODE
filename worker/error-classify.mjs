@@ -31,6 +31,32 @@ export function classifyErrorLog(text) {
   ].map((m) => m[1].replace(/\\/g, "/"));
   out.filesHint = [...new Set(fileHits)].slice(0, 8);
 
+  // Gtk / atk-bridge / xdg-open noise with exit 0 — Studio "Fix this" must not hard-route.
+  if (
+    /Gtk-Message:|atk-bridge|Not loading module/i.test(s) &&
+    !/^exit [1-9]/m.test(s) &&
+    !/Cannot find module|Failed to compile|TypeError|TS\d{4}/i.test(s)
+  ) {
+    out.kind = "benign_noise";
+    out.confidence = 0.9;
+    out.hints = [
+      "This is desktop/Gtk stderr noise, not a project build failure.",
+      "Do not edit code for it. Tell the user to open the site URL or use Studio Preview — never xdg-open on the worker.",
+    ];
+    out.suggestedCommands = [];
+    return out;
+  }
+  if (/^POLICY:.*browser/im.test(s) || /xdg-open.*blocked/i.test(s)) {
+    out.kind = "benign_noise";
+    out.confidence = 0.95;
+    out.hints = [
+      "Browser launch is blocked on purpose on the worker.",
+      "Start the server if needed, then done — user opens the URL / Studio Preview.",
+    ];
+    out.suggestedCommands = [];
+    return out;
+  }
+
   if (/MODULE_NOT_FOUND|Cannot find module|ERR_MODULE_NOT_FOUND/i.test(s)) {
     out.kind = "deps_missing";
     out.confidence = 0.9;
@@ -135,6 +161,7 @@ export function classifyErrorLog(text) {
  */
 export function observationLooksLikeFailedRun(observation) {
   const s = String(observation || "");
+  if (/^POLICY:/im.test(s)) return false;
   if (/^ERROR:/im.test(s)) return true;
   const m = s.match(/^exit (-?\d+)/m);
   if (m && Number(m[1]) !== 0) return true;
@@ -176,6 +203,12 @@ export function formatClassificationNudge(c) {
     `ERROR_CLASS: ${c.kind}`,
     ...c.hints.map((h) => `- ${h}`),
   ];
+  if (c.kind === "benign_noise") {
+    lines.push(
+      'Next: do not change code for this. {"done":true} explaining the user should open the URL or use Studio Preview (no xdg-open).',
+    );
+    return lines.join("\n");
+  }
   if (c.filesHint?.length) {
     lines.push(`Likely files: ${c.filesHint.join(", ")}`);
   }

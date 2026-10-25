@@ -246,8 +246,9 @@ function runCommand(root, command) {
   }
   if (BLOCKED_BROWSER_OPEN.test(cmd)) {
     return Promise.resolve(
-      "ERROR: opening a desktop browser (xdg-open / gio open / …) is blocked on the worker. " +
-        "Start the server if needed (e.g. node server.js / npm run dev), then tell the user to open the URL or use Studio Preview — do not launch a browser yourself.",
+      "POLICY: opening a desktop browser (xdg-open / gio open / …) is blocked on the worker. " +
+        "Start the server if needed (e.g. node server.js / npm run dev), then tell the user to open the URL or use Studio Preview — do not launch a browser yourself. " +
+        "This is not a build failure — do not re-run xdg-open.",
     );
   }
   return new Promise((resolve) => {
@@ -831,12 +832,13 @@ export async function runAgentJob({
     }
 
     const playbook = await loadPlaybooks(goal.playbooks);
-    const tooling =
-      goal.wantCdv || hardTask ? await probeChialispTooling() : null;
+    // ChiaLisp tooling is for wantCdv goals only — coding "hard" (error-fix)
+    // means more steps/stronger model, not .clsp / cdv requirements.
+    const tooling = goal.wantCdv ? await probeChialispTooling() : null;
     const hasCdv = Boolean(tooling?.cdv);
     const toolingReady = Boolean(tooling?.ok);
     const requireTooling = Boolean(
-      hardTask && tooling && tooling.required,
+      goal.wantCdv && hardTask && tooling && tooling.required,
     );
     if (playbook) {
       log(
@@ -1144,12 +1146,24 @@ export async function runAgentJob({
         lastCommand = cmd;
         observation = await runCommand(root, cmd);
         const failedRun = observationLooksLikeFailedRun(observation);
-        if (failedRun && !isGeneral) {
+        if (/^POLICY:/im.test(observation) && !isGeneral) {
+          // Intentional worker policy (e.g. no xdg-open) — not a build failure.
+          lastErrorKind = null;
+          lastErrorSnippet = null;
+          lastCommand = cmd;
+        } else if (failedRun && !isGeneral) {
           const classified = classifyErrorLog(observation);
-          lastErrorKind = classified.kind;
-          lastErrorSnippet = String(observation).slice(0, 1500);
-          observation += `\n\n${formatClassificationNudge(classified)}`;
-          await emit("status", `Classified failure · ${classified.kind}`);
+          if (classified.kind === "benign_noise") {
+            lastErrorKind = null;
+            lastErrorSnippet = null;
+            observation += `\n\n${formatClassificationNudge(classified)}`;
+            await emit("status", "Benign command noise — no code fix needed");
+          } else {
+            lastErrorKind = classified.kind;
+            lastErrorSnippet = String(observation).slice(0, 1500);
+            observation += `\n\n${formatClassificationNudge(classified)}`;
+            await emit("status", `Classified failure · ${classified.kind}`);
+          }
         } else if (!failedRun && !isGeneral) {
           lastErrorKind = null;
           lastErrorSnippet = null;
@@ -1446,7 +1460,7 @@ export async function runAgentJob({
 
     // Deterministic: do not rely on the model to remember puzzle_hash.
     let hashDoc = null;
-    if (hardTask && hasCdv && !resultOnly) {
+    if (goal.wantCdv && hardTask && hasCdv && !resultOnly) {
       try {
         await emit("status", "Documenting puzzle hash with cdv…");
         hashDoc = await ensurePuzzleHashDocumented(root, { log });
@@ -1472,7 +1486,7 @@ export async function runAgentJob({
           `[agent] hash-doc error: ${err instanceof Error ? err.message : String(err)}`,
         );
       }
-    } else if (hardTask && requireTooling && !hasCdv) {
+    } else if (goal.wantCdv && hardTask && requireTooling && !hasCdv) {
       log("[agent] hash-doc skipped — cdv required but not available");
       await emit("log", "Puzzle hash skipped — cdv not available on worker");
     }
@@ -1540,7 +1554,7 @@ export async function runAgentJob({
       const verification = verifyWorkspaceFiles(files, {
         // Always require a documented hash on hard tasks when tooling is mandated.
         // RESULT-only polish: keep hash/secure checks but skip tooling re-probe failures.
-        requireHash: hardTask && (hasCdv || requireTooling || resultOnly),
+        requireHash: goal.wantCdv && hardTask && (hasCdv || requireTooling || resultOnly),
         resultText: finalMessage,
         toolingOk: resultOnly
           ? true
@@ -1579,7 +1593,7 @@ export async function runAgentJob({
           "",
           "Do not treat this turn as done. Re-run with a fix prompt (or a stronger model).",
         ].join("\n");
-      } else if (hardTask) {
+      } else if (goal.wantCdv && hardTask) {
         const clsp = files.filter((f) => /\.clsp$/i.test(f.path));
         if (clsp.length === 0) {
           finalMessage += [

@@ -77,18 +77,27 @@ export function inferGoal(prompt) {
   if (CODING_HINT.test(text) || WEB_APP_HINT.test(text) || ERROR_FIX_HINT.test(text)) {
     const errorFix = ERROR_FIX_HINT.test(text);
     const web = WEB_APP_HINT.test(text);
+    // Studio "Fix this" of Gtk/xdg-open noise is not a real build failure.
+    const benignOnly =
+      errorFix &&
+      /Gtk-Message:|atk-bridge|xdg-open|desktop browser/i.test(text) &&
+      !/Cannot find module|Failed to compile|TypeError|TS\d{4}|MODULE_NOT_FOUND|exit [1-9]/i.test(
+        text,
+      );
     const playbooks = [];
-    if (errorFix) playbooks.push("error-fix.md");
+    if (errorFix && !benignOnly) playbooks.push("error-fix.md");
     if (web || errorFix) playbooks.push("web-app.md");
     return {
       id: "coding",
-      label: errorFix
-        ? "Fix build / runtime error"
-        : web
-          ? "Web app / website"
-          : "Coding task",
+      label: benignOnly
+        ? "Web app / website"
+        : errorFix
+          ? "Fix build / runtime error"
+          : web
+            ? "Web app / website"
+            : "Coding task",
       // Error dumps need more steps + playbooks (hard routing → stronger model).
-      hard: errorFix,
+      hard: errorFix && !benignOnly,
       playbooks,
       wantCdv: false,
     };
