@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { DAT_BURN_ADDRESS, DAT_SYMBOL } from "@/lib/config";
 import { economyBlurb, getCreditPacks } from "@/lib/economy";
 import { mojosToDat } from "@/lib/dat-units";
@@ -23,6 +23,38 @@ type Account = {
   credits: number;
 };
 
+type ConfirmSuccess = {
+  payment: { credits: number; datAmount: number; status?: string };
+  account: Account;
+  verification?: { explorerUrl?: string };
+};
+
+const PENDING_BURN_KEY = "datstarcoder:pendingBurnPaymentId";
+/** Initial wait after Sage send (~5 min). Then UI keeps auto-checking + Check burn. */
+const CONFIRM_MAX_ATTEMPTS = 60;
+const CONFIRM_POLL_MS = 5000;
+/** Background re-check while a pending burn is remembered. */
+const BACKGROUND_POLL_MS = 20_000;
+
+function readPendingBurnId(): string | null {
+  if (typeof window === "undefined") return null;
+  try {
+    return window.localStorage.getItem(PENDING_BURN_KEY);
+  } catch {
+    return null;
+  }
+}
+
+function writePendingBurnId(paymentId: string | null) {
+  if (typeof window === "undefined") return;
+  try {
+    if (paymentId) window.localStorage.setItem(PENDING_BURN_KEY, paymentId);
+    else window.localStorage.removeItem(PENDING_BURN_KEY);
+  } catch {
+    /* ignore quota / private mode */
+  }
+}
+
 export function WalletPanel({
   account,
   onAccount,
@@ -40,6 +72,14 @@ export function WalletPanel({
   const [datBalance, setDatBalance] = useState<number | null>(null);
   /** True when a WalletConnect session is active — not merely a linked address. */
   const [sageSessionLive, setSageSessionLive] = useState(false);
+  /** Burn already sent from Sage; waiting for on-chain index + credit. */
+  const [pendingBurnId, setPendingBurnId] = useState<string | null>(null);
+  const confirmInFlight = useRef(false);
+
+  function rememberPendingBurn(paymentId: string | null) {
+    setPendingBurnId(paymentId);
+    writePendingBurnId(paymentId);
+  }
 
   useEffect(() => {
     if (!live) return;
@@ -77,6 +117,52 @@ export function WalletPanel({
       cancelled = true;
     };
   }, [wcUri]);
+
+  /** Restore pending burn from localStorage and/or server after slow confirm / refresh. */
+  useEffect(() => {
+    if (!account) return;
+    let cancelled = false;
+    void (async () => {
+      const stored = readPendingBurnId();
+      if (stored && !cancelled) {
+        setPendingBurnId(stored);
+        setMessage(
+          "A previous DAT burn is still awaiting on-chain confirmation. Checking automatically — or press Check burn.",
+        );
+      }
+      try {
+        const res = await fetch("/api/payments/pending", {
+          credentials: "same-origin",
+        });
+        if (!res.ok || cancelled) return;
+        const data = (await res.json()) as {
+          pending?: { id: string; createdAt: string }[];
+        };
+        const newest = data.pending?.[0];
+        if (!newest) {
+          if (stored && !cancelled) {
+            rememberPendingBurn(null);
+          }
+          return;
+        }
+        if (!cancelled) {
+          rememberPendingBurn(newest.id);
+          if (!stored) {
+            setMessage(
+              "Found a pending DAT burn for this account. Checking on-chain — or press Check burn. Do not burn again.",
+            );
+          }
+        }
+      } catch {
+        /* offline / not signed in */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // Only re-run when account identity changes
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [account?.id]);
 
   async function refreshAccount() {
     const res = await fetch("/api/session", { credentials: "same-origin" });
@@ -194,36 +280,133 @@ export function WalletPanel({
     }
   }
 
-  async function confirmBurnWithRetry(paymentId: string) {
-    const maxAttempts = 40;
-    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-      setMessage(
-        `Checking burn on-chain… (${attempt}/${maxAttempts})`,
-      );
-      const confirmRes = await fetch("/api/payments/confirm", {
-        method: "POST",
-        credentials: "same-origin",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ paymentId, demo: false }),
-      });
-      const confirmed = await confirmRes.json();
-      if (confirmRes.ok && confirmed.verified) {
-        return confirmed as {
-          payment: { credits: number; datAmount: number };
-          account: Account;
-          verification?: { explorerUrl?: string };
-        };
-      }
-      if (confirmRes.status === 202 || confirmed.pending) {
-        await new Promise((r) => setTimeout(r, 3000));
-        continue;
-      }
-      throw new Error(confirmed.error ?? "Confirm failed");
+  async function confirmOnce(paymentId: string): Promise<
+    | { kind: "ok"; data: ConfirmSuccess }
+    | { kind: "pending"; message?: string }
+    | { kind: "error"; message: string }
+  > {
+    const confirmRes = await fetch("/api/payments/confirm", {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ paymentId, demo: false }),
+    });
+    const confirmed = await confirmRes.json();
+    if (confirmRes.ok && confirmed.verified) {
+      return { kind: "ok", data: confirmed as ConfirmSuccess };
     }
-    throw new Error(
-      "Burn submitted but not confirmed on-chain yet. Wait a minute and press Burn again only if credits did not arrive — do not approve a second Sage send.",
+    if (confirmRes.ok && confirmed.payment?.status === "confirmed") {
+      return { kind: "ok", data: confirmed as ConfirmSuccess };
+    }
+    if (confirmRes.status === 202 || confirmed.pending) {
+      return {
+        kind: "pending",
+        message: typeof confirmed.error === "string" ? confirmed.error : undefined,
+      };
+    }
+    if (confirmRes.status === 404) {
+      return {
+        kind: "error",
+        message:
+          "Pending payment not found — it may have expired. Contact support with your burn tx if credits are missing.",
+      };
+    }
+    return {
+      kind: "error",
+      message: confirmed.error ?? "Confirm failed",
+    };
+  }
+
+  async function applyConfirmed(confirmed: ConfirmSuccess) {
+    rememberPendingBurn(null);
+    const synced = (await refreshAccount()) ?? confirmed.account;
+    onAccount(synced);
+    try {
+      const bal = await getDatBalanceMojos();
+      setDatBalance(mojosToDat(bal));
+    } catch {
+      /* ignore */
+    }
+    const added = confirmed.payment.credits as number;
+    const explorer = confirmed.verification?.explorerUrl as string | undefined;
+    setMessage(
+      `On-chain burn verified. ${formatDat(confirmed.payment.datAmount)} ${DAT_SYMBOL} (+${added} credits). Balance: ${synced.credits}. Sent to ${shortAddress(DAT_BURN_ADDRESS)}.${explorer ? ` ${explorer}` : ""}`,
     );
   }
+
+  async function confirmBurnWithRetry(paymentId: string) {
+    for (let attempt = 1; attempt <= CONFIRM_MAX_ATTEMPTS; attempt++) {
+      setMessage(
+        `Checking burn on-chain… (${attempt}/${CONFIRM_MAX_ATTEMPTS})`,
+      );
+      const result = await confirmOnce(paymentId);
+      if (result.kind === "ok") return result.data;
+      if (result.kind === "error") throw new Error(result.message);
+      await new Promise((r) => setTimeout(r, CONFIRM_POLL_MS));
+    }
+    return null;
+  }
+
+  async function checkPendingBurn(opts?: { silent?: boolean }) {
+    const paymentId = pendingBurnId ?? readPendingBurnId();
+    if (!paymentId) {
+      if (!opts?.silent) {
+        setMessage(
+          "No pending burn to check. If you already burned in Sage, sign in and press Check burn again in a minute.",
+        );
+      }
+      return;
+    }
+    if (confirmInFlight.current) return;
+    confirmInFlight.current = true;
+    if (!opts?.silent) setBusy("check-burn");
+    try {
+      if (!opts?.silent) {
+        setMessage("Checking for your on-chain burn…");
+      }
+      const result = await confirmOnce(paymentId);
+      if (result.kind === "ok") {
+        await applyConfirmed(result.data);
+        return;
+      }
+      if (result.kind === "error") {
+        if (result.message.includes("not found")) {
+          rememberPendingBurn(null);
+        }
+        if (!opts?.silent) setMessage(result.message);
+        return;
+      }
+      if (!opts?.silent) {
+        setMessage(
+          result.message
+            ? `${result.message} Still indexing — keep this tab open or press Check burn again. Do not approve a second Sage send.`
+            : "Burn not indexed yet. Checking again automatically — press Check burn anytime. Do not burn again.",
+        );
+      }
+    } catch (err) {
+      if (!opts?.silent) {
+        setMessage(err instanceof Error ? err.message : "Check failed");
+      }
+    } finally {
+      confirmInFlight.current = false;
+      if (!opts?.silent) setBusy(null);
+    }
+  }
+
+  /** Keep looking while a pending burn is remembered (after timeout or page reload). */
+  useEffect(() => {
+    if (!pendingBurnId || !account) return;
+    const tick = () => {
+      void checkPendingBurn({ silent: true });
+    };
+    const id = window.setInterval(tick, BACKGROUND_POLL_MS);
+    const soon = window.setTimeout(tick, 2500);
+    return () => {
+      window.clearInterval(id);
+      window.clearTimeout(soon);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingBurnId, account?.id]);
 
   async function buyPack(packId: string) {
     setBusy(packId);
@@ -233,6 +416,13 @@ export function WalletPanel({
       if (!session) {
         setMessage("Sign in required — open Account to create or sign in.");
         window.location.href = "/account";
+        return;
+      }
+
+      if (pendingBurnId) {
+        setMessage(
+          "You already have a burn waiting for confirmation. Press Check burn — do not send DAT again.",
+        );
         return;
       }
 
@@ -248,6 +438,8 @@ export function WalletPanel({
       const pack = packs.find((p) => p.id === packId);
       if (!pack) throw new Error("Unknown pack");
 
+      const paymentId = intent.payment.id as string;
+
       if (live && session.walletAddress) {
         setMessage(
           `Approve in Sage: burn ${formatDat(pack.dat)} ${DAT_SYMBOL} to the burn address…`,
@@ -256,6 +448,8 @@ export function WalletPanel({
           datAmount: pack.dat,
           memo: intent.payment.memo as string,
         });
+        // Persist immediately after Sage send so a refresh / timeout can resume.
+        rememberPendingBurn(paymentId);
         setMessage(
           "Burn submitted from Sage. Waiting for on-chain confirmation…",
         );
@@ -267,20 +461,14 @@ export function WalletPanel({
         throw new Error("Connect Sage before burning DAT.");
       }
 
-      const confirmed = await confirmBurnWithRetry(intent.payment.id as string);
-      const synced = (await refreshAccount()) ?? confirmed.account;
-      onAccount(synced);
-      try {
-        const bal = await getDatBalanceMojos();
-        setDatBalance(mojosToDat(bal));
-      } catch {
-        /* ignore */
+      const confirmed = await confirmBurnWithRetry(paymentId);
+      if (confirmed) {
+        await applyConfirmed(confirmed);
+        return;
       }
 
-      const added = confirmed.payment.credits as number;
-      const explorer = confirmed.verification?.explorerUrl as string | undefined;
       setMessage(
-        `On-chain burn verified. ${formatDat(confirmed.payment.datAmount)} ${DAT_SYMBOL} (+${added} credits). Balance: ${synced.credits}. Sent to ${shortAddress(DAT_BURN_ADDRESS)}.${explorer ? ` ${explorer}` : ""}`,
+        "Burn submitted but not confirmed on-chain yet. We will keep checking automatically — press Check burn anytime. Do not approve a second Sage send.",
       );
     } catch (err) {
       setMessage(err instanceof Error ? err.message : "Payment failed");
@@ -364,6 +552,17 @@ export function WalletPanel({
             {busy === "disconnect" ? "Disconnecting…" : "Disconnect"}
           </button>
         )}
+        {pendingBurnId && (
+          <button
+            type="button"
+            onClick={() => void checkPendingBurn()}
+            disabled={!!busy}
+            className="relative z-20 inline-flex h-12 cursor-pointer items-center rounded-none border border-copper-500/70 bg-ink-900 px-5 font-mono text-xs uppercase tracking-widest text-copper-100 transition hover:border-copper-400 hover:bg-copper-900/40 disabled:cursor-wait disabled:opacity-60"
+            title="Re-check the burn you already sent — does not open Sage"
+          >
+            {busy === "check-burn" ? "Checking…" : "Check burn"}
+          </button>
+        )}
         <div className="font-mono text-xs text-steel-400">
           {account?.walletAddress ? (
             <span>
@@ -444,6 +643,16 @@ export function WalletPanel({
         </p>
       )}
 
+      {pendingBurnId && (
+        <p className="mt-4 max-w-3xl font-mono text-[11px] leading-relaxed text-steel-500">
+          Pending burn id{" "}
+          <span className="text-steel-400">{pendingBurnId.slice(0, 8)}…</span>
+          {" — "}
+          auto-checking every {BACKGROUND_POLL_MS / 1000}s. Use Check burn after
+          your tx confirms; never send a second burn for the same pack.
+        </p>
+      )}
+
       <div className="relative z-20 mt-10 grid gap-8 md:grid-cols-3">
         {packs.map((pack) => (
           <div
@@ -463,10 +672,14 @@ export function WalletPanel({
                   ? "relative z-20 mt-6 inline-flex h-12 w-full cursor-pointer items-center justify-center rounded-none bg-copper-500 px-4 font-mono text-xs uppercase tracking-widest text-ink-950 transition hover:bg-copper-400 disabled:cursor-wait disabled:opacity-60"
                   : "relative z-20 mt-6 inline-flex h-12 w-full cursor-pointer items-center justify-center rounded-none border border-copper-600/60 bg-ink-900 px-4 font-mono text-xs uppercase tracking-widest text-copper-100 transition hover:border-copper-400 hover:bg-copper-900/50 hover:text-copper-50 disabled:cursor-wait disabled:opacity-60"
               }
-              disabled={!!busy}
+              disabled={!!busy || !!pendingBurnId}
               onClick={() => void buyPack(pack.id)}
             >
-              {busy === pack.id ? "Burning…" : "Burn DAT"}
+              {busy === pack.id
+                ? "Burning…"
+                : pendingBurnId
+                  ? "Burn pending…"
+                  : "Burn DAT"}
             </button>
           </div>
         ))}
