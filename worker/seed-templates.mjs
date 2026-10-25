@@ -119,6 +119,8 @@ export async function seedTemplatesForGoal(root, goalId, opts = {}) {
     ["PLAN.md", "PLAN.md", false],
     ["README.md", "README.md", false],
     ["docs/SECURITY.md", "docs/SECURITY.md", false],
+    // Always refresh real-funds ladder so hardening turns see current phases.
+    ["docs/REAL_FUNDS.md", "docs/REAL_FUNDS.md", true],
     // Always refresh fixtures — v2 owner-bound / three-spend samples.
     ["tests/spend-samples.json", "tests/spend-samples.json", true],
     [

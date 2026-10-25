@@ -11,10 +11,20 @@
 7. **Curry treehash:** recreate via `(sha256tree (c MOD_HASH (list …)))`; confirm with cdv / `puzzle_hash`.
 8. **Mode-4 accrual reset:** claim-only recreates with `DEPOSIT_SECONDS := now_seconds` so the same hold window cannot be claimed twice.
 
-## Trust model
+## Trust model (v2 seeded default)
 
-- `AUTHORIZER_PK` — signs mode / claim intents (`AGG_SIG_ME`). Custodial teaching default: protocol/operator key. Non-custodial teaching variant: owner-only signatures (document if you change it).
+- `AUTHORIZER_PK` — signs mode / claim intents (`AGG_SIG_ME`). Custodial teaching default: protocol/operator key.
 - `OWNER_PH` — curried destination puzzle hash; interest and principal cannot be redirected via solution atoms.
+
+## Real-funds target (agent Phase B — see `docs/REAL_FUNDS.md`)
+
+| Key | Role |
+| --- | --- |
+| `OWNER_PK` | Signs vault + interest_payout spends (owner-bound principal/interest claim) |
+| `TREASURY_PK` | Custodian of the shared interest pool only |
+| `OWNER_PH` | Curried payout destination (unchanged) |
+
+Do **not** call the design mainnet-ready until singleton/CAT scaffold + external review are done (`docs/REAL_FUNDS.md` Phases C–D).
 
 ## Files
 
@@ -23,3 +33,4 @@
 - `puzzles/interest_payout.clsp`
 - `tests/spend-samples.json`
 - `tests/three-spend-claim.json`
+- `docs/REAL_FUNDS.md`

@@ -181,6 +181,26 @@ B) Same-block flash deposit/withdraw claiming interest. Fix: curry deposit time;
 Also: type-check 32-byte puzzle hashes; bind OWNER_PH on withdraw; treasury ASSERT_MY_AMOUNT; match puzzle announcements (63/61) across vault + treasury + interest_payout; recreate with (sha256tree (c MOD_HASH (list …))) and confirm via cdv. See templates/secure-treasury/ and tests/spend-samples.json.`,
   },
   {
+    id: "cl-11",
+    pack: "chialisp",
+    title: "Real-funds treasury ladder (train the agent)",
+    keywords: [
+      "real funds",
+      "owner-bound",
+      "owner_pk",
+      "treasury_pk",
+      "singleton",
+      "cat",
+      "mainnet",
+      "production",
+      "external review",
+    ],
+    text: `After CircuitDAO v2 templates are green, harden toward real funds in order (docs/REAL_FUNDS.md):
+B) Owner-bound auth — vault + interest_payout AGG_SIG_ME with OWNER_PK; treasury TREASURY_PK is interest-pool custodian only; document split in docs/SECURITY.md.
+C) Three-spend integration — name happy halves in tests/three-spend-claim.json; fixtures green; note brun≠mempool.
+D) Singleton/CAT scaffold — docs/SINGLETON_CAT.md (launcher/lineage; recreate-only≠singleton; CAT wrap note). External review after B–D; never claim impenetrable.`,
+  },
+  {
     id: "cl-10",
     pack: "chialisp",
     title: "Create / test / secure loop",

@@ -62,5 +62,13 @@ assert.equal(mirror, goldPayout);
 assert.equal(live, goldPayout);
 assert.ok(!/\(defun\s+claim-msg\s*\(\s*owed\s*\)/i.test(mirror));
 
+const realFundsRel = "docs/REAL_FUNDS.md";
+assert.ok(
+  written.includes(realFundsRel),
+  `expected force-seed of ${realFundsRel}, wrote: ${written.join(", ")}`,
+);
+const realFunds = await fs.readFile(path.join(root, realFundsRel), "utf8");
+assert.ok(/OWNER_PK/i.test(realFunds) && /Phase B/i.test(realFunds));
+
 await fs.rm(root, { recursive: true, force: true });
 console.log("seed-templates.test.mjs ok");

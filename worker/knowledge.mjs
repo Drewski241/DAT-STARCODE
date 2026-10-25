@@ -123,6 +123,22 @@ export const KNOWLEDGE_CHUNKS = [
     text: `Treasury drains via savings logic: (A) multi CREATE_COIN → forged discounted-balance sibling; fix = exactly one child. (B) same-block flash interest; fix = curried deposit time + min hold + interest from principal×rate×elapsed. Type-check 32-byte ph. See templates/secure-treasury/.`,
   },
   {
+    id: "cl-11",
+    pack: "chialisp",
+    title: "Real-funds treasury ladder",
+    keywords: [
+      "real funds",
+      "owner-bound",
+      "owner_pk",
+      "treasury_pk",
+      "singleton",
+      "cat",
+      "mainnet",
+      "production",
+    ],
+    text: `After v2 CircuitDAO templates are green, follow docs/REAL_FUNDS.md: (B) OWNER_PK on vault+payout, TREASURY_PK custodian on treasury; (C) three-spend integration fixtures; (D) singleton/CAT scaffold doc; then external review. Never claim impenetrable.`,
+  },
+  {
     id: "ops-nav",
     pack: "ops",
     title: "Cross-platform navigation habits",

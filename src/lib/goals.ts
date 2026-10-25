@@ -20,7 +20,9 @@ export type InferredGoal = {
 const MTT_HINT =
   /\b(mtt_pool|mtt\b|tournament\s*pool|pool\s*coin|buy-?ins?\b.*payout|payout.*buy-?ins?|top\s*three|top\s*3)\b/i;
 const TREASURY_HINT =
-  /\b(treasury|savings\s*vault|discounted_balance|circuit\s*dao|byc\b|flash-?loan.*interest|interest.*treasury)\b/i;
+  /\b(treasury|savings\s*vault|discounted_balance|circuit\s*dao|byc\b|flash-?loan.*interest|interest.*treasury|owner-?bound|real\s*funds|singleton|treasur(?:y)?_pk|interest_payout)\b/i;
+const REAL_FUNDS_HINT =
+  /\b(real\s*funds|mainnet|owner-?bound|owner_pk|treasury_pk|singleton|cat2?\b|production\s*(?:ready|hardening)|external\s*review)\b/i;
 const CHIALISP_HINT =
   /\b(\.clsp|chialisp|chia\s*lisp|clvm|pool\s*coin|mtt_pool|puzzle\s*hash|agg_sig|create_coin)\b/i;
 const PUZZLE_WORD = /\bpuzzles?\b/i;
@@ -39,10 +41,13 @@ export function inferGoal(prompt: string): InferredGoal {
     );
 
   // Prefer treasury over MTT when both match (e.g. "delete MTT stub … savings_vault").
-  if (treasuryWork) {
+  if (treasuryWork || REAL_FUNDS_HINT.test(text)) {
+    const realFunds = REAL_FUNDS_HINT.test(text);
     return {
       id: "secure_treasury",
-      label: "Secure treasury / savings vault",
+      label: realFunds
+        ? "Secure treasury → real-funds hardening"
+        : "Secure treasury / savings vault",
       hard: true,
     };
   }

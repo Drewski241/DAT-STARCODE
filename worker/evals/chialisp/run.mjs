@@ -156,6 +156,17 @@ try {
   assert.equal(g.hard, true);
   assert.ok(g.playbooks.includes("secure-treasury.md"));
   console.log("ok  treasury-routing");
+
+  const rf = inferGoal(
+    "Continue toward real funds: owner-bound OWNER_PK, TREASURY_PK custodian, singleton/CAT scaffold, then external review.",
+  );
+  assert.equal(rf.id, "secure_treasury");
+  assert.equal(rf.hard, true);
+  assert.ok(
+    rf.playbooks.includes("secure-treasury-real-funds.md"),
+    `expected real-funds playbook, got ${rf.playbooks.join(",")}`,
+  );
+  console.log("ok  treasury-real-funds-routing");
 } catch (err) {
   failed += 1;
   console.error(
@@ -251,6 +262,19 @@ try {
   );
   assert.equal(golden.ok, true, JSON.stringify(golden.failures));
   console.log("ok  golden-secure-treasury-templates");
+
+  const realFundsDoc = await fsRoot.readFile(
+    pathRoot.join(here, "../../../templates/secure-treasury/docs/REAL_FUNDS.md"),
+    "utf8",
+  );
+  assert.ok(/Phase B/i.test(realFundsDoc) && /OWNER_PK/i.test(realFundsDoc));
+  assert.ok(/Phase C/i.test(realFundsDoc) && /Phase D/i.test(realFundsDoc));
+  const rfPlaybook = await fsRoot.readFile(
+    pathRoot.join(here, "../../playbooks/secure-treasury-real-funds.md"),
+    "utf8",
+  );
+  assert.ok(/OWNER_PK/i.test(rfPlaybook) && /TREASURY_PK/i.test(rfPlaybook));
+  console.log("ok  real-funds-training-docs");
 } catch (err) {
   failed += 1;
   console.error(
@@ -262,4 +286,4 @@ if (failed) {
   console.error(`\n${failed} eval case(s) failed`);
   process.exit(1);
 }
-console.log(`\nchialisp evals: ${cases.length + 10} passed`);
+console.log(`\nchialisp evals: ${cases.length + 12} passed`);

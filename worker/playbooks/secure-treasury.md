@@ -45,6 +45,10 @@ Document which key may authorize claim vs withdraw in `docs/SECURITY.md` if you 
 3. `docs/SECURITY.md` (short) + bare hash in `docs/PUZZLE_HASH.md` via `puzzle_hash` on `puzzles/savings_vault.clsp`.
 4. Call `clvm_verify` or `spend_check` once (worker also auto-runs spend fixtures), then `done`.
 
+## Real-funds follow-on (when the prompt asks)
+
+If the user mentions **real funds**, **mainnet**, **owner-bound**, **OWNER_PK**, **singleton**, or **CAT**, also follow `secure-treasury-real-funds.md` and `docs/REAL_FUNDS.md`. Keep v2 CircuitDAO fixes green, then evolve auth → three-spend integration docs/tests → singleton/CAT scaffold. External review comes after those phases — do not claim impenetrable.
+
 ## Forbidden
 
 - Rewriting everything into one file with 5× CREATE_COIN

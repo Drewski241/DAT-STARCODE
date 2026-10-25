@@ -30,6 +30,7 @@
   },
   "notes": [
     "Worker spend fixtures run each half via brun; concurrent mempool / AGG_SIG aggregation is not simulated here.",
-    "claim-msg digests must match across all three puzzles — OWNER_PH is curried on vault+payout and passed on treasury solution."
+    "claim-msg digests must match across all three puzzles — OWNER_PH is curried on vault+payout and passed on treasury solution.",
+    "Real-funds Phase C (docs/REAL_FUNDS.md): keep these half names green after OWNER_PK / TREASURY_PK renames; document mempool gap in docs/SECURITY.md."
   ]
 }

@@ -22,9 +22,10 @@ Legacy filenames `secure_treasury_vault.clsp` / `secure_treasury_coin.clsp` mirr
 1. **Static verify** — sibling CREATE_COIN, OWNER_PH use, ASSERT_MY_AMOUNT, announcement pairing, curry `(c MOD_HASH …)` shape, mode-4 reset, owner-bound payout.
 2. **Spend fixtures** — worker auto-runs `tests/spend-samples.json` (expectFail must raise; happy halves must succeed).
 3. **cdv puzzle hash** — document bare hex in `docs/PUZZLE_HASH.md`; recreation hash must match curry.
-4. **Not yet** — full mempool / AGG_SIG aggregation simulator (use chia testnet or `cdv` locally for that).
+4. **Not yet (v2)** — full mempool / AGG_SIG aggregation simulator (use chia testnet or `cdv` locally for that).
+5. **Real-funds ladder** — see `docs/REAL_FUNDS.md` (owner-bound auth → three-spend integration → singleton/CAT scaffold → external review).
 
-## Studio prompt
+## Studio prompt (CircuitDAO v2)
 
 ```
 Write secure ChiaLisp (.clsp) for a treasury-backed savings vault.
@@ -35,4 +36,15 @@ claim bundle is closable (vault + treasury + payout). Interest must pay
 curried OWNER_PH; mode-4 must reset the deposit clock.
 ```
 
-Auto routes this to **Coder 14B** + seeds these files into the workspace. Edit in place; do not invent a mega-file with multiple CREATE_COIN siblings.
+## Studio prompt (train real-funds hardening)
+
+```
+Continue this secure treasury project toward real funds.
+Follow docs/REAL_FUNDS.md: (B) owner-bound OWNER_PK on vault + interest_payout,
+TREASURY_PK custodian on treasury only; (C) three-spend integration fixtures/docs;
+(D) singleton/CAT scaffold doc. Keep one CREATE_COIN per path and matched claim-msg.
+Update docs/SECURITY.md, refresh puzzle hash, run spend fixtures, then done.
+Do not claim mainnet-ready — leave gaps for external review.
+```
+
+Auto routes treasury work to **Coder 14B** + seeds these files. Real-funds wording also loads the real-funds playbook. Edit in place; do not invent a mega-file with multiple CREATE_COIN siblings.
