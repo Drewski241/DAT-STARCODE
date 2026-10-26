@@ -43,12 +43,16 @@ export function shouldEarlyExit(state, opts = {}) {
 export function updateProgressState(tool, observation, state) {
   const next = { ...state };
   const obs = String(observation || "");
-  if (tool === "write_file" && /^OK wrote /i.test(obs)) {
+  if (
+    (tool === "write_file" && /^OK wrote /i.test(obs)) ||
+    (tool === "str_replace" && /^OK str_replace /i.test(obs))
+  ) {
     next.writes = (next.writes || 0) + 1;
     next.idleSteps = 0;
-    const m = obs.match(/^OK wrote (\S+)/i);
+    const m =
+      obs.match(/^OK wrote (\S+)/i) || obs.match(/^OK str_replace (\S+)/i);
     if (m) next.lastWritePath = m[1];
-  } else if (tool === "run") {
+  } else if (tool === "run" || tool === "start_server" || tool === "npm_install") {
     next.runs = (next.runs || 0) + 1;
     next.idleSteps = 0;
   } else if (tool === "read_file" || tool === "list_files") {

@@ -19,4 +19,13 @@ assert.equal(state.writes, 1);
 assert.equal(state.idleSteps, 0);
 assert.equal(shouldEarlyExit(state).exit, false);
 
+state = updateProgressState(
+  "str_replace",
+  "OK str_replace src/a.ts (replaced 1 occurrence)",
+  state,
+);
+assert.equal(state.writes, 2);
+state = updateProgressState("start_server", '{"ok":true}', state);
+assert.equal(state.runs, 1);
+
 console.log("progress-guard.test.mjs ok");

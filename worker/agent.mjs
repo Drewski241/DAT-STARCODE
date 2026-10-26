@@ -50,6 +50,18 @@ import {
   shouldEarlyExit,
   updateProgressState,
 } from "./progress-guard.mjs";
+import { applyStrReplace } from "./str-replace.mjs";
+import {
+  startBackground,
+  stopBackground,
+  stopAllBackground,
+  serverLogs,
+} from "./process-supervisor.mjs";
+import {
+  planCodingVerify,
+  codingWorkspaceWorthVerify,
+  verifyObservationOk,
+} from "./coding-verify.mjs";
 
 const MAX_STEPS = Number(process.env.AGENT_MAX_STEPS || 12);
 const HARD_TASK_STEPS = Number(process.env.AGENT_HARD_TASK_STEPS || 40);
@@ -58,6 +70,8 @@ const RESULT_ONLY_HINT =
   /\b(replace\s+result\.md\s+only|result\.md\s+only|do\s+not\s+edit\s+any\s+\.clsp|don'?t\s+edit\s+(any\s+)?\.clsp|summarize\s+the\s+(three\s+)?puzzles)\b/i;
 const RESULT_ONLY_STEPS = Number(process.env.AGENT_RESULT_ONLY_STEPS || 8);
 const RUN_TIMEOUT_MS = Number(process.env.AGENT_RUN_TIMEOUT_MS || 20000);
+const INSTALL_TIMEOUT_MS = Number(process.env.AGENT_INSTALL_TIMEOUT_MS || 180000);
+const VERIFY_TIMEOUT_MS = Number(process.env.AGENT_VERIFY_TIMEOUT_MS || 120000);
 const MAX_FILE_BYTES = 200_000;
 const PLAYBOOK_MAX_CHARS = 8_000;
 const AGENTS_MD_MAX_CHARS = 4_000;
@@ -72,8 +86,18 @@ function toolHeadline(tool, args = {}) {
       return `Reading ${a.path || "file"}`;
     case "write_file":
       return `Writing ${a.path || "file"}`;
+    case "str_replace":
+      return `Patching ${a.path || "file"}`;
     case "run":
       return `Running \`${String(a.command || "").slice(0, 72)}\``;
+    case "npm_install":
+      return "Installing npm dependencies";
+    case "start_server":
+      return `Starting server · ${String(a.command || a.name || "dev").slice(0, 48)}`;
+    case "stop_server":
+      return `Stopping server · ${a.name || "default"}`;
+    case "server_logs":
+      return `Reading server logs · ${a.name || "default"}`;
     case "web_search":
       return `Searching “${String(a.query || "").slice(0, 72)}”`;
     case "fetch_url":
@@ -130,6 +154,8 @@ const QUALITY_RULES = `
 Quality rules:
 - Infer the user's end goal from a short prompt; use the domain playbook(s) below — do not wait for a novel-length spec.
 - For hard goals: FIRST write_file PLAN.md (Goal / Done when / Files), then implement.
+- Prefer str_replace for surgical edits to existing files; write_file for new files or intentional full rewrites.
+- For web apps: npm_install when deps missing; start_server for dev servers; server_logs to confirm; never xdg-open.
 - Never claim you deleted or fixed a file unless you verified with list_files / read_file after.
 - rm / unlink of files that were pulled from Studio are synced back (workspace deletes). Prefer real deletes over leaving NOTE stubs.
 - If the user asks for ChiaLisp / .clsp: write real ChiaLisp starting with (mod — never Common Lisp.
@@ -227,6 +253,33 @@ async function toolWrite(root, rel, content) {
   return `OK wrote ${safe} (${Buffer.byteLength(text, "utf8")} bytes)`;
 }
 
+async function toolStrReplace(root, rel, args = {}) {
+  const safe = safeRel(rel);
+  if (!safe) return "ERROR: invalid path";
+  const full = path.join(root, safe);
+  let body;
+  try {
+    const buf = await fs.readFile(full);
+    if (buf.length > MAX_FILE_BYTES) {
+      return `ERROR: file too large (${buf.length} bytes)`;
+    }
+    body = buf.toString("utf8");
+  } catch {
+    return `ERROR: cannot read ${safe}`;
+  }
+  const result = applyStrReplace(body, {
+    oldText: args.oldText,
+    newText: args.newText,
+    replaceAll: args.replaceAll,
+  });
+  if (!result.ok) return `ERROR: ${result.message}`;
+  if (Buffer.byteLength(result.content, "utf8") > MAX_FILE_BYTES) {
+    return "ERROR: content too large after replace";
+  }
+  await fs.writeFile(full, result.content, "utf8");
+  return `OK str_replace ${safe} (${result.message})`;
+}
+
 const BLOCKED_RUN =
   /\b(sudo|pkexec|passwd|su\b|visudo|shutdown|reboot|halt|poweroff)\b/i;
 
@@ -234,7 +287,17 @@ const BLOCKED_RUN =
 const BLOCKED_BROWSER_OPEN =
   /\b(xdg-open|gio\s+open|sensible-browser|gnome-open|kde-open|xdg-email)\b|\bpython3?\s+-m\s+webbrowser\b|^(?:open|start)\s+https?:\/\//i;
 
-function runCommand(root, command) {
+function runTimeoutFor(command) {
+  const cmd = String(command || "");
+  if (/\bnpm\s+(i|install|ci)\b/i.test(cmd)) return INSTALL_TIMEOUT_MS;
+  if (/\bnpm\s+(run\s+)?(build|test|lint|typecheck)\b/i.test(cmd)) {
+    return VERIFY_TIMEOUT_MS;
+  }
+  if (/\bnpx\s+tsc\b/i.test(cmd)) return VERIFY_TIMEOUT_MS;
+  return RUN_TIMEOUT_MS;
+}
+
+function runCommand(root, command, opts = {}) {
   const cmd = String(command || "").trim();
   if (!cmd) {
     return Promise.resolve("ERROR: empty command");
@@ -247,10 +310,11 @@ function runCommand(root, command) {
   if (BLOCKED_BROWSER_OPEN.test(cmd)) {
     return Promise.resolve(
       "POLICY: opening a desktop browser (xdg-open / gio open / …) is blocked on the worker. " +
-        "Start the server if needed (e.g. node server.js / npm run dev), then tell the user to open the URL or use Studio Preview — do not launch a browser yourself. " +
+        "Use start_server for dev servers, then tell the user the URL or Studio Preview — do not launch a browser yourself. " +
         "This is not a build failure — do not re-run xdg-open.",
     );
   }
+  const timeoutMs = Number(opts.timeoutMs || runTimeoutFor(cmd));
   return new Promise((resolve) => {
     const child = spawn(cmd, {
       cwd: root,
@@ -261,6 +325,7 @@ function runCommand(root, command) {
         HOME: process.env.HOME,
         DEBIAN_FRONTEND: "noninteractive",
         CI: "1",
+        BROWSER: "none",
         npm_config_fund: "false",
         npm_config_audit: "false",
       },
@@ -271,12 +336,12 @@ function runCommand(root, command) {
     const timer = setTimeout(() => {
       child.kill("SIGKILL");
       resolve(
-        `ERROR: timed out after ${RUN_TIMEOUT_MS}ms\n${stdout}\n${stderr}`.slice(
+        `ERROR: timed out after ${timeoutMs}ms\n${stdout}\n${stderr}`.slice(
           0,
           8000,
         ),
       );
-    }, RUN_TIMEOUT_MS);
+    }, timeoutMs);
     child.stdout.on("data", (d) => {
       stdout += d.toString();
     });
@@ -438,11 +503,16 @@ function agentSystem(job, github, githubClone, extras = {}) {
       : "",
     "On every turn respond with ONLY one JSON object (optionally in a ```json fence):",
     "",
-    '1) Call a tool: {"thought":"...","tool":"list_files"|"read_file"|"write_file"|"run"|"web_search"|"fetch_url"|"clvm_verify"|"spend_check"|"puzzle_hash","args":{...}}',
+    '1) Call a tool: {"thought":"...","tool":"list_files"|"read_file"|"write_file"|"str_replace"|"run"|"npm_install"|"start_server"|"stop_server"|"server_logs"|"web_search"|"fetch_url"|"clvm_verify"|"spend_check"|"puzzle_hash","args":{...}}',
     '   - list_files args: {}',
     '   - read_file args: {"path":"relative/path"}',
     '   - write_file args: {"path":"relative/path","content":"full file contents"}',
+    '   - str_replace args: {"path":"relative/path","oldText":"exact snippet","newText":"replacement","replaceAll":false}',
     '   - run args: {"command":"shell command in the workspace"}',
+    '   - npm_install args: {"packages":"optional pkg names"}  // longer timeout; empty = npm install',
+    '   - start_server args: {"command":"npm run dev","name":"default"}',
+    '   - stop_server args: {"name":"default"}',
+    '   - server_logs args: {"name":"default","lines":80}',
     '   - web_search args: {"query":"..."}',
     '   - fetch_url args: {"url":"https://..."}',
     '   - clvm_verify args: {"program":"...","solution":"()","mode":"brun"|"run","expect":"optional"}',
@@ -454,7 +524,7 @@ function agentSystem(job, github, githubClone, extras = {}) {
     "Rules:",
     "- Explore with list_files/read_file before editing when files may already exist.",
     "- Prefer small, working changes. Write complete files when creating them.",
-    "- Use run to install/build/test when helpful (keep commands short).",
+    "- Use npm_install / run / start_server to install/build/test/serve when helpful.",
     "- Use web_search when facts may be stale (OS menus, docs, current APIs).",
     "- Never use sudo, su, passwd, or other interactive/privileged commands.",
     "- Prefer static HTML/JS games/apps that need no system packages when possible.",
@@ -1141,6 +1211,51 @@ export async function runAgentJob({
               `\n\nNEXT: write_file docs/PUZZLE_HASH.md with section:\n## Puzzle hash\n\n\`${result.puzzleHash}\`\n(no 0x prefix)${result.curried ? " — curried with demo args; re-run puzzle_hash with real curryArgs for mainnet." : ""}. Then done.`;
           }
         }
+      } else if (tool === "str_replace") {
+        observation = await toolStrReplace(root, args.path, args);
+      } else if (tool === "npm_install") {
+        const pkgs = String(args.packages || args.package || "").trim();
+        const cmd = pkgs ? `npm install ${pkgs}` : "npm install";
+        lastCommand = cmd;
+        observation = await runCommand(root, cmd, {
+          timeoutMs: INSTALL_TIMEOUT_MS,
+        });
+        const failedRun = observationLooksLikeFailedRun(observation);
+        if (failedRun && !isGeneral) {
+          const classified = classifyErrorLog(observation);
+          lastErrorKind = classified.kind;
+          lastErrorSnippet = String(observation).slice(0, 1500);
+          observation += `\n\n${formatClassificationNudge(classified)}`;
+        } else if (!failedRun && !isGeneral) {
+          lastErrorKind = null;
+          lastErrorSnippet = null;
+        }
+      } else if (tool === "start_server") {
+        const result = await startBackground(root, {
+          name: args.name || "default",
+          command: String(args.command || "npm run dev"),
+        });
+        observation = JSON.stringify(result, null, 2);
+        if (result.ok) {
+          lastCommand = String(args.command || "npm run dev");
+          lastErrorKind = null;
+          lastErrorSnippet = null;
+        }
+      } else if (tool === "stop_server") {
+        observation = JSON.stringify(
+          await stopBackground(root, args.name || "default"),
+          null,
+          2,
+        );
+      } else if (tool === "server_logs") {
+        observation = JSON.stringify(
+          await serverLogs(root, {
+            name: args.name || "default",
+            lines: args.lines,
+          }),
+          null,
+          2,
+        );
       } else if (tool === "run") {
         const cmd = String(args.command || "true");
         lastCommand = cmd;
@@ -1179,7 +1294,16 @@ export async function runAgentJob({
         fetchSteps += 1;
         rememberUrls(String(args.url || ""));
         rememberUrls(observation);
-      } else if (isGeneral && (tool === "write_file" || tool === "run")) {
+      } else if (
+        isGeneral &&
+        (tool === "write_file" ||
+          tool === "str_replace" ||
+          tool === "run" ||
+          tool === "npm_install" ||
+          tool === "start_server" ||
+          tool === "stop_server" ||
+          tool === "server_logs")
+      ) {
         observation =
           "ERROR: this is a general Q&A turn — do not create code or run shell. Use web_search / fetch_url, then {" +
           '"done":true,"message":"..."} with a concrete answer.';
@@ -1211,7 +1335,7 @@ export async function runAgentJob({
         },
       );
 
-      if (tool === "write_file" && args.path) {
+      if ((tool === "write_file" || tool === "str_replace") && args.path) {
         const p = String(args.path);
         if (!filesTouched.includes(p)) filesTouched.push(p);
       }
@@ -1615,6 +1739,63 @@ export async function runAgentJob({
           ...verification.warnings.map((w) => `- ${w}`),
         ].join("\n");
       }
+
+      // Coding / web: run package.json test/build gates when present.
+      if (
+        !resultOnly &&
+        !goal.wantCdv &&
+        (goal.id === "coding" || codingWorkspaceWorthVerify(files))
+      ) {
+        try {
+          const plan = await planCodingVerify(root);
+          if (plan.hasPackage && plan.commands.length) {
+            await emit(
+              "status",
+              `Coding verify · ${plan.commands.join(" && ")}`,
+            );
+            /** @type {string[]} */
+            const failures = [];
+            for (const cmd of plan.commands) {
+              const obs = await runCommand(root, cmd, {
+                timeoutMs: VERIFY_TIMEOUT_MS,
+              });
+              if (!verifyObservationOk(obs)) {
+                failures.push(
+                  `\`${cmd}\` failed:\n\`\`\`\n${String(obs).slice(0, 1200)}\n\`\`\``,
+                );
+                lastCommand = cmd;
+                lastErrorKind = classifyErrorLog(obs).kind;
+                lastErrorSnippet = String(obs).slice(0, 1500);
+                break;
+              }
+            }
+            if (failures.length) {
+              finalMessage += [
+                "",
+                "## Coding verify failed",
+                "",
+                "DAT STARCODER re-ran project scripts after the agent loop:",
+                ...failures.map((f) => `- ${f}`),
+                "",
+                "Fix with another turn (or paste the log via Studio Fix this).",
+              ].join("\n");
+              await emit("log", "Coding verify failed");
+            } else {
+              finalMessage += [
+                "",
+                "## Coding verify",
+                "",
+                `Passed: ${plan.commands.map((c) => `\`${c}\``).join(", ")}`,
+              ].join("\n");
+              await emit("status", "Coding verify passed");
+            }
+          }
+        } catch (err) {
+          log(
+            `[agent] coding-verify error: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        }
+      }
     }
 
     // Paths that were in Studio at pull but are gone on disk → delete from S3.
@@ -1692,6 +1873,11 @@ export async function runAgentJob({
       toolSteps,
     };
   } finally {
+    try {
+      await stopAllBackground(root);
+    } catch {
+      /* ignore */
+    }
     await fs.rm(root, { recursive: true, force: true }).catch(() => undefined);
   }
 }
