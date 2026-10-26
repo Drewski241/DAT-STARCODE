@@ -23,6 +23,9 @@ import {
 import { inferGoal } from "../../goals.mjs";
 import { classifyErrorLog } from "../../error-classify.mjs";
 import { formatToolSpecsForPrompt } from "../../tool-specs.mjs";
+import { toOllamaTools, firstToolCallAction, trimMessagesForContext } from "../../ollama-tools.mjs";
+import { extractListenUrls, checkHttpUrl } from "../../http-check.mjs";
+import { deriveProjectGoal, rankContinueFiles } from "../../project-goals.mjs";
 
 let failed = 0;
 function check(id, cond, detail = "") {
@@ -125,6 +128,40 @@ function check(id, cond, detail = "") {
   );
   const spec = formatToolSpecsForPrompt();
   check("tool-specs", /str_replace/.test(spec) && /start_server/.test(spec));
+}
+
+{
+  const tools = toOllamaTools();
+  check("ollama-tools-shape", tools[0].type === "function" && tools.some((x) => x.function.name === "check_url"));
+  const action = firstToolCallAction([
+    { function: { name: "check_url", arguments: { url: "http://127.0.0.1:9/" } } },
+  ]);
+  check("first-tool-call", action?.tool === "check_url");
+  check(
+    "trim-messages",
+    trimMessagesForContext(
+      [
+        { role: "system", content: "s" },
+        { role: "user", content: "OBSERVATION:\n" + "z".repeat(100000) },
+      ],
+      { maxChars: 5000 },
+    ).length >= 1,
+  );
+}
+
+{
+  check(
+    "extract-url",
+    extractListenUrls("Server running at http://127.0.0.1:3000/").includes(
+      "http://127.0.0.1:3000/",
+    ),
+  );
+  const g = deriveProjectGoal("Ship a Next.js landing page");
+  check("project-goal", /Next/i.test(String(g.summary)));
+  check(
+    "rank-files",
+    rankContinueFiles(["a.ts", "package.json"], ["a.ts"])[0] === "a.ts",
+  );
 }
 
 if (failed) {

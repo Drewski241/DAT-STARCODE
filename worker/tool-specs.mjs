@@ -58,6 +58,12 @@ export const CODING_TOOL_SPECS = [
     args: { name: "string?", lines: "number?" },
   },
   {
+    name: "check_url",
+    description:
+      "Headless HTTP GET against a localhost URL (title/status) — no desktop browser",
+    args: { url: "string" },
+  },
+  {
     name: "web_search",
     description: "Search the public web",
     args: { query: "string" },

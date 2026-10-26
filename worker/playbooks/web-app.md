@@ -21,7 +21,8 @@ User is building or debugging an app/site (HTML, React, Next.js, Node API, CSS).
 1. `npm_install` if `node_modules` missing.
 2. `start_server` with `npm run dev` or `node server.js`.
 3. `server_logs` to confirm listen / catch compile errors.
-4. `stop_server` when done debugging (worker also cleans up at end of turn).
+4. `check_url` on the localhost URL (headless — no desktop browser).
+5. `stop_server` when done debugging (worker also cleans up at end of turn).
 
 ## Common fixes
 

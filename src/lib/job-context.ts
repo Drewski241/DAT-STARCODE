@@ -36,20 +36,11 @@ export async function buildContinueContext(
   }
 
   const files = await listWorkspaceFiles(parent);
-  const codeFiles = files
-    .map((f) => f.path)
-    .filter(
-      (p) =>
-        !p.endsWith("README.md") &&
-        !p.endsWith("job.json") &&
-        p !== "RESULT.md",
-    )
-    .slice(0, MAX_FILES);
-
   const checkpoint = await readWorkspaceFile(
     parent,
     ".datstarcoder/checkpoint.json",
   );
+  let filesTouched: string[] = [];
   if (checkpoint) {
     parts.push(
       "### Project checkpoint",
@@ -60,7 +51,49 @@ export async function buildContinueContext(
       "```",
       "",
     );
+    try {
+      const parsed = JSON.parse(checkpoint) as {
+        filesTouched?: string[];
+        projectGoal?: { summary?: string; doneWhen?: string };
+      };
+      if (Array.isArray(parsed.filesTouched)) {
+        filesTouched = parsed.filesTouched.map(String);
+      }
+      if (parsed.projectGoal?.summary) {
+        parts.push(
+          "### Durable project goal",
+          `- Summary: ${parsed.projectGoal.summary}`,
+          parsed.projectGoal.doneWhen
+            ? `- Done when: ${parsed.projectGoal.doneWhen}`
+            : "",
+          "",
+        );
+      }
+    } catch {
+      /* ignore bad checkpoint json */
+    }
   }
+
+  const ranked = files
+    .map((f) => f.path)
+    .filter(
+      (p) =>
+        !p.endsWith("README.md") &&
+        !p.endsWith("job.json") &&
+        p !== "RESULT.md",
+    )
+    .map((p, i) => {
+      let score = 0;
+      if (filesTouched.includes(p)) score += 100;
+      if (/(^|\/)(package\.json|index\.html|PLAN\.md)$/i.test(p)) score += 40;
+      if (/\.(tsx?|jsx?|mjs|css)$/i.test(p)) score += 10;
+      if (/RESULT\.md$/i.test(p)) score -= 20;
+      return { p, score, i };
+    })
+    .sort((a, b) => b.score - a.score || a.i - b.i)
+    .map((x) => x.p);
+
+  const codeFiles = ranked.slice(0, MAX_FILES);
 
   if (codeFiles.length > 0) {
     parts.push("### Prior workspace files (continue from these)");

@@ -49,6 +49,12 @@ export function formatCheckpointForPrompt(cp) {
   if (!cp || typeof cp !== "object") return "";
   const lines = ["## Project checkpoint (do not ignore)"];
   if (cp.goal) lines.push(`- Goal: ${cp.goal}`);
+  if (cp.projectGoal && typeof cp.projectGoal === "object") {
+    const g = /** @type {Record<string, unknown>} */ (cp.projectGoal);
+    if (g.summary) lines.push(`- Project summary: ${g.summary}`);
+    if (g.doneWhen) lines.push(`- Done when: ${g.doneWhen}`);
+    if (g.status) lines.push(`- Project status: ${g.status}`);
+  }
   if (cp.lastCommand) lines.push(`- Last command: \`${cp.lastCommand}\``);
   if (cp.lastErrorKind) lines.push(`- Last error class: ${cp.lastErrorKind}`);
   if (cp.lastErrorSnippet) {

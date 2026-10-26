@@ -62,7 +62,18 @@ import {
   codingWorkspaceWorthVerify,
   verifyObservationOk,
 } from "./coding-verify.mjs";
-import { formatToolSpecsForPrompt } from "./tool-specs.mjs";
+import { formatToolSpecsForPrompt, CODING_TOOL_SPECS } from "./tool-specs.mjs";
+import {
+  toOllamaTools,
+  mergeToolCalls,
+  firstToolCallAction,
+  trimMessagesForContext,
+} from "./ollama-tools.mjs";
+import { checkHttpUrl, extractListenUrls } from "./http-check.mjs";
+import {
+  deriveProjectGoal,
+  formatProjectGoalForPrompt,
+} from "./project-goals.mjs";
 
 const MAX_STEPS = Number(process.env.AGENT_MAX_STEPS || 12);
 const HARD_TASK_STEPS = Number(process.env.AGENT_HARD_TASK_STEPS || 40);
@@ -73,6 +84,9 @@ const RESULT_ONLY_STEPS = Number(process.env.AGENT_RESULT_ONLY_STEPS || 8);
 const RUN_TIMEOUT_MS = Number(process.env.AGENT_RUN_TIMEOUT_MS || 20000);
 const INSTALL_TIMEOUT_MS = Number(process.env.AGENT_INSTALL_TIMEOUT_MS || 180000);
 const VERIFY_TIMEOUT_MS = Number(process.env.AGENT_VERIFY_TIMEOUT_MS || 120000);
+const NATIVE_TOOLS =
+  !/^(0|false|no|off)$/i.test(String(process.env.AGENT_NATIVE_TOOLS ?? "1"));
+const OLLAMA_NUM_CTX = Number(process.env.OLLAMA_NUM_CTX || 16384);
 const MAX_FILE_BYTES = 200_000;
 const PLAYBOOK_MAX_CHARS = 8_000;
 const AGENTS_MD_MAX_CHARS = 4_000;
@@ -99,6 +113,8 @@ function toolHeadline(tool, args = {}) {
       return `Stopping server · ${a.name || "default"}`;
     case "server_logs":
       return `Reading server logs · ${a.name || "default"}`;
+    case "check_url":
+      return `Checking ${String(a.url || "url").slice(0, 64)}`;
     case "web_search":
       return `Searching “${String(a.query || "").slice(0, 72)}”`;
     case "fetch_url":
@@ -504,7 +520,7 @@ function agentSystem(job, github, githubClone, extras = {}) {
       : "",
     "On every turn respond with ONLY one JSON object (optionally in a ```json fence):",
     "",
-    '1) Call a tool: {"thought":"...","tool":"list_files"|"read_file"|"write_file"|"str_replace"|"run"|"npm_install"|"start_server"|"stop_server"|"server_logs"|"web_search"|"fetch_url"|"clvm_verify"|"spend_check"|"puzzle_hash","args":{...}}',
+    '1) Call a tool: {"thought":"...","tool":"list_files"|"read_file"|"write_file"|"str_replace"|"run"|"npm_install"|"start_server"|"stop_server"|"server_logs"|"check_url"|"web_search"|"fetch_url"|"clvm_verify"|"spend_check"|"puzzle_hash","args":{...}}',
     '   - list_files args: {}',
     '   - read_file args: {"path":"relative/path"}',
     '   - write_file args: {"path":"relative/path","content":"full file contents"}',
@@ -514,6 +530,7 @@ function agentSystem(job, github, githubClone, extras = {}) {
     '   - start_server args: {"command":"npm run dev","name":"default"}',
     '   - stop_server args: {"name":"default"}',
     '   - server_logs args: {"name":"default","lines":80}',
+    '   - check_url args: {"url":"http://127.0.0.1:3000/"}',
     '   - web_search args: {"query":"..."}',
     '   - fetch_url args: {"url":"https://..."}',
     '   - clvm_verify args: {"program":"...","solution":"()","mode":"brun"|"run","expect":"optional"}',
@@ -554,6 +571,7 @@ function agentSystem(job, github, githubClone, extras = {}) {
       ? `\n## Repository agent instructions\n${extras.agentsMd}\n`
       : "",
     extras.checkpointMd ? `\n${extras.checkpointMd}\n` : "",
+    extras.projectGoalMd ? `\n${extras.projectGoalMd}\n` : "",
     extras.errorNudge
       ? `\n## Error-driven turn\n${extras.errorNudge}\n`
       : "",
@@ -678,20 +696,28 @@ async function fetchUrl(url) {
   }
 }
 
-async function ollamaChat(ollamaUrl, model, messages, onToken) {
+/**
+ * @returns {Promise<{ content: string, toolCalls: any[], rawMessage?: any }>}
+ */
+async function ollamaChat(ollamaUrl, model, messages, onToken, opts = {}) {
+  const trimmed = trimMessagesForContext(messages);
+  const tools = opts.tools;
+  const body = {
+    model,
+    messages: trimmed,
+    stream: true,
+    options: { temperature: 0.2, num_ctx: OLLAMA_NUM_CTX },
+  };
+  if (tools?.length) body.tools = tools;
+
   const res = await fetch(`${ollamaUrl}/api/chat`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      model,
-      messages,
-      stream: true,
-      options: { temperature: 0.2 },
-    }),
+    body: JSON.stringify(body),
   });
   if (!res.ok) {
-    const body = await res.text();
-    throw new Error(`Ollama chat ${res.status}: ${body.slice(0, 200)}`);
+    const errBody = await res.text();
+    throw new Error(`Ollama chat ${res.status}: ${errBody.slice(0, 200)}`);
   }
   if (!res.body) throw new Error("Ollama returned no body");
 
@@ -701,6 +727,9 @@ async function ollamaChat(ollamaUrl, model, messages, onToken) {
   let full = "";
   let pending = "";
   let lastEmit = 0;
+  /** @type {any[]} */
+  let toolCalls = [];
+  let rawMessage = null;
 
   const flush = async (force = false) => {
     if (!onToken || !pending) return;
@@ -719,28 +748,32 @@ async function ollamaChat(ollamaUrl, model, messages, onToken) {
     const lines = buffer.split("\n");
     buffer = lines.pop() || "";
     for (const line of lines) {
-      const trimmed = line.trim();
-      if (!trimmed) continue;
+      const trimmedLine = line.trim();
+      if (!trimmedLine) continue;
       let data;
       try {
-        data = JSON.parse(trimmed);
+        data = JSON.parse(trimmedLine);
       } catch {
         continue;
       }
+      if (data.message) rawMessage = data.message;
       const piece = data.message?.content || "";
       if (piece) {
         full += piece;
         pending += piece;
         await flush(false);
       }
+      if (data.message?.tool_calls?.length) {
+        toolCalls = mergeToolCalls(toolCalls, data.message.tool_calls);
+      }
       if (data.done) {
         await flush(true);
-        return full;
+        return { content: full, toolCalls, rawMessage };
       }
     }
   }
   await flush(true);
-  return full;
+  return { content: full, toolCalls, rawMessage };
 }
 
 const SKIP_PUSH_NAME =
@@ -938,6 +971,13 @@ export async function runAgentJob({
       log(`[agent] loaded project checkpoint`);
       await emit("status", "Resumed project checkpoint");
     }
+    const projectGoal = isGeneral
+      ? null
+      : deriveProjectGoal(job.prompt || "", checkpoint);
+    const projectGoalMd = formatProjectGoalForPrompt({ projectGoal });
+    if (projectGoalMd) {
+      await emit("status", `Project goal · ${String(projectGoal.summary || "").slice(0, 72)}`);
+    }
 
     let errorNudge = "";
     if (!isGeneral && promptLooksLikeErrorDump(job.prompt || "")) {
@@ -961,6 +1001,7 @@ export async function runAgentJob({
           tooling,
           resultOnly,
           checkpointMd,
+          projectGoalMd,
           errorNudge,
         }),
       },
@@ -1091,6 +1132,13 @@ export async function runAgentJob({
         "Include ranked purchase paths, caveats (no invented premiums), ## Sources with real https URLs from observations, and ## Next steps.",
       ].join(" ");
 
+    const ollamaTools = NATIVE_TOOLS
+      ? toOllamaTools(CODING_TOOL_SPECS, { general: isGeneral })
+      : null;
+    if (ollamaTools?.length) {
+      log(`[agent] native tools enabled (${ollamaTools.length})`);
+    }
+
     for (let step = 0; step < stepLimit; step++) {
       stepsUsed = step + 1;
       const stepsLeft = stepLimit - step;
@@ -1110,8 +1158,12 @@ export async function runAgentJob({
       }
 
       let content;
+      /** @type {any[]} */
+      let nativeToolCalls = [];
+      /** @type {any} */
+      let rawAssistantMessage = null;
       try {
-        content = await ollamaChat(
+        const reply = await ollamaChat(
           ollamaUrl,
           model,
           messages,
@@ -1121,7 +1173,11 @@ export async function runAgentJob({
               step: step + 1,
             });
           },
+          { tools: ollamaTools },
         );
+        content = reply.content || "";
+        nativeToolCalls = reply.toolCalls || [];
+        rawAssistantMessage = reply.rawMessage;
       } catch (err) {
         finalMessage = [
           `# Agent error`,
@@ -1143,8 +1199,23 @@ export async function runAgentJob({
         break;
       }
 
-      messages.push({ role: "assistant", content });
-      const action = parseAction(content);
+      const nativeAction = firstToolCallAction(nativeToolCalls);
+      if (nativeAction) {
+        messages.push({
+          role: "assistant",
+          content: content || "",
+          tool_calls: nativeToolCalls,
+        });
+      } else {
+        messages.push({ role: "assistant", content });
+      }
+      const action = nativeAction
+        ? {
+            thought: content,
+            tool: nativeAction.tool,
+            args: nativeAction.args,
+          }
+        : parseAction(content);
 
       if (!action) {
         messages.push({
@@ -1238,12 +1309,20 @@ export async function runAgentJob({
           name: args.name || "default",
           command: String(args.command || "npm run dev"),
         });
-        observation = JSON.stringify(result, null, 2);
         if (result.ok) {
           lastCommand = String(args.command || "npm run dev");
           lastErrorKind = null;
           lastErrorSnippet = null;
+          const urls = extractListenUrls(
+            `${result.logTail || ""}\n${result.message || ""}`,
+          );
+          if (urls[0]) {
+            const probe = await checkHttpUrl(urls[0]);
+            result.probe = probe;
+            result.listenUrl = urls[0];
+          }
         }
+        observation = JSON.stringify(result, null, 2);
       } else if (tool === "stop_server") {
         observation = JSON.stringify(
           await stopBackground(root, args.name || "default"),
@@ -1256,6 +1335,24 @@ export async function runAgentJob({
             name: args.name || "default",
             lines: args.lines,
           }),
+          null,
+          2,
+        );
+      } else if (tool === "check_url") {
+        const url = String(args.url || "").trim();
+        let target = url;
+        if (!target) {
+          const logs = await serverLogs(root, { name: args.name || "default" });
+          target = extractListenUrls(logs.logTail || "")[0] || "";
+        }
+        observation = JSON.stringify(
+          target
+            ? await checkHttpUrl(target)
+            : {
+                ok: false,
+                message:
+                  "No URL — pass check_url url:http://127.0.0.1:PORT/ or start_server first",
+              },
           null,
           2,
         );
@@ -1305,7 +1402,8 @@ export async function runAgentJob({
           tool === "npm_install" ||
           tool === "start_server" ||
           tool === "stop_server" ||
-          tool === "server_logs")
+          tool === "server_logs" ||
+          tool === "check_url")
       ) {
         observation =
           "ERROR: this is a general Q&A turn — do not create code or run shell. Use web_search / fetch_url, then {" +
@@ -1353,26 +1451,44 @@ export async function runAgentJob({
         await emit("status", "Early exit · no productive progress");
         log(`[agent] early-exit: ${early.reason}`);
       }
-      messages.push({
-        role: "user",
-        content: obsMsg,
-      });
+      if (nativeAction) {
+        messages.push({
+          role: "tool",
+          content: String(observation).slice(0, 12_000),
+        });
+        // Keep JSON-protocol nudges as user messages when needed.
+        if (early.exit || (isGeneral && researchReady())) {
+          messages.push({ role: "user", content: obsMsg });
+        }
+      } else {
+        messages.push({
+          role: "user",
+          content: obsMsg,
+        });
+      }
       if (early.exit) {
         // Give the model one more turn to emit done, then break if still empty.
         try {
-          const content = await ollamaChat(ollamaUrl, model, [
-            ...messages,
-            {
-              role: "user",
-              content:
-                'Stop tools. {"done":true,"message":"markdown summary of what failed / what to try next"}',
-            },
-          ]);
-          const action = parseAction(content);
+          const earlyReply = await ollamaChat(
+            ollamaUrl,
+            model,
+            [
+              ...messages,
+              {
+                role: "user",
+                content:
+                  'Stop tools. {"done":true,"message":"markdown summary of what failed / what to try next"}',
+              },
+            ],
+            undefined,
+            { tools: null },
+          );
+          const earlyContent = earlyReply.content || "";
+          const action = parseAction(earlyContent);
           if (action?.done) {
-            finalMessage = unwrapDoneMessage(action.message || content);
-          } else if (content && content.length > 40) {
-            finalMessage = unwrapDoneMessage(content);
+            finalMessage = unwrapDoneMessage(action.message || earlyContent);
+          } else if (earlyContent && earlyContent.length > 40) {
+            finalMessage = unwrapDoneMessage(earlyContent);
           }
         } catch {
           /* fall through to step-limit message */
@@ -1405,6 +1521,7 @@ export async function runAgentJob({
           || (await fs.access(path.join(root, "index.html")).then(() => "index.html").catch(() => null));
         await saveCheckpoint(root, {
           goal: goal.id,
+          projectGoal,
           lastCommand,
           lastErrorKind,
           lastErrorSnippet,
@@ -1427,7 +1544,10 @@ export async function runAgentJob({
       try {
         await emit("status", "Synthesizing answer from research…");
         messages.push({ role: "user", content: finishNudge() });
-        const content = await ollamaChat(ollamaUrl, model, messages);
+        const synth = await ollamaChat(ollamaUrl, model, messages, undefined, {
+          tools: null,
+        });
+        const content = synth.content || "";
         messages.push({ role: "assistant", content });
         const action = parseAction(content);
         if (action?.done) {
