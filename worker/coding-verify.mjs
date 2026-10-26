@@ -181,3 +181,37 @@ export async function ensureIntentionalFailPackageJson(root, io = {}) {
   }
   return { changed, message, pkg };
 }
+
+export const INTENTIONAL_FAIL_INDEX_JS = 'console.log("ok");\n';
+
+/**
+ * Capability #7 deliverables: package.json scripts.test + index.js console.log("ok").
+ * Deterministic — do not rely on 7B to leave both files in the workspace
+ * (live zip 3b520e35 had neither after the turn).
+ * @param {string} root
+ */
+export async function ensureIntentionalFailDeliverables(root) {
+  /** @type {string[]} */
+  const notes = [];
+  const pkgFix = await ensureIntentionalFailPackageJson(root);
+  if (pkgFix.changed) notes.push(pkgFix.message);
+  const indexPath = path.join(root, "index.js");
+  let indexBody = "";
+  try {
+    indexBody = await fs.readFile(indexPath, "utf8");
+  } catch {
+    indexBody = "";
+  }
+  const ok =
+    /^\s*console\.log\s*\(\s*["']ok["']\s*\)\s*;?\s*$/m.test(indexBody) ||
+    /console\.log\s*\(\s*["']ok["']\s*\)/.test(indexBody);
+  if (!ok) {
+    await fs.writeFile(indexPath, INTENTIONAL_FAIL_INDEX_JS, "utf8");
+    notes.push('Wrote index.js with console.log("ok")');
+  }
+  return {
+    changed: notes.length > 0,
+    notes,
+    pkg: pkgFix.pkg,
+  };
+}

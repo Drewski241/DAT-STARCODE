@@ -67,6 +67,7 @@ import {
   verifyObservationOk,
   isIntentionalVerifyFail,
   ensureIntentionalFailPackageJson,
+  ensureIntentionalFailDeliverables,
 } from "./coding-verify.mjs";
 import { formatToolSpecsForPrompt, CODING_TOOL_SPECS } from "./tool-specs.mjs";
 import {
@@ -1133,6 +1134,30 @@ export async function runAgentJob({
     const filesTouched = Array.isArray(checkpoint?.filesTouched)
       ? [...checkpoint.filesTouched]
       : [];
+    // Capability #7: materialize package.json scripts.test + index.js up front
+    // so a weak 7B turn cannot finish with neither file on disk (zip 3b520e35).
+    let skipAgentLoopForIntentionalFail = false;
+    if (intentionalVerifyFail && !isGeneral && !resultOnly) {
+      try {
+        const primed = await ensureIntentionalFailDeliverables(root);
+        log(
+          `[agent] intentional-fail prime: ${primed.notes.join("; ") || "already set"}`,
+        );
+        await emit("status", "Intentional-fail deliverables ready");
+        for (const p of ["package.json", "index.js"]) {
+          if (!filesTouched.includes(p)) filesTouched.push(p);
+        }
+        progress.writes = Math.max(Number(progress.writes || 0), 2);
+        finalMessage =
+          "Wrote package.json (scripts.test → process.exit(1)) and index.js. Left the test failing as requested.";
+        skipAgentLoopForIntentionalFail = true;
+        stepsUsed = 1;
+      } catch (err) {
+        log(
+          `[agent] intentional-fail prime: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    }
     let lastCommand = checkpoint?.lastCommand || null;
     let lastErrorKind = checkpoint?.lastErrorKind || null;
     let lastErrorSnippet = checkpoint?.lastErrorSnippet || null;
@@ -1355,6 +1380,7 @@ export async function runAgentJob({
     }
 
     for (let step = 0; step < stepLimit; step++) {
+      if (skipAgentLoopForIntentionalFail) break;
       stepsUsed = step + 1;
       const stepsLeft = stepLimit - step;
       log(`[agent] step ${step + 1}/${stepLimit} job=${job.id.slice(0, 8)}`);
@@ -2394,6 +2420,29 @@ export async function runAgentJob({
       }
 
       // Coding / web: run package.json test/build gates when present.
+      if (
+        !resultOnly &&
+        intentionalVerifyFail &&
+        !goal.wantCdv
+      ) {
+        try {
+          const ensured = await ensureIntentionalFailDeliverables(root);
+          if (ensured.changed) {
+            log(
+              `[agent] intentional-fail ensure before verify: ${ensured.notes.join("; ")}`,
+            );
+            files = await collectLocalFiles(root);
+            files = await ensurePreviewFilesListed(root, files);
+            for (const p of ["package.json", "index.js"]) {
+              if (!filesTouched.includes(p)) filesTouched.push(p);
+            }
+          }
+        } catch (err) {
+          log(
+            `[agent] intentional-fail ensure: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        }
+      }
       if (
         !resultOnly &&
         !goal.wantCdv &&

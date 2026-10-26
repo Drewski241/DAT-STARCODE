@@ -6,8 +6,12 @@ import {
   verifyObservationOk,
   isIntentionalVerifyFail,
   enforceIntentionalFailScripts,
+  ensureIntentionalFailDeliverables,
   INTENTIONAL_FAIL_TEST_SCRIPT,
 } from "./coding-verify.mjs";
+import { promises as fs } from "fs";
+import os from "os";
+import path from "path";
 
 assert.deepEqual(
   pickVerifyCommands({
@@ -52,6 +56,18 @@ assert.equal(isIntentionalVerifyFail("Fix the failing unit tests"), false);
     pickVerifyCommands(fixed.pkg),
     ["npm test"],
   );
+}
+
+{
+  // Live zip 3b520e35: neither package.json nor index.js survived the turn
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "dsc-intent-"));
+  const out = await ensureIntentionalFailDeliverables(root);
+  assert.equal(out.changed, true);
+  const pkg = JSON.parse(await fs.readFile(path.join(root, "package.json"), "utf8"));
+  assert.equal(pkg.scripts.test, INTENTIONAL_FAIL_TEST_SCRIPT);
+  assert.match(await fs.readFile(path.join(root, "index.js"), "utf8"), /console\.log\("ok"\)/);
+  assert.deepEqual(pickVerifyCommands(pkg), ["npm test"]);
+  await fs.rm(root, { recursive: true, force: true });
 }
 
 assert.equal(
