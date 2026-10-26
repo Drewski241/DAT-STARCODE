@@ -2535,6 +2535,21 @@ export async function runAgentJob({
                 if (Array.isArray(mem.neverDo)) verifyPatch.neverDo = mem.neverDo;
               }
               await saveCheckpoint(root, verifyPatch);
+              // Refresh pushed checkpoint so zip/Studio see verifyStatus (not the
+              // pre-verify snapshot collected earlier).
+              try {
+                const cpBody = await fs.readFile(
+                  path.join(root, ".datstarcoder/checkpoint.json"),
+                  "utf8",
+                );
+                const idx = files.findIndex(
+                  (f) => f.path === ".datstarcoder/checkpoint.json",
+                );
+                if (idx >= 0) files[idx] = { path: ".datstarcoder/checkpoint.json", content: cpBody };
+                else files.push({ path: ".datstarcoder/checkpoint.json", content: cpBody });
+              } catch {
+                /* non-fatal */
+              }
             } catch {
               /* non-fatal */
             }
