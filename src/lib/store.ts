@@ -2,11 +2,13 @@ import { promises as fs } from "fs";
 import path from "path";
 import { randomUUID } from "crypto";
 import {
+  DeleteObjectCommand,
   GetObjectCommand,
   ListObjectsV2Command,
   PutObjectCommand,
   S3Client,
 } from "@aws-sdk/client-s3";
+import { clearWorkspace } from "@/lib/workspace";
 import type {
   Account,
   AccountSource,
@@ -209,6 +211,28 @@ async function saveJobRecord(job: CodingJob) {
   const full = jobRecordPath(job.id);
   await fs.mkdir(path.dirname(full), { recursive: true });
   await fs.writeFile(full, body, "utf8");
+}
+
+async function deleteJobRecord(jobId: string) {
+  const s3 = await getS3();
+  if (s3) {
+    try {
+      await s3.client.send(
+        new DeleteObjectCommand({
+          Bucket: s3.bucket,
+          Key: jobRecordKey(jobId),
+        }),
+      );
+    } catch {
+      /* missing */
+    }
+    return;
+  }
+  try {
+    await fs.unlink(jobRecordPath(jobId));
+  } catch {
+    /* missing */
+  }
 }
 
 async function loadJobRecord(jobId: string): Promise<CodingJob | null> {
@@ -743,6 +767,54 @@ export async function updateProjectGithub(
   });
 }
 
+/**
+ * Delete a project owned by accountId: drop jobs + sidecars + workspace files.
+ */
+export async function deleteProject(projectId: string, accountId: string) {
+  const removed = await mutate((store) => {
+    if (!store.projects) store.projects = [];
+    const idx = store.projects.findIndex(
+      (p) => p.id === projectId && p.accountId === accountId,
+    );
+    if (idx < 0) throw new Error("Project not found");
+    const [project] = store.projects.splice(idx, 1);
+    const jobIds = store.jobs
+      .filter((j) => j.projectId === projectId)
+      .map((j) => j.id);
+    store.jobs = store.jobs.filter((j) => j.projectId !== projectId);
+    return {
+      project: normalizeProject(project),
+      jobIds,
+      workspaceId: `${accountId}/projects/${projectId}`,
+    };
+  });
+
+  await Promise.all(removed.jobIds.map((id) => deleteJobRecord(id)));
+  try {
+    await clearWorkspace({
+      accountId,
+      id: projectId,
+      projectId,
+      workspaceId: removed.workspaceId,
+    });
+  } catch (err) {
+    console.warn(
+      `[store] clearWorkspace after deleteProject: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+  return removed.project;
+}
+
+/** Count jobs still waiting on / holding the worker (for capacity gates). */
+export function countActiveJobs(jobs: CodingJob[]) {
+  return jobs.filter(
+    (j) =>
+      j.status === "queued" ||
+      j.status === "claimed" ||
+      j.status === "running",
+  ).length;
+}
+
 function pickNewerJob(a: CodingJob, b: CodingJob): CodingJob {
   return a.updatedAt >= b.updatedAt ? a : b;
 }
@@ -830,6 +902,32 @@ export async function enqueueJob(input: {
       account = ensureAccount(store, input.accountSeed);
     }
     if (!account) throw new Error("Account not found");
+
+    // Single GPU worker (P720 ~16GB): cap queue so Ollama isn't thrashed.
+    const maxGlobal = Number(process.env.MAX_ACTIVE_JOBS_GLOBAL || 4);
+    const maxPerAccount = Number(process.env.MAX_ACTIVE_JOBS_PER_ACCOUNT || 2);
+    const activeGlobal = countActiveJobs(store.jobs);
+    const activeMine = countActiveJobs(
+      store.jobs.filter((j) => j.accountId === input.accountId),
+    );
+    if (maxGlobal > 0 && activeGlobal >= maxGlobal) {
+      throw new Error(
+        `Worker at capacity (${activeGlobal}/${maxGlobal} active jobs). Wait for a turn to finish — one GPU box can only run so many Ollama jobs.`,
+      );
+    }
+    if (maxPerAccount > 0 && activeMine >= maxPerAccount) {
+      throw new Error(
+        `You already have ${activeMine} active turn(s) (limit ${maxPerAccount}). Wait for one to finish before sending another.`,
+      );
+    }
+    // 14B + another heavy job on 16GB RAM is a bad day — soft-reject when busy.
+    const wants14b = /qwen2\.5-coder:14b/i.test(input.modelResolved);
+    if (wants14b && activeGlobal >= 1) {
+      throw new Error(
+        `Coder 14B needs the GPU mostly alone (queue already has ${activeGlobal} job(s)). Wait, or pick Coder 7B / Auto for a lighter turn.`,
+      );
+    }
+
     // Price from the resolved Ollama tag (Auto already picked 7B vs general).
     const priced = priceJob({
       prompt: input.prompt,

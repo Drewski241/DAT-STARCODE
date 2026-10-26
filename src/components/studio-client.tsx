@@ -128,12 +128,13 @@ export function StudioClient() {
     setPanel("output");
   }
 
-  function selectProject(nextId: string) {
+  function selectProject(nextId: string | null) {
     projectIdRef.current = nextId;
     setProjectId(nextId);
     clearProjectUi();
     try {
-      sessionStorage.setItem(PROJECT_STORAGE_KEY, nextId);
+      if (nextId) sessionStorage.setItem(PROJECT_STORAGE_KEY, nextId);
+      else sessionStorage.removeItem(PROJECT_STORAGE_KEY);
     } catch {
       /* ignore */
     }
@@ -703,6 +704,40 @@ export function StudioClient() {
     }
   }
 
+  async function deleteActiveProject() {
+    const id = projectIdRef.current ?? projectId;
+    if (!id || !activeProject) return;
+    const ok = window.confirm(
+      `Delete project “${activeProject.title}”? This removes its workspace and job history. Credits already spent stay spent.`,
+    );
+    if (!ok) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/projects/${id}`, {
+        method: "DELETE",
+        credentials: "same-origin",
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Could not delete project");
+      const nextList = (data.projects as Project[]) || [];
+      setProjects(nextList);
+      setAccount(data.account ?? account);
+      const nextId = nextList[0]?.id ?? null;
+      selectProject(nextId);
+      setJobs([]);
+      setSelectedId(null);
+      setWorkspaceFiles([]);
+      setShotPreview(null);
+      if (nextId) await refresh(nextId);
+      else await refresh(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Delete project failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function submitJob() {
     setBusy(true);
     setError(null);
@@ -981,6 +1016,15 @@ export function StudioClient() {
                 className="rounded-none border-copper-700 font-mono text-xs uppercase tracking-widest text-copper-100"
               >
                 New project
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                disabled={busy || !projectId}
+                onClick={() => void deleteActiveProject()}
+                className="rounded-none border-red-900/70 font-mono text-xs uppercase tracking-widest text-red-300 hover:border-red-700 hover:text-red-200"
+              >
+                Delete project
               </Button>
             </div>
 

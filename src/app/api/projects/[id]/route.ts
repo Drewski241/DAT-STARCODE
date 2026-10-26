@@ -7,8 +7,10 @@ import {
 } from "@/lib/github";
 import { requireRegisteredAccount } from "@/lib/require-auth";
 import {
+  deleteProject,
   getProject,
   listJobsForProject,
+  listProjects,
   updateProjectGithub,
 } from "@/lib/store";
 
@@ -102,5 +104,28 @@ export async function PATCH(
   } catch (err) {
     const message = err instanceof Error ? err.message : "Update failed";
     return NextResponse.json({ error: message }, { status: 404 });
+  }
+}
+
+export async function DELETE(
+  _req: NextRequest,
+  ctx: { params: Promise<{ id: string }> },
+) {
+  const auth = await requireRegisteredAccount();
+  if ("error" in auth) return auth.error;
+
+  const { id } = await ctx.params;
+  try {
+    const project = await deleteProject(id, auth.account.id);
+    const projects = await listProjects(auth.account.id);
+    return NextResponse.json({
+      account: toPublicAccount(auth.account),
+      deleted: project,
+      projects,
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Delete failed";
+    const status = /not found/i.test(message) ? 404 : 400;
+    return NextResponse.json({ error: message }, { status });
   }
 }
