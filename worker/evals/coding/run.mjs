@@ -218,6 +218,13 @@ function check(id, cond, detail = "") {
     ).action?.tool === "write_file",
   );
   check(
+    "tool-repair-openai-truncated",
+    normalizeAgentAction(
+      null,
+      '{"name": "write_file", "arguments": {"path": "package.json", "content": "{\\"name\\":\\"t\\",',
+    ).action?.tool === "write_file",
+  );
+  check(
     "checkpoint-q",
     isCheckpointQuestion("What did we learn last turn from the checkpoint?"),
   );

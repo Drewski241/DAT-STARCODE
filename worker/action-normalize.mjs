@@ -75,6 +75,38 @@ export function recoverActionFromText(text) {
     }
   }
 
+  // OpenAI-style / truncated: {"name":"write_file","arguments":{"path":"..."
+  // (7B often dumps this in content instead of native tool_calls, and truncates)
+  const openaiName = raw.match(
+    /"name"\s*:\s*"(list_files|search_files|read_file|write_file|str_replace|run|npm_install|start_server|stop_server|server_logs|check_url|screenshot_url|web_search|fetch_url|[a-z0-9_]+)"/i,
+  );
+  if (openaiName) {
+    const tool = normalizeToolName(openaiName[1]);
+    if (tool) {
+      /** @type {Record<string, unknown>} */
+      const args = {};
+      const pathM = raw.match(/"path"\s*:\s*"([^"\\]+)"/);
+      if (pathM) args.path = pathM[1];
+      const queryM = raw.match(/"query"\s*:\s*"([^"\\]+)"/);
+      if (queryM) args.query = queryM[1];
+      const urlM = raw.match(/"url"\s*:\s*"([^"\\]+)"/);
+      if (urlM) args.url = urlM[1];
+      // Best-effort content recovery (may be truncated mid-string)
+      const contentM = raw.match(/"content"\s*:\s*"((?:\\.|[^"\\])*)"?/);
+      if (contentM) {
+        try {
+          args.content = JSON.parse(`"${contentM[1]}"`);
+        } catch {
+          args.content = contentM[1]
+            .replace(/\\n/g, "\n")
+            .replace(/\\"/g, '"')
+            .replace(/\\\\/g, "\\");
+        }
+      }
+      return { tool, args };
+    }
+  }
+
   // Common prose: write_file path=foo content=...
   const writeEq = raw.match(
     /write_file\s+(?:path\s*=\s*)?["`]?([^\s"`]+)["`]?/i,

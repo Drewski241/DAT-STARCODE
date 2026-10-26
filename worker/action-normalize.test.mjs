@@ -59,4 +59,13 @@ const recovered = recoverActionFromText(
 );
 assert.equal(recovered?.tool, "search_files");
 
+{
+  // Truncated OpenAI-style dump from live 7B hillclimb
+  const truncated = recoverActionFromText(
+    '{"name": "write_file", "arguments": {"path": "package.json", "content": "{\\"name\\":\\"my-project\\",\\"version\\":\\"1.0.0\\",',
+  );
+  assert.equal(truncated?.tool, "write_file");
+  assert.equal(truncated?.args?.path, "package.json");
+}
+
 console.log("action-normalize.test.mjs ok");

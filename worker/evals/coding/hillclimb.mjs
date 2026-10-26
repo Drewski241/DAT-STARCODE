@@ -269,7 +269,9 @@ async function liveOneShot(traceName) {
             "You are DAT STARCODER. Call exactly one tool to make progress. " +
             "Prefer str_replace for small edits, write_file for new files, " +
             "search_files before editing unfamiliar code, screenshot_url for index.html. " +
-            'Never emit tool name undefined. JSON fallback: {"tool":"...","args":{...}}',
+            'Never emit tool name undefined. Prefer native tool_calls. ' +
+            'If you must use JSON text, use {"tool":"write_file","args":{"path":"...","content":"..."}} ' +
+            "(keys tool/args — not name/arguments).",
         },
         {
           role: "user",
