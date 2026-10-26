@@ -14,7 +14,7 @@ import {
   preparePublicGithubWorkspace,
 } from "./github.mjs";
 import { puzzleHashWithCdv } from "./cdv.mjs";
-import { inferGoal } from "./goals.mjs";
+import { inferGoalForTurn } from "./goals.mjs";
 import { ensurePuzzleHashDocumented } from "./hash-doc.mjs";
 import { verifyWorkspaceFiles } from "./verify.mjs";
 import { clvmVerify } from "./clvm-verify.mjs";
@@ -917,10 +917,9 @@ export async function runAgentJob({
       }
     }
 
-    // Include continue context so "summarize the puzzles" stays hard-domain.
-    const goal = inferGoal(
-      [job.prompt, job.context].filter(Boolean).join("\n"),
-    );
+    // Prompt-first goal inference — scrub file dumps so seeded .clsp cannot
+    // flip a screenshot / package.json turn into ChiaLisp.
+    const goal = inferGoalForTurn(job.prompt || "", job.context || "");
     const checkpointQuestionEarly = isCheckpointQuestion(job.prompt || "");
     const hardTask = goal.hard;
     // Memory / checkpoint questions must stay on the coding workspace path
@@ -1643,6 +1642,13 @@ export async function runAgentJob({
         if (shot.ok) {
           lastErrorKind = null;
           lastErrorSnippet = null;
+          if (
+            /\bscreenshot_url\b/i.test(job.prompt || "") &&
+            /\bthen done\b|\bdone\.\s*$/i.test(job.prompt || "")
+          ) {
+            observation +=
+              '\n\nNEXT: screenshot captured. Reply {"done":true,"message":"Preview screenshot saved under .datstarcoder/ — open Preview screenshot in Studio."}';
+          }
         }
       } else if (tool === "run") {
         const cmd = String(args.command || "true");

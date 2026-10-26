@@ -25,6 +25,81 @@ const PROD_DEBUG_HINT =
 const MULTI_FILE_HINT =
   /\b(refactor|multi-?file|across\s+files|next\.js|react\s+app|migrate|typescript\s+project)\b/i;
 
+/** User prompt clearly wants coding/web — never let continue-context .clsp files override. */
+const PROMPT_LOCKS_CODING =
+  /\b(screenshot_url|index\.html|package\.json|str_replace|write_file|npm\s+test|http-server|preview|heading|styles\.css|utils\.ts)\b/i;
+
+/**
+ * Strip bulky file dumps / prior RESULT from continue context before goal inference.
+ * Keeps prior user request + checkpoint summary only.
+ * @param {string} context
+ */
+export function goalContextSnippet(context) {
+  const raw = String(context || "");
+  if (!raw.trim()) return "";
+  const parts = [];
+  const prior = raw.match(
+    /### Prior user request\n([\s\S]*?)(?=\n### |\n## |$)/i,
+  );
+  if (prior) parts.push(prior[1].trim());
+  const durable = raw.match(
+    /### Durable project goal\n([\s\S]*?)(?=\n### |\n## |$)/i,
+  );
+  if (durable) parts.push(durable[1].trim());
+  // Never feed "### Prior workspace files" or full RESULT into goal inference —
+  // seeded .clsp / puzzle docs poison soft coding turns into ChiaLisp.
+  return parts.join("\n").slice(0, 2_000);
+}
+
+/**
+ * Infer goal for a worker turn: prompt wins; context is weak and file-scrubbed.
+ * @param {string} prompt
+ * @param {string} [context]
+ */
+export function inferGoalForTurn(prompt, context) {
+  const p = String(prompt || "");
+  const fromPrompt = inferGoal(p);
+  if (PROMPT_LOCKS_CODING.test(p) && fromPrompt.id === "coding") {
+    return fromPrompt;
+  }
+  if (
+    fromPrompt.id === "coding" ||
+    fromPrompt.id === "secure_treasury" ||
+    fromPrompt.id === "mtt_pool" ||
+    fromPrompt.id === "chialisp"
+  ) {
+    // Strong prompt match — do not let leftover .clsp context upgrade/downgrade.
+    if (fromPrompt.id !== "general") return fromPrompt;
+  }
+  if (PROMPT_LOCKS_CODING.test(p)) {
+    // Screenshot / package.json edits must stay coding even if prompt missed CODING_HINT.
+    return {
+      id: "coding",
+      label: "Coding task",
+      hard: false,
+      playbooks: ["web-app.md"],
+      wantCdv: false,
+    };
+  }
+  const snippet = goalContextSnippet(context);
+  if (!snippet) return fromPrompt;
+  const fromCtx = inferGoal(`${p}\n${snippet}`);
+  // Context may clarify short follow-ups ("change the heading") → coding,
+  // but must not flip a coding/web prompt into ChiaLisp via seeded puzzles.
+  if (
+    fromPrompt.id === "coding" &&
+    (fromCtx.id === "chialisp" ||
+      fromCtx.id === "secure_treasury" ||
+      fromCtx.id === "mtt_pool")
+  ) {
+    return fromPrompt;
+  }
+  if (fromPrompt.id === "general" && fromCtx.id !== "general") {
+    return fromCtx;
+  }
+  return fromPrompt;
+}
+
 /**
  * @param {string} prompt
  * @returns {{ id: string, label: string, hard: boolean, playbooks: string[], wantCdv: boolean }}

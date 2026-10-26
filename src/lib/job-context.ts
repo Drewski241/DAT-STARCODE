@@ -28,10 +28,21 @@ export async function buildContinueContext(
   ];
 
   if (parent.result) {
+    let resultText = parent.result;
+    // Drop ChiaLisp verification footers from soft coding continuations so
+    // the model doesn't chase .clsp on a screenshot / HTML follow-up.
+    if (
+      !/\b(\.clsp|chialisp|clvm|treasury|mtt_pool)\b/i.test(parent.prompt || "")
+    ) {
+      resultText = resultText
+        .replace(/\n## Verification failed[\s\S]*$/i, "")
+        .replace(/\n## Puzzle hash[\s\S]*$/i, "")
+        .replace(/\n## Spend fixtures[\s\S]*$/i, "");
+    }
     const clipped =
-      parent.result.length > 8_000
-        ? `${parent.result.slice(0, 8_000)}\n…(truncated)`
-        : parent.result;
+      resultText.length > 8_000
+        ? `${resultText.slice(0, 8_000)}\n…(truncated)`
+        : resultText;
     parts.push("### Prior agent result", clipped, "");
   }
 
@@ -74,6 +85,11 @@ export async function buildContinueContext(
     }
   }
 
+  const promptLooksChia =
+    /\b(\.clsp|chialisp|clvm|treasury|mtt_pool|puzzle\s*hash)\b/i.test(
+      parent.prompt || "",
+    );
+
   const ranked = files
     .map((f) => f.path)
     .filter(
@@ -88,6 +104,11 @@ export async function buildContinueContext(
       if (/(^|\/)(package\.json|index\.html|PLAN\.md)$/i.test(p)) score += 40;
       if (/\.(tsx?|jsx?|mjs|css)$/i.test(p)) score += 10;
       if (/RESULT\.md$/i.test(p)) score -= 20;
+      // Seeded puzzle templates poison soft coding follow-ups — demote unless
+      // the prior turn was already ChiaLisp / treasury work.
+      if (/\.clsp$/i.test(p) || /(^|\/)puzzles\//i.test(p)) {
+        score += promptLooksChia ? 20 : -80;
+      }
       return { p, score, i };
     })
     .sort((a, b) => b.score - a.score || a.i - b.i)

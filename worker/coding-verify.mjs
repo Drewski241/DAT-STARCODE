@@ -5,6 +5,22 @@ import { promises as fs } from "fs";
 import path from "path";
 
 /**
+ * Jest/CRA watch-mode needs --watchAll=false; plain node/python scripts must not
+ * receive that flag (node -e "…" → "bad option: --watchAll=false").
+ * @param {string} script
+ */
+export function testCommandForScript(script) {
+  const s = String(script || "");
+  const needsWatchOff =
+    /\b(react-scripts|cra)\b/i.test(s) ||
+    /\bjest\b/i.test(s) ||
+    /\bvitest\b/i.test(s) ||
+    /\b--watch\b/i.test(s);
+  if (needsWatchOff) return "npm test -- --watchAll=false";
+  return "npm test";
+}
+
+/**
  * @param {unknown} pkg
  * @returns {string[]}
  */
@@ -16,7 +32,7 @@ export function pickVerifyCommands(pkg) {
   /** @type {string[]} */
   const cmds = [];
   // Prefer fast correctness gates first.
-  if (scripts.test) cmds.push("npm test -- --watchAll=false");
+  if (scripts.test) cmds.push(testCommandForScript(String(scripts.test)));
   else if (scripts["test:ci"]) cmds.push("npm run test:ci");
   else if (scripts["test:unit"]) cmds.push("npm run test:unit");
 

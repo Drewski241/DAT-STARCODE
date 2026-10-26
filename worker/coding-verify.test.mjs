@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import {
   pickVerifyCommands,
+  testCommandForScript,
   codingWorkspaceWorthVerify,
   verifyObservationOk,
 } from "./coding-verify.mjs";
@@ -10,6 +11,17 @@ assert.deepEqual(
     scripts: { test: "vitest", build: "next build", lint: "eslint ." },
   }),
   ["npm test -- --watchAll=false", "npm run build"],
+);
+
+assert.equal(
+  testCommandForScript('node -e "process.exit(1)"'),
+  "npm test",
+);
+assert.deepEqual(
+  pickVerifyCommands({
+    scripts: { test: 'node -e "process.exit(1)"', dev: "http-server" },
+  }),
+  ["npm test"],
 );
 
 assert.deepEqual(pickVerifyCommands({ scripts: { lint: "eslint ." } }), [

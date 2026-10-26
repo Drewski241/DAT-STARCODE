@@ -10,6 +10,7 @@ import path from "path";
 import { applyStrReplace } from "../../str-replace.mjs";
 import {
   pickVerifyCommands,
+  testCommandForScript,
   codingWorkspaceWorthVerify,
   planCodingVerify,
   verifyObservationOk,
@@ -20,7 +21,7 @@ import {
   serverLogs,
   stopBackground,
 } from "../../process-supervisor.mjs";
-import { inferGoal } from "../../goals.mjs";
+import { inferGoal, inferGoalForTurn, goalContextSnippet } from "../../goals.mjs";
 import { classifyErrorLog } from "../../error-classify.mjs";
 import { formatToolSpecsForPrompt } from "../../tool-specs.mjs";
 import { toOllamaTools, firstToolCallAction, trimMessagesForContext } from "../../ollama-tools.mjs";
@@ -80,6 +81,36 @@ function check(id, cond, detail = "") {
     "What did we learn last turn? Summarize open bugs from the checkpoint.",
   );
   check("goal-checkpoint-q", memory.id === "coding");
+
+  const poisonedCtx = [
+    "### Prior user request",
+    "Make an index.html",
+    "",
+    "### Prior workspace files (continue from these)",
+    "#### File: puzzles/vault.clsp",
+    "```",
+    "(mod (AGG_SIG_ME ...)",
+    "```",
+  ].join("\n");
+  const shotTurn = inferGoalForTurn(
+    "Use screenshot_url on the workspace index.html preview. Then done.",
+    poisonedCtx,
+  );
+  check(
+    "goal-screenshot-not-chia",
+    shotTurn.id === "coding" && shotTurn.wantCdv === false,
+  );
+  check(
+    "goal-context-scrub",
+    !/\.clsp/.test(goalContextSnippet(poisonedCtx)),
+  );
+  check(
+    "verify-node-e-no-watch",
+    testCommandForScript('node -e "process.exit(1)"') === "npm test" &&
+      pickVerifyCommands({
+        scripts: { test: 'node -e "process.exit(1)"' },
+      })[0] === "npm test",
+  );
 }
 
 // str_replace uniqueness
