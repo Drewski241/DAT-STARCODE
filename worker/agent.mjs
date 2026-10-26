@@ -45,6 +45,7 @@ import {
   loadCheckpoint,
   saveCheckpoint,
   formatCheckpointForPrompt,
+  mergeLongHorizon,
 } from "./project-memory.mjs";
 import {
   shouldEarlyExit,
@@ -78,6 +79,17 @@ import {
   deriveProjectGoal,
   formatProjectGoalForPrompt,
 } from "./project-goals.mjs";
+import {
+  planLooksComplete,
+  shouldBlockEditWithoutPlan,
+  shouldRejectDoneWithoutPlan,
+  planGateMessage,
+} from "./plan-gate.mjs";
+import { searchWorkspace } from "./workspace-retrieve.mjs";
+import {
+  summarizeWorkspaceDiff,
+  formatDiffForPrompt,
+} from "./diff-summary.mjs";
 
 const MAX_STEPS = Number(process.env.AGENT_MAX_STEPS || 12);
 const HARD_TASK_STEPS = Number(process.env.AGENT_HARD_TASK_STEPS || 40);
@@ -101,6 +113,8 @@ function toolHeadline(tool, args = {}) {
   switch (String(tool || "")) {
     case "list_files":
       return "Listing workspace files";
+    case "search_files":
+      return `Searching “${String(a.query || "").slice(0, 64)}”`;
     case "read_file":
       return `Reading ${a.path || "file"}`;
     case "write_file":
@@ -176,7 +190,9 @@ const SHOPPING_HINT =
 const QUALITY_RULES = `
 Quality rules:
 - Infer the user's end goal from a short prompt; use the domain playbook(s) below — do not wait for a novel-length spec.
-- For hard goals: FIRST write_file PLAN.md (Goal / Done when / Files), then implement.
+- For hard goals: FIRST write_file PLAN.md (Goal / Done when / Files). Other edits are blocked until PLAN.md is complete.
+- Use search_files before editing unfamiliar multi-file repos.
+- Do not {"done":true} on coding turns while package.json test/build still fails — fix or explain the blocker.
 - Prefer str_replace for surgical edits to existing files; write_file for new files or intentional full rewrites.
 - For web apps: npm_install when deps missing; start_server for dev servers; server_logs + check_url / screenshot_url to confirm; never xdg-open.
 - Never claim you deleted or fixed a file unless you verified with list_files / read_file after.
@@ -526,8 +542,9 @@ function agentSystem(job, github, githubClone, extras = {}) {
       : "",
     "On every turn respond with ONLY one JSON object (optionally in a ```json fence):",
     "",
-    '1) Call a tool: {"thought":"...","tool":"list_files"|"read_file"|"write_file"|"str_replace"|"run"|"npm_install"|"start_server"|"stop_server"|"server_logs"|"check_url"|"screenshot_url"|"web_search"|"fetch_url"|"clvm_verify"|"spend_check"|"puzzle_hash","args":{...}}',
+    '1) Call a tool: {"thought":"...","tool":"list_files"|"search_files"|"read_file"|"write_file"|"str_replace"|"run"|"npm_install"|"start_server"|"stop_server"|"server_logs"|"check_url"|"screenshot_url"|"web_search"|"fetch_url"|"clvm_verify"|"spend_check"|"puzzle_hash","args":{...}}',
     '   - list_files args: {}',
+    '   - search_files args: {"query":"symbol or error text","glob":"optional/*.ts"}',
     '   - read_file args: {"path":"relative/path"}',
     '   - write_file args: {"path":"relative/path","content":"full file contents"}',
     '   - str_replace args: {"path":"relative/path","oldText":"exact snippet","newText":"replacement","replaceAll":false}',
@@ -822,6 +839,9 @@ export async function runAgentJob({
     if (onEvent) await onEvent({ type, message, data });
   };
 
+  let activeModel = model;
+  const HARD_CODING_MODEL =
+    process.env.AGENT_HARD_CODING_MODEL?.trim() || "qwen2.5-coder:14b";
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "starcoder-"));
   let githubBranch = null;
   let githubPrUrl = null;
@@ -829,18 +849,22 @@ export async function runAgentJob({
   /** @type {"oauth"|"commands"|null} */
   let githubPath = null;
   try {
-    await emit("status", `Starting · ${model}`);
+    await emit("status", `Starting · ${activeModel}`);
     await emit("status", "Loading project workspace…");
     const pulled = await pullWorkspace(job);
     /** Paths that existed in Studio before this turn — used to detect deletes. */
     const pulledPaths = [];
+    /** @type {{ path: string, content: string }[]} */
+    const pulledSnapshot = [];
     for (const f of pulled.files || []) {
       const safe = safeRel(f.path);
       if (!safe) continue;
       pulledPaths.push(safe);
+      const content = String(f.content ?? "");
+      pulledSnapshot.push({ path: safe, content });
       const full = path.join(root, safe);
       await fs.mkdir(path.dirname(full), { recursive: true });
-      await fs.writeFile(full, f.content ?? "", "utf8");
+      await fs.writeFile(full, content, "utf8");
     }
 
     if (github) {
@@ -973,6 +997,23 @@ export async function runAgentJob({
     if (agentsMd) log(`[agent] loaded repo agent instructions`);
 
     const checkpoint = isGeneral ? null : await loadCheckpoint(root);
+    const priorFailStreak = Number(checkpoint?.verifyFailStreak || 0);
+    if (
+      !isGeneral &&
+      priorFailStreak >= 2 &&
+      /qwen2\.5-coder:7b$/i.test(activeModel) &&
+      HARD_CODING_MODEL &&
+      HARD_CODING_MODEL !== activeModel
+    ) {
+      log(
+        `[agent] escalate model ${activeModel} → ${HARD_CODING_MODEL} (verifyFailStreak=${priorFailStreak})`,
+      );
+      await emit(
+        "status",
+        `Escalating model · ${priorFailStreak} verify fails → ${HARD_CODING_MODEL}`,
+      );
+      activeModel = HARD_CODING_MODEL;
+    }
     const checkpointMd = formatCheckpointForPrompt(checkpoint);
     if (checkpointMd) {
       log(`[agent] loaded project checkpoint`);
@@ -1027,6 +1068,17 @@ export async function runAgentJob({
     let lastCommand = checkpoint?.lastCommand || null;
     let lastErrorKind = checkpoint?.lastErrorKind || null;
     let lastErrorSnippet = checkpoint?.lastErrorSnippet || null;
+    let planPresent = false;
+    let planComplete = false;
+    try {
+      const planText = await fs.readFile(path.join(root, "PLAN.md"), "utf8");
+      planPresent = true;
+      planComplete = planLooksComplete(planText);
+    } catch {
+      /* no plan yet */
+    }
+    /** @type {string|null} */
+    let codingVerifyStatus = null;
     /** @type {Set<string>} */
     const knownUrls = new Set();
 
@@ -1172,7 +1224,7 @@ export async function runAgentJob({
       try {
         const reply = await ollamaChat(
           ollamaUrl,
-          model,
+          activeModel,
           messages,
           async (chunk, draft) => {
             await emit("token", chunk, {
@@ -1235,6 +1287,64 @@ export async function runAgentJob({
       }
 
       if (action.done) {
+        if (
+          !isGeneral &&
+          !resultOnly &&
+          stepsLeft > 1 &&
+          shouldRejectDoneWithoutPlan({
+            hard: hardTask,
+            goalId: goal.id,
+            planPresent,
+            planComplete,
+            resultOnly,
+          })
+        ) {
+          messages.push({
+            role: "user",
+            content: planGateMessage({ planPresent, planComplete }),
+          });
+          continue;
+        }
+        if (
+          !isGeneral &&
+          !resultOnly &&
+          goal.id === "coding" &&
+          stepsLeft > 1
+        ) {
+          try {
+            const plan = await planCodingVerify(root);
+            if (plan.hasPackage && plan.commands.length) {
+              await emit("status", `Pre-done verify · ${plan.commands[0]}`);
+              let failedObs = null;
+              for (const cmd of plan.commands) {
+                const obs = await runCommand(root, cmd, {
+                  timeoutMs: VERIFY_TIMEOUT_MS,
+                });
+                if (!verifyObservationOk(obs)) {
+                  failedObs = obs;
+                  lastCommand = cmd;
+                  lastErrorKind = classifyErrorLog(obs).kind;
+                  lastErrorSnippet = String(obs).slice(0, 1500);
+                  codingVerifyStatus = "failed";
+                  break;
+                }
+              }
+              if (failedObs) {
+                messages.push({
+                  role: "user",
+                  content:
+                    `Not done — coding verify failed on \`${lastCommand}\`.\n\`\`\`\n${String(failedObs).slice(0, 1000)}\n\`\`\`\nFix with str_replace / npm_install / run, then done.`,
+                });
+                continue;
+              }
+              codingVerifyStatus = "passed";
+            }
+          } catch (err) {
+            log(
+              `[agent] pre-done verify: ${err instanceof Error ? err.message : String(err)}`,
+            );
+          }
+        }
         const mustKeepResearching =
           isGeneral &&
           !researchReady() &&
@@ -1279,9 +1389,28 @@ export async function runAgentJob({
       let observation = "";
       if (tool === "list_files") {
         observation = await toolList(root);
+      } else if (tool === "search_files") {
+        const result = await searchWorkspace(root, String(args.query || ""), {
+          glob: args.glob ? String(args.glob) : undefined,
+        });
+        observation = JSON.stringify(result, null, 2);
       } else if (tool === "read_file") {
         observation = await toolRead(root, args.path);
       } else if (tool === "write_file") {
+        if (
+          shouldBlockEditWithoutPlan({
+            hard: hardTask,
+            wantCdv: goal.wantCdv,
+            goalId: goal.id,
+            resultOnly,
+            planPresent,
+            planComplete,
+            tool: "write_file",
+            path: String(args.path || ""),
+          })
+        ) {
+          observation = planGateMessage({ planPresent, planComplete });
+        } else {
         observation = await toolWrite(root, args.path, args.content);
         // Nudge + precompute hash as soon as a .clsp lands (don't burn steps).
         if (hasCdv && /\.clsp$/i.test(String(args.path || ""))) {
@@ -1292,8 +1421,37 @@ export async function runAgentJob({
               `\n\nNEXT: write_file docs/PUZZLE_HASH.md with section:\n## Puzzle hash\n\n\`${result.puzzleHash}\`\n(no 0x prefix)${result.curried ? " — curried with demo args; re-run puzzle_hash with real curryArgs for mainnet." : ""}. Then done.`;
           }
         }
+          if (/(^|\/)PLAN\.md$/i.test(String(args.path || ""))) {
+            planPresent = true;
+            planComplete = planLooksComplete(String(args.content || ""));
+          }
+        }
       } else if (tool === "str_replace") {
-        observation = await toolStrReplace(root, args.path, args);
+        if (
+          shouldBlockEditWithoutPlan({
+            hard: hardTask,
+            wantCdv: goal.wantCdv,
+            goalId: goal.id,
+            resultOnly,
+            planPresent,
+            planComplete,
+            tool: "str_replace",
+            path: String(args.path || ""),
+          })
+        ) {
+          observation = planGateMessage({ planPresent, planComplete });
+        } else {
+          observation = await toolStrReplace(root, args.path, args);
+          if (/(^|\/)PLAN\.md$/i.test(String(args.path || ""))) {
+            try {
+              const planText = await fs.readFile(path.join(root, "PLAN.md"), "utf8");
+              planPresent = true;
+              planComplete = planLooksComplete(planText);
+            } catch {
+              /* ignore */
+            }
+          }
+        }
       } else if (tool === "npm_install") {
         const pkgs = String(args.packages || args.package || "").trim();
         const cmd = pkgs ? `npm install ${pkgs}` : "npm install";
@@ -1500,7 +1658,7 @@ export async function runAgentJob({
         try {
           const earlyReply = await ollamaChat(
             ollamaUrl,
-            model,
+            activeModel,
             [
               ...messages,
               {
@@ -1548,7 +1706,14 @@ export async function runAgentJob({
           /(^|\/)index\.html$/i.test(p),
         )
           || (await fs.access(path.join(root, "index.html")).then(() => "index.html").catch(() => null));
-        await saveCheckpoint(root, {
+        const prevStreak = Number(checkpoint?.verifyFailStreak || 0);
+        const verifyFailStreak =
+          codingVerifyStatus === "failed"
+            ? prevStreak + 1
+            : codingVerifyStatus === "passed"
+              ? 0
+              : prevStreak;
+        const memoryPatch = mergeLongHorizon(checkpoint, {
           goal: goal.id,
           projectGoal,
           lastCommand,
@@ -1556,10 +1721,26 @@ export async function runAgentJob({
           lastErrorSnippet,
           filesTouched: filesTouched.slice(-40),
           previewPath: previewPath || checkpoint?.previewPath || null,
+          verifyStatus: codingVerifyStatus,
+          verifyFailStreak,
           notes: lastErrorKind
             ? `Last turn classified as ${lastErrorKind}`
             : checkpoint?.notes || null,
+          decisions: planComplete
+            ? [`Plan locked (${new Date().toISOString().slice(0, 10)})`]
+            : [],
+          neverDo: [
+            "xdg-open / desktop browser on worker",
+            ...(lastErrorKind === "benign_noise"
+              ? ["Treat Gtk/xdg stderr as a build failure"]
+              : []),
+          ],
+          openBugs:
+            codingVerifyStatus === "failed" && lastCommand
+              ? [`Verify failed: ${lastCommand}`]
+              : [],
         });
+        await saveCheckpoint(root, memoryPatch);
         log(`[agent] saved checkpoint (${filesTouched.length} files touched)`);
       } catch (err) {
         log(
@@ -1573,7 +1754,7 @@ export async function runAgentJob({
       try {
         await emit("status", "Synthesizing answer from research…");
         messages.push({ role: "user", content: finishNudge() });
-        const synth = await ollamaChat(ollamaUrl, model, messages, undefined, {
+        const synth = await ollamaChat(ollamaUrl, activeModel, messages, undefined, {
           tools: null,
         });
         const content = synth.content || "";
@@ -1794,6 +1975,30 @@ export async function runAgentJob({
     let files = isGeneral ? [] : await collectLocalFiles(root);
     if (!isGeneral) {
       files = await ensurePreviewFilesListed(root, files);
+      try {
+        const diff = summarizeWorkspaceDiff(pulledSnapshot, files);
+        const diffBody = `${JSON.stringify(diff, null, 2)}\n`;
+        await fs.mkdir(path.join(root, ".datstarcoder"), { recursive: true });
+        await fs.writeFile(
+          path.join(root, ".datstarcoder/diff.json"),
+          diffBody,
+          "utf8",
+        );
+        if (!files.some((f) => f.path === ".datstarcoder/diff.json")) {
+          files.push({ path: ".datstarcoder/diff.json", content: diffBody });
+        }
+        if (diff.changed.length || diff.added.length || diff.removed.length) {
+          finalMessage += `\n\n${formatDiffForPrompt(diff)}\n`;
+          for (const snip of diff.snippets.slice(0, 4)) {
+            const fence = "```";
+            finalMessage += `\n### Diff · ${snip.path}\n${fence}\n${snip.patch}\n${fence}\n`;
+          }
+        }
+      } catch (err) {
+        log(
+          `[agent] diff summary: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
     }
 
     // Drop leftover root stubs that fail sibling CREATE_COIN checks when the
@@ -1925,6 +2130,7 @@ export async function runAgentJob({
               }
             }
             if (failures.length) {
+              codingVerifyStatus = "failed";
               finalMessage += [
                 "",
                 "## Coding verify failed",
@@ -1936,6 +2142,7 @@ export async function runAgentJob({
               ].join("\n");
               await emit("log", "Coding verify failed");
             } else {
+              codingVerifyStatus = "passed";
               finalMessage += [
                 "",
                 "## Coding verify",
@@ -1943,6 +2150,23 @@ export async function runAgentJob({
                 `Passed: ${plan.commands.map((c) => `\`${c}\``).join(", ")}`,
               ].join("\n");
               await emit("status", "Coding verify passed");
+            }
+            try {
+              const prevStreak = Number(checkpoint?.verifyFailStreak || 0);
+              await saveCheckpoint(root, {
+                verifyStatus: codingVerifyStatus,
+                verifyFailStreak:
+                  codingVerifyStatus === "failed"
+                    ? prevStreak + 1
+                    : codingVerifyStatus === "passed"
+                      ? 0
+                      : prevStreak,
+                lastCommand,
+                lastErrorKind,
+                lastErrorSnippet,
+              });
+            } catch {
+              /* non-fatal */
             }
           }
         } catch (err) {
@@ -2002,7 +2226,7 @@ export async function runAgentJob({
     const repoName =
       github?.repoFullName || githubClone?.fullName || null;
     const header = [
-      `Model: ${job.modelRequested || "auto"} → ${model}`,
+      `Model: ${job.modelRequested || "auto"} → ${activeModel}`,
       job.modelReason ? `Reason: ${job.modelReason}` : "",
       job.projectId ? `Project: ${job.projectId}` : "",
       repoName ? `GitHub: ${repoName}` : "",

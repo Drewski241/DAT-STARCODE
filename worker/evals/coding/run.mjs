@@ -51,6 +51,27 @@ function check(id, cond, detail = "") {
     "Fix this\n\nsrc/a.ts(1,1): error TS2322: Type 'string' is not assignable",
   );
   check("goal-ts-hard", ts.hard === true && ts.wantCdv === false);
+
+  const deploy = inferGoal("Redeploy to Amplify on customer-workspaces");
+  check(
+    "goal-deploy",
+    deploy.id === "coding" &&
+      deploy.hard === true &&
+      deploy.playbooks.includes("deploy-amplify.md"),
+  );
+
+  const prod = inferGoal(
+    "Production WalletConnect offline CredentialProviderError worker 401",
+  );
+  check(
+    "goal-prod-debug",
+    prod.id === "coding" &&
+      prod.hard === true &&
+      prod.playbooks.includes("prod-debug.md"),
+  );
+
+  const multi = inferGoal("Refactor this Next.js react app across files");
+  check("goal-multi-hard", multi.id === "coding" && multi.hard === true);
 }
 
 // str_replace uniqueness
@@ -131,7 +152,68 @@ function check(id, cond, detail = "") {
     "tool-specs",
     /str_replace/.test(spec) &&
       /start_server/.test(spec) &&
-      /screenshot_url/.test(spec),
+      /screenshot_url/.test(spec) &&
+      /search_files/.test(spec),
+  );
+}
+
+{
+  const { planLooksComplete, shouldBlockEditWithoutPlan } = await import(
+    "../../plan-gate.mjs"
+  );
+  check(
+    "plan-gate-complete",
+    planLooksComplete("# Plan\n## Goal\nx\n## Done when\ny\n## Files\n- a.ts\n") ===
+      true,
+  );
+  check(
+    "plan-gate-block",
+    shouldBlockEditWithoutPlan({
+      hard: true,
+      wantCdv: false,
+      goalId: "coding",
+      planPresent: false,
+      planComplete: false,
+      tool: "write_file",
+      path: "src/a.ts",
+    }) === true,
+  );
+}
+
+{
+  const { summarizeWorkspaceDiff } = await import("../../diff-summary.mjs");
+  const diff = summarizeWorkspaceDiff(
+    [{ path: "a.ts", content: "1\n" }],
+    [
+      { path: "a.ts", content: "2\n" },
+      { path: "b.ts", content: "x\n" },
+    ],
+  );
+  check(
+    "diff-summary",
+    diff.changed.includes("a.ts") && diff.added.includes("b.ts"),
+  );
+}
+
+{
+  const { mergeLongHorizon, formatCheckpointForPrompt } = await import(
+    "../../project-memory.mjs"
+  );
+  const merged = mergeLongHorizon(
+    { decisions: ["keep tests"], verifyFailStreak: 1 },
+    { decisions: ["ship PLAN.md"], neverDo: ["xdg-open"], verifyFailStreak: 2 },
+  );
+  check(
+    "long-horizon-merge",
+    merged.decisions.includes("keep tests") &&
+      merged.decisions.includes("ship PLAN.md") &&
+      merged.neverDo.includes("xdg-open"),
+  );
+  check(
+    "long-horizon-format",
+    /VERIFY_FAIL_STREAK/.test(
+      formatCheckpointForPrompt({ verifyFailStreak: 2, goal: "coding" }),
+    ),
   );
 }
 

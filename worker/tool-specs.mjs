@@ -12,6 +12,11 @@ export const CODING_TOOL_SPECS = [
     args: {},
   },
   {
+    name: "search_files",
+    description: "Search workspace file contents (rg or JS fallback)",
+    args: { query: "string", glob: "string?" },
+  },
+  {
     name: "read_file",
     description: "Read a UTF-8 workspace file",
     args: { path: "string" },

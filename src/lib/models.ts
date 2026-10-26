@@ -22,7 +22,7 @@ export const MODEL_OPTIONS: ModelOption[] = [
     kind: "auto",
     ollamaTag: null,
     blurb:
-      "Picks from your prompt (coding → Coder 7B; niche / hard languages → Coder 14B; shopping Q&A → Qwen 7B)",
+      "Picks from your prompt (simple coding → 7B; hard/error/multi-file/Next → 14B; shopping Q&A → Qwen 7B)",
   },
   {
     id: "qwen2.5-coder:7b",
@@ -96,11 +96,22 @@ export function resolveModel(
   }
 
   const goal = inferGoal(prompt);
-  if (goal.hard) {
+  const escalate =
+    /\b(next\.js|refactor|typescript|multi-?file|playwright|hydrate|monorepo)\b/i.test(
+      prompt,
+    ) ||
+    /ERROR_CLASS:\s*(typescript|next_build|deps_missing)/i.test(prompt) ||
+    /Coding verify failed|VERIFY_FAIL_STREAK:\s*[2-9]|verifyFailStreak["']?\s*:\s*[2-9]/i.test(
+      prompt,
+    );
+
+  if (goal.hard || (goal.id === "coding" && escalate)) {
     return {
       requested: "auto",
       resolved: DEFAULT_HARD_CODING_MODEL,
-      reason: `Auto: hard domain (${goal.label}) → ${DEFAULT_HARD_CODING_MODEL}`,
+      reason: goal.hard
+        ? `Auto: hard domain (${goal.label}) → ${DEFAULT_HARD_CODING_MODEL}`
+        : `Auto: complex coding cues → ${DEFAULT_HARD_CODING_MODEL}`,
     };
   }
 

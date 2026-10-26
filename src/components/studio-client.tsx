@@ -8,6 +8,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
 import { SiteHeader } from "@/components/site-header";
 import { priceJob } from "@/lib/job-pricing";
+import { inferGoal } from "@/lib/goals";
 import { DEFAULT_MODEL_ID, MODEL_OPTIONS, resolveModel } from "@/lib/models";
 import type { JobEvent } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -93,6 +94,13 @@ export function StudioClient() {
     dataUrl: string;
     capturedAt?: string;
   } | null>(null);
+  const [diffPreview, setDiffPreview] = useState<{
+    summary: string;
+    added: string[];
+    changed: string[];
+    removed: string[];
+    snippets: { path: string; patch: string }[];
+  } | null>(null);
   const [panel, setPanel] = useState<"output" | "workspace">("output");
   const [githubConfigured, setGithubConfigured] = useState(false);
   const [repos, setRepos] = useState<GithubRepo[]>([]);
@@ -113,6 +121,7 @@ export function StudioClient() {
     setPreviewPath(null);
     setPreviewContent(null);
     setShotPreview(null);
+    setDiffPreview(null);
     setHtmlPreview(false);
     setLiveEvents([]);
     setLiveDraft("");
@@ -539,16 +548,26 @@ export function StudioClient() {
       setPreviewPath(null);
       setPreviewContent(null);
       setShotPreview(null);
+      setDiffPreview(null);
       setHtmlPreview(false);
       return;
     }
     void loadWorkspace(selectedId);
   }, [selectedId, jobs, loadWorkspace]);
 
+  function applyFixFromFailure(blob: string | null) {
+    if (!blob) return;
+    setPrompt(
+      `Fix this error in the project workspace.\n\n\`\`\`\n${blob.slice(0, 6000)}\n\`\`\`\n\nClassify the failure, open the cited file, apply a minimal fix, re-run the same command, then done.`,
+    );
+    setPanel("output");
+  }
+
   async function openFile(jobId: string, filePath: string) {
     setPreviewPath(filePath);
     setPreviewContent("Loading…");
     setShotPreview(null);
+    setDiffPreview(null);
     setHtmlPreview(false);
     setPanel("workspace");
     const res = await fetch(
@@ -612,6 +631,47 @@ export function StudioClient() {
       setShotPreview(null);
       setPreviewContent(
         err instanceof Error ? err.message : "Could not load screenshot",
+      );
+    }
+  }
+
+
+  async function openDiffPreview(jobId: string) {
+    setPanel("workspace");
+    setHtmlPreview(false);
+    setShotPreview(null);
+    setPreviewPath(".datstarcoder/diff.json");
+    setPreviewContent("Loading diff…");
+    try {
+      const res = await fetch(
+        `/api/jobs/${jobId}/workspace/file?path=${encodeURIComponent(".datstarcoder/diff.json")}`,
+        { credentials: "same-origin" },
+      );
+      const data = await res.json();
+      if (!res.ok) {
+        setDiffPreview(null);
+        setPreviewContent(data.error ?? "No diff for this turn");
+        return;
+      }
+      const parsed = JSON.parse(String(data.content || "{}")) as {
+        summary?: string;
+        added?: string[];
+        changed?: string[];
+        removed?: string[];
+        snippets?: { path: string; patch: string }[];
+      };
+      setDiffPreview({
+        summary: parsed.summary || "Diff",
+        added: parsed.added || [],
+        changed: parsed.changed || [],
+        removed: parsed.removed || [],
+        snippets: parsed.snippets || [],
+      });
+      setPreviewContent(null);
+    } catch (err) {
+      setDiffPreview(null);
+      setPreviewContent(
+        err instanceof Error ? err.message : "Could not load diff",
       );
     }
   }
@@ -697,6 +757,21 @@ export function StudioClient() {
 
   const selected = jobs.find((j) => j.id === selectedId) ?? jobs[0] ?? null;
   const selectedModel = MODEL_OPTIONS.find((m) => m.id === modelId);
+  const lastCompletedInProject = [...jobs]
+    .reverse()
+    .find((j) => j.status === "completed");
+  const promptGoal = inferGoal(prompt);
+  const skillPackHint =
+    promptGoal.label === "Deploy / Amplify"
+      ? "Skill pack · deploy-amplify"
+      : promptGoal.label === "Prod / runtime debug"
+        ? "Skill pack · prod-debug"
+        : promptGoal.label === "Fix build / runtime error"
+          ? "Skill pack · error-fix"
+          : promptGoal.label === "Web app / website" ||
+              promptGoal.label === "Multi-file coding"
+            ? "Skill pack · web-app"
+            : null;
   const resolvedForPrice = resolveModel(modelId, prompt);
   const turnPrice = priceJob({
     prompt,
@@ -845,6 +920,30 @@ export function StudioClient() {
                 </>
               ) : null}
             </p>
+            {projectId && activeProject ? (
+              <div className="mt-3 border border-copper-700/50 bg-ink-900/70 px-3 py-2">
+                <p className="font-mono text-[11px] uppercase tracking-widest text-copper-200">
+                  Continuing in project
+                </p>
+                <p className="mt-1 font-mono text-xs text-steel-300">
+                  {activeProject.title}
+                  {lastCompletedInProject ? (
+                    <span className="text-steel-500">
+                      {" "}
+                      · prior turn kept in workspace
+                      {lastCompletedInProject.prompt
+                        ? ` · “${lastCompletedInProject.prompt.slice(0, 48)}${lastCompletedInProject.prompt.length > 48 ? "…" : ""}”`
+                        : ""}
+                    </span>
+                  ) : (
+                    <span className="text-steel-500">
+                      {" "}
+                      · short asks and stack traces share this context
+                    </span>
+                  )}
+                </p>
+              </div>
+            ) : null}
             <div className="mt-2 flex flex-wrap gap-2">
               {projects.map((p) => (
                 <button
@@ -955,6 +1054,12 @@ export function StudioClient() {
             <label className="mt-6 block font-mono text-[11px] uppercase tracking-widest text-steel-400">
               Prompt
             </label>
+            {skillPackHint ? (
+              <p className="mt-1 font-mono text-[11px] text-amber-300/80">
+                {skillPackHint}
+                {promptGoal.hard ? " · hard routing" : ""}
+              </p>
+            ) : null}
             <Textarea
               value={prompt}
               onChange={(e) => setPrompt(e.target.value)}
@@ -1219,14 +1324,11 @@ export function StudioClient() {
                   {extractFixableError(selected, liveEvents) && (
                     <button
                       type="button"
-                      onClick={() => {
-                        const blob = extractFixableError(selected, liveEvents);
-                        if (!blob) return;
-                        setPrompt(
-                          `Fix this error in the project workspace.\n\n\`\`\`\n${blob.slice(0, 6000)}\n\`\`\`\n\nClassify the failure, open the cited file, apply a minimal fix, re-run the same command, then done.`,
-                        );
-                        setPanel("output");
-                      }}
+                      onClick={() =>
+                        applyFixFromFailure(
+                          extractFixableError(selected, liveEvents),
+                        )
+                      }
                       className="font-mono text-[11px] uppercase tracking-widest text-rose-300 hover:text-rose-200"
                     >
                       Fix this
@@ -1261,6 +1363,17 @@ export function StudioClient() {
                       className="font-mono text-[11px] uppercase tracking-widest text-sky-300/90 hover:text-sky-200"
                     >
                       Preview screenshot
+                    </button>
+                  )}
+                  {workspaceFiles.some(
+                    (f) => f.path === ".datstarcoder/diff.json",
+                  ) && (
+                    <button
+                      type="button"
+                      onClick={() => void openDiffPreview(selected.id)}
+                      className="font-mono text-[11px] uppercase tracking-widest text-amber-300/90 hover:text-amber-200"
+                    >
+                      View diff
                     </button>
                   )}
                   {workspaceFiles.length > 0 && (
@@ -1319,7 +1432,58 @@ export function StudioClient() {
                           </li>
                         ))}
                       </ul>
-                      {shotPreview ? (
+                      {diffPreview ? (
+                        <div className="min-h-[12rem] space-y-3">
+                          <div className="flex flex-wrap items-center justify-between gap-2">
+                            <p className="font-mono text-[11px] text-amber-300/90">
+                              Turn diff · {diffPreview.summary}
+                            </p>
+                            <div className="flex flex-wrap items-center gap-3">
+                              {extractFixableError(selected, liveEvents) && (
+                                <button
+                                  type="button"
+                                  className="font-mono text-[11px] uppercase tracking-widest text-rose-300 hover:text-rose-200"
+                                  onClick={() =>
+                                    applyFixFromFailure(
+                                      extractFixableError(selected, liveEvents),
+                                    )
+                                  }
+                                >
+                                  Fix from this failure
+                                </button>
+                              )}
+                              <button
+                                type="button"
+                                className="font-mono text-[11px] text-steel-400 hover:text-copper-200"
+                                onClick={() => setDiffPreview(null)}
+                              >
+                                Close
+                              </button>
+                            </div>
+                          </div>
+                          <div className="font-mono text-[11px] text-steel-400 space-y-1">
+                            {diffPreview.added.length > 0 && (
+                              <p>Added: {diffPreview.added.join(", ")}</p>
+                            )}
+                            {diffPreview.changed.length > 0 && (
+                              <p>Changed: {diffPreview.changed.join(", ")}</p>
+                            )}
+                            {diffPreview.removed.length > 0 && (
+                              <p>Removed: {diffPreview.removed.join(", ")}</p>
+                            )}
+                          </div>
+                          {diffPreview.snippets.map((s) => (
+                            <div key={s.path}>
+                              <p className="font-mono text-[11px] text-copper-200">
+                                {s.path}
+                              </p>
+                              <pre className="mt-1 max-h-48 overflow-auto whitespace-pre-wrap border border-copper-900/50 bg-ink-950/80 p-2 font-mono text-[11px] text-steel-200">
+                                {s.patch}
+                              </pre>
+                            </div>
+                          ))}
+                        </div>
+                      ) : shotPreview ? (
                         <div className="min-h-[12rem] space-y-2">
                           <div className="flex flex-wrap items-center justify-between gap-2">
                             <p className="font-mono text-[11px] text-sky-300/90">
@@ -1337,6 +1501,32 @@ export function StudioClient() {
                               Close
                             </button>
                           </div>
+                          {extractFixableError(selected, liveEvents) ? (
+                            <div className="border border-rose-900/50 bg-ink-950/80 px-3 py-2">
+                              <div className="flex flex-wrap items-center justify-between gap-2">
+                                <p className="font-mono text-[11px] uppercase tracking-widest text-rose-300">
+                                  Error next to screenshot
+                                </p>
+                                <button
+                                  type="button"
+                                  className="font-mono text-[11px] uppercase tracking-widest text-rose-300 hover:text-rose-200"
+                                  onClick={() =>
+                                    applyFixFromFailure(
+                                      extractFixableError(selected, liveEvents),
+                                    )
+                                  }
+                                >
+                                  Fix from this failure
+                                </button>
+                              </div>
+                              <pre className="mt-2 max-h-28 overflow-auto whitespace-pre-wrap font-mono text-[11px] text-steel-300">
+                                {extractFixableError(
+                                  selected,
+                                  liveEvents,
+                                )?.slice(0, 900)}
+                              </pre>
+                            </div>
+                          ) : null}
                           {/* eslint-disable-next-line @next/next/no-img-element */}
                           <img
                             src={shotPreview.dataUrl}
@@ -1417,7 +1607,9 @@ function extractFixableError(
   }
   if (
     job?.result &&
-    /Failed to compile|Cannot find module|TS\d{4}|Paused — need/i.test(job.result)
+    /Failed to compile|Cannot find module|TS\d{4}|Paused — need|Coding verify failed|Verification failed/i.test(
+      job.result,
+    )
   ) {
     return job.result.slice(0, 8000);
   }

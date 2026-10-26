@@ -6,6 +6,7 @@ import {
   loadCheckpoint,
   saveCheckpoint,
   formatCheckpointForPrompt,
+  mergeLongHorizon,
   CHECKPOINT_REL,
 } from "./project-memory.mjs";
 
@@ -28,6 +29,18 @@ assert.ok(
 const formatted = formatCheckpointForPrompt(cp);
 assert.match(formatted, /Project checkpoint/);
 assert.match(formatted, /npm run build/);
+
+const merged = mergeLongHorizon(
+  { decisions: ["a"], neverDo: ["xdg-open"], openBugs: ["bug1"] },
+  { decisions: ["b"], openBugs: ["bug2"], verifyFailStreak: 2 },
+);
+assert.ok(merged.decisions.includes("a") && merged.decisions.includes("b"));
+assert.ok(merged.neverDo.includes("xdg-open"));
+assert.equal(merged.verifyFailStreak, 2);
+assert.match(
+  formatCheckpointForPrompt(merged),
+  /VERIFY_FAIL_STREAK/,
+);
 
 await fs.rm(root, { recursive: true, force: true });
 console.log("project-memory.test.mjs ok");

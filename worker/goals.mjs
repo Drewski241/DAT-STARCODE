@@ -18,6 +18,12 @@ const WEB_APP_HINT =
   /\b(next\.?js|react|website|web\s*app|landing\s*page|tailwind|vercel|hydration|npm\s+run\s+(?:dev|build)|create-next-app|frontend)\b/i;
 const ERROR_FIX_HINT =
   /\b(fix\s+this|build\s+failed|failed\s+to\s+compile|typeerror|cannot\s+find\s+module|npm\s+err|stack\s+trace|TS\d{4}|help.*error)\b/i;
+const DEPLOY_HINT =
+  /\b(amplify|redeploy|deploy\s+to\s+(prod|production|amplify)|push\s+to\s+github|customer-workspaces)\b/i;
+const PROD_DEBUG_HINT =
+  /\b(production|prod\s+log|amplify\s+build|worker\s+401|credentialprovidererror|walletconnect\s+offline)\b/i;
+const MULTI_FILE_HINT =
+  /\b(refactor|multi-?file|across\s+files|next\.js|react\s+app|migrate|typescript\s+project)\b/i;
 
 /**
  * @param {string} prompt
@@ -74,9 +80,18 @@ export function inferGoal(prompt) {
       wantCdv: true,
     };
   }
-  if (CODING_HINT.test(text) || WEB_APP_HINT.test(text) || ERROR_FIX_HINT.test(text)) {
+  if (
+    CODING_HINT.test(text) ||
+    WEB_APP_HINT.test(text) ||
+    ERROR_FIX_HINT.test(text) ||
+    DEPLOY_HINT.test(text) ||
+    PROD_DEBUG_HINT.test(text)
+  ) {
     const errorFix = ERROR_FIX_HINT.test(text);
     const web = WEB_APP_HINT.test(text);
+    const deploy = DEPLOY_HINT.test(text);
+    const prod = PROD_DEBUG_HINT.test(text);
+    const multi = MULTI_FILE_HINT.test(text);
     // Studio "Fix this" of Gtk/xdg-open noise is not a real build failure.
     const benignOnly =
       errorFix &&
@@ -87,17 +102,27 @@ export function inferGoal(prompt) {
     const playbooks = [];
     if (errorFix && !benignOnly) playbooks.push("error-fix.md");
     if (web || errorFix) playbooks.push("web-app.md");
+    if (deploy) playbooks.push("deploy-amplify.md");
+    if (prod || (errorFix && /amplify|worker|walletconnect/i.test(text))) {
+      playbooks.push("prod-debug.md");
+    }
     return {
       id: "coding",
       label: benignOnly
         ? "Web app / website"
-        : errorFix
-          ? "Fix build / runtime error"
-          : web
-            ? "Web app / website"
-            : "Coding task",
-      // Error dumps need more steps + playbooks (hard routing → stronger model).
-      hard: errorFix && !benignOnly,
+        : deploy
+          ? "Deploy / Amplify"
+          : prod
+            ? "Prod / runtime debug"
+            : errorFix
+              ? "Fix build / runtime error"
+              : web
+                ? "Web app / website"
+                : multi
+                  ? "Multi-file coding"
+                  : "Coding task",
+      // Error dumps / multi-file / deploy need more steps + stronger model.
+      hard: (errorFix && !benignOnly) || multi || deploy || prod,
       playbooks,
       wantCdv: false,
     };

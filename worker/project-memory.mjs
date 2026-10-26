@@ -72,5 +72,59 @@ export function formatCheckpointForPrompt(cp) {
   }
   if (cp.previewPath) lines.push(`- Preview entry: ${cp.previewPath}`);
   if (cp.notes) lines.push(`- Notes: ${cp.notes}`);
+  if (Array.isArray(cp.decisions) && cp.decisions.length) {
+    lines.push(
+      `- Decisions: ${cp.decisions
+        .slice(-8)
+        .map((d) => String(d))
+        .join(" · ")}`,
+    );
+  }
+  if (Array.isArray(cp.neverDo) && cp.neverDo.length) {
+    lines.push(
+      `- Never do: ${cp.neverDo
+        .slice(-8)
+        .map((d) => String(d))
+        .join(" · ")}`,
+    );
+  }
+  if (Array.isArray(cp.openBugs) && cp.openBugs.length) {
+    lines.push(
+      `- Open bugs: ${cp.openBugs
+        .slice(-8)
+        .map((d) => String(d))
+        .join(" · ")}`,
+    );
+  }
+  if (cp.verifyStatus) lines.push(`- Last verify: ${cp.verifyStatus}`);
+  if (
+    typeof cp.verifyFailStreak === "number" &&
+    cp.verifyFailStreak > 0
+  ) {
+    lines.push(`- Verify fail streak: ${cp.verifyFailStreak}`);
+    if (cp.verifyFailStreak >= 2) {
+      lines.push(
+        "- VERIFY_FAIL_STREAK: 2+ — prefer stronger model / smaller diffs",
+      );
+    }
+  }
   return lines.length > 1 ? lines.join("\n") : "";
+}
+
+/**
+ * Merge long-horizon memory fields without wiping history.
+ * @param {Record<string, unknown>|null|undefined} prev
+ * @param {Record<string, unknown>} patch
+ */
+export function mergeLongHorizon(prev, patch) {
+  const base = prev && typeof prev === "object" ? { ...prev } : {};
+  const next = { ...base, ...patch };
+  for (const key of ["decisions", "neverDo", "openBugs"]) {
+    const a = Array.isArray(base[key]) ? base[key] : [];
+    const b = Array.isArray(patch[key]) ? patch[key] : [];
+    if (a.length || b.length) {
+      next[key] = [...new Set([...a, ...b].map((x) => String(x)))].slice(-24);
+    }
+  }
+  return next;
 }
