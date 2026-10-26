@@ -2229,10 +2229,21 @@ export async function runAgentJob({
 
     if (!isGeneral) {
       await emit("status", "Verifying deliverables…");
+      // Zip 58560f92: screenshot_url succeeded but poisoned goal=chialisp still
+      // appended "expected a .clsp". Soft coding / screenshot-then-done must never
+      // demand ChiaLisp deliverables even if goal inference was wrong.
+      const softCodingVerify =
+        screenshotThenDone ||
+        intentionalVerifyFail ||
+        (progress.screenshotOk &&
+          /\bscreenshot_url\b/i.test(job.prompt || "")) ||
+        (!goal.wantCdv && goal.id === "coding");
+      const wantCdvVerify = goal.wantCdv && hardTask && !softCodingVerify;
       const verification = verifyWorkspaceFiles(files, {
         // Always require a documented hash on hard tasks when tooling is mandated.
         // RESULT-only polish: keep hash/secure checks but skip tooling re-probe failures.
-        requireHash: goal.wantCdv && hardTask && (hasCdv || requireTooling || resultOnly),
+        requireHash:
+          wantCdvVerify && (hasCdv || requireTooling || resultOnly),
         resultText: finalMessage,
         toolingOk: resultOnly
           ? true
@@ -2241,8 +2252,9 @@ export async function runAgentJob({
             : undefined,
         toolingMissing: tooling?.missing,
         strictSingleton:
-          goal.id === "secure_treasury" || goal.id === "mtt_pool",
-        secureTreasury: goal.id === "secure_treasury",
+          !softCodingVerify &&
+          (goal.id === "secure_treasury" || goal.id === "mtt_pool"),
+        secureTreasury: !softCodingVerify && goal.id === "secure_treasury",
       });
       if (spendFx && !spendFx.ok) {
         verification.ok = false;
@@ -2271,7 +2283,7 @@ export async function runAgentJob({
           "",
           "Do not treat this turn as done. Re-run with a fix prompt (or a stronger model).",
         ].join("\n");
-      } else if (goal.wantCdv && hardTask) {
+      } else if (wantCdvVerify) {
         const clsp = files.filter((f) => /\.clsp$/i.test(f.path));
         if (clsp.length === 0) {
           finalMessage += [
