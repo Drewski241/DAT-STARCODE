@@ -62,6 +62,7 @@ import {
   codingWorkspaceWorthVerify,
   verifyObservationOk,
 } from "./coding-verify.mjs";
+import { formatToolSpecsForPrompt } from "./tool-specs.mjs";
 
 const MAX_STEPS = Number(process.env.AGENT_MAX_STEPS || 12);
 const HARD_TASK_STEPS = Number(process.env.AGENT_HARD_TASK_STEPS || 40);
@@ -518,6 +519,8 @@ function agentSystem(job, github, githubClone, extras = {}) {
     '   - clvm_verify args: {"program":"...","solution":"()","mode":"brun"|"run","expect":"optional"}',
     '   - spend_check args: {"program":"...","samples":[{"name":"deposit","solution":"(…)","mode":"brun"}]}',
     '   - puzzle_hash args: {"path":"puzzles/foo.clsp","curryArgs":["optional","cdv","-a","values"]}',
+    "",
+    formatToolSpecsForPrompt(),
     "",
     '2) Finish: {"done":true,"message":"markdown answer for the user"}',
     "",
