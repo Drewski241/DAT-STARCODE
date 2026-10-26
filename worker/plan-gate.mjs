@@ -35,6 +35,7 @@ export async function readPlan(root, readFile) {
  *   resultOnly?: boolean,
  *   planPresent: boolean,
  *   planComplete: boolean,
+ *   softMultiFile?: boolean,
  *   tool: string,
  *   path?: string,
  * }} ctx
@@ -43,12 +44,24 @@ export function shouldBlockEditWithoutPlan(ctx) {
   if (ctx.resultOnly) return false;
   // ChiaLisp / treasury already have domain playbooks; still want a plan on hard coding.
   if (!ctx.hard && ctx.goalId !== "coding") return false;
-  if (!ctx.hard) return false;
+  // Soft multi-file / Next coding thrash also needs a short PLAN before edits.
+  const softMulti =
+    !ctx.hard &&
+    ctx.goalId === "coding" &&
+    Boolean(ctx.softMultiFile);
+  if (!ctx.hard && !softMulti) return false;
   const tool = String(ctx.tool || "");
   if (tool !== "write_file" && tool !== "str_replace") return false;
   const p = String(ctx.path || "").replace(/\\/g, "/");
   if (!p) return false;
   if (/(^|\/)PLAN\.md$/i.test(p)) return false;
+  // Soft gate: allow package.json / index.html / single-file demos without PLAN.
+  if (
+    softMulti &&
+    /(^|\/)(package\.json|index\.html|index\.js|styles\.css)$/i.test(p)
+  ) {
+    return false;
+  }
   if (ctx.planPresent && ctx.planComplete) return false;
   return true;
 }

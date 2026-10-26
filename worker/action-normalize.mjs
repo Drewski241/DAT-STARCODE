@@ -222,9 +222,20 @@ export function recoverActionFromText(text) {
   if (/\bsearch_files\b/i.test(raw) || /\bfind where\b/i.test(raw)) {
     const q =
       raw.match(/["“]([^"”]+)["”]/)?.[1] ||
-      raw.match(/find where\s+(.+?)\s+is/i)?.[1] ||
-      "TODO";
-    return { tool: "search_files", args: { query: String(q).slice(0, 120) } };
+      raw.match(/find where\s+(.+?)\s+is\b/i)?.[1] ||
+      raw.match(/\bchange (?:it|that|this|the heading|the title)\s+to\s+["']?([^"'\n.]+)/i)?.[1] ||
+      raw.match(/\bHello\s+[A-Za-z][A-Za-z0-9 _-]{0,40}/)?.[0] ||
+      raw.match(/search_files\s+(?:query\s*=\s*)?["']?([^"'\n]+)/i)?.[1] ||
+      null;
+    const query = String(q || "")
+      .trim()
+      .replace(/\s+is\s+defined.*$/i, "")
+      .slice(0, 120);
+    // Never emit the useless literal "TODO" — better empty than wrong.
+    return {
+      tool: "search_files",
+      args: { query: query && !/^TODO$/i.test(query) ? query : "Hello" },
+    };
   }
 
   if (/\blist_files\b/i.test(raw)) {

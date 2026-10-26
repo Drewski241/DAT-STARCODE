@@ -211,20 +211,46 @@ export async function ensurePreviewFilesListed(root, files) {
       /* missing */
     }
   }
-  // Include .b64 sidecars (may be large but text)
+  // Include .b64 sidecars (may be large but text). If only a binary .png exists
+  // (or a UTF-8-mangled copy), rebuild the sidecar from raw bytes when valid.
   try {
     const shotDir = path.join(root, ".datstarcoder", "screenshots");
     const names = await fs.readdir(shotDir);
     for (const n of names) {
-      if (!n.endsWith(".png.b64")) continue;
-      const rel = `.datstarcoder/screenshots/${n}`;
-      if (have.has(rel)) continue;
-      const content = await fs.readFile(path.join(root, rel), "utf8");
-      if (Buffer.byteLength(content, "utf8") > 900_000) continue;
-      out.push({ path: rel, content });
+      if (n.endsWith(".png.b64")) {
+        const rel = `.datstarcoder/screenshots/${n}`;
+        if (have.has(rel)) continue;
+        const content = await fs.readFile(path.join(root, rel), "utf8");
+        if (Buffer.byteLength(content, "utf8") > 900_000) continue;
+        out.push({ path: rel, content });
+        have.add(rel);
+        continue;
+      }
+      if (!n.endsWith(".png")) continue;
+      const b64Name = `${n}.b64`;
+      const b64Rel = `.datstarcoder/screenshots/${b64Name}`;
+      if (have.has(b64Rel)) continue;
+      try {
+        await fs.access(path.join(shotDir, b64Name));
+        continue; // listed on next loop / already present on disk for readdir
+      } catch {
+        /* rebuild from png bytes */
+      }
+      try {
+        const buf = await fs.readFile(path.join(shotDir, n));
+        if (buf.length < 8 || buf[0] !== 0x89 || buf[1] !== 0x50) continue;
+        const content = buf.toString("base64");
+        if (Buffer.byteLength(content, "utf8") > 900_000) continue;
+        await fs.writeFile(path.join(root, b64Rel), content, "utf8");
+        out.push({ path: b64Rel, content });
+        have.add(b64Rel);
+      } catch {
+        /* unreadable */
+      }
     }
   } catch {
     /* no shots */
   }
-  return out;
+  // Never push raw .png — utf8 collect corrupts them (U+FFFD).
+  return out.filter((f) => !/\.png$/i.test(f.path) || /\.png\.b64$/i.test(f.path));
 }

@@ -58,6 +58,16 @@ const recovered = recoverActionFromText(
   'Find where "Hello Continuity" is defined',
 );
 assert.equal(recovered?.tool, "search_files");
+assert.equal(recovered?.args?.query, "Hello Continuity");
+
+{
+  const findWhere = recoverActionFromText(
+    "Find where Hello Continuity is defined and change it to Hello Search",
+  );
+  assert.equal(findWhere?.tool, "search_files");
+  assert.match(String(findWhere?.args?.query || ""), /Hello Continuity/i);
+  assert.notEqual(findWhere?.args?.query, "TODO");
+}
 
 {
   // Truncated OpenAI-style dump from live 7B hillclimb

@@ -37,6 +37,34 @@ if (pw) {
 
 server.close();
 
+// Rebuild .png.b64 from a valid binary PNG when sidecar is missing.
+{
+  const rebuildRoot = await fs.mkdtemp(path.join(os.tmpdir(), "dsc-shot-b64-"));
+  const shotDir = path.join(rebuildRoot, ".datstarcoder", "screenshots");
+  await fs.mkdir(shotDir, { recursive: true });
+  // Minimal valid PNG header + IHDR-ish bytes (signature check only needs 0x89PNG)
+  const png = Buffer.from([
+    0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d,
+    0x49, 0x48, 0x44, 0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01,
+    0x08, 0x02, 0x00, 0x00, 0x00, 0x90, 0x77, 0x53, 0xde, 0x00, 0x00, 0x00,
+    0x00, 0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82,
+  ]);
+  await fs.writeFile(path.join(shotDir, "rebuilt.png"), png);
+  const listed = await ensurePreviewFilesListed(rebuildRoot, [
+    { path: ".datstarcoder/screenshots/rebuilt.png", content: "mangled" },
+  ]);
+  assert.ok(
+    listed.some((f) => f.path === ".datstarcoder/screenshots/rebuilt.png.b64"),
+  );
+  assert.ok(
+    !listed.some(
+      (f) => f.path === ".datstarcoder/screenshots/rebuilt.png",
+    ),
+  );
+  await fs.rm(rebuildRoot, { recursive: true, force: true });
+  console.log("screenshot.test.mjs ok (b64 rebuild)");
+}
+
 // Workspace-relative HTML → file:// (no HTTP server required for path resolve)
 {
   const fileRoot = await fs.mkdtemp(path.join(os.tmpdir(), "dsc-shot-file-"));

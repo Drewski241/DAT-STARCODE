@@ -48,4 +48,31 @@ assert.equal(
 );
 assert.match(planGateMessage({ planPresent: false, planComplete: false }), /PLAN\.md/);
 
+assert.equal(
+  shouldBlockEditWithoutPlan({
+    hard: false,
+    wantCdv: false,
+    goalId: "coding",
+    softMultiFile: true,
+    planPresent: false,
+    planComplete: false,
+    tool: "write_file",
+    path: "src/components/App.tsx",
+  }),
+  true,
+);
+assert.equal(
+  shouldBlockEditWithoutPlan({
+    hard: false,
+    wantCdv: false,
+    goalId: "coding",
+    softMultiFile: true,
+    planPresent: false,
+    planComplete: false,
+    tool: "write_file",
+    path: "package.json",
+  }),
+  false,
+);
+
 console.log("plan-gate.test.mjs ok");

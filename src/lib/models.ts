@@ -69,6 +69,10 @@ const CODING_HINT =
 const EDIT_FOLLOWUP_HINT =
   /\b(change|update|rename|edit|replace|find where|move|delete|add (a |the )?(button|link|heading|title|file|script|test)|overwrite)\b/i;
 
+/** Checkpoint / continuity memory questions must stay on coder models (not Llama). */
+const MEMORY_FOLLOWUP_HINT =
+  /\b(what did we learn|last turn|checkpoint|open bugs|never ?do|files touched|verifyStatus|summarize.*(bug|decision|checkpoint))\b/i;
+
 const RESEARCH_HINT =
   /\b(best|cheap|cheapest|affordable|lowest|compare|comparison|which|vs\b|versus|quote|quotes|buy|purchase|insurance|broker|price|cost|victoria|vancouver|icbc|how (do|should) i|where (do|can|should) i)\b/i;
 
@@ -120,18 +124,23 @@ export function resolveModel(
     };
   }
 
+  const memoryQ = MEMORY_FOLLOWUP_HINT.test(prompt);
   const coding =
     goal.id === "coding" ||
     CODING_HINT.test(prompt) ||
+    memoryQ ||
     (Boolean(opts?.preferCoding) && EDIT_FOLLOWUP_HINT.test(prompt)) ||
-    (Boolean(opts?.preferCoding) && prompt.trim().length < 160);
+    (Boolean(opts?.preferCoding) && prompt.trim().length < 160) ||
+    (Boolean(opts?.preferCoding) && memoryQ);
   if (coding) {
     return {
       requested: "auto",
       resolved: DEFAULT_CODING_MODEL,
-      reason: opts?.preferCoding
-        ? "Auto: continuing coding project"
-        : "Auto: prompt looks like a coding task",
+      reason: memoryQ
+        ? "Auto: checkpoint / memory question → coding model"
+        : opts?.preferCoding
+          ? "Auto: continuing coding project"
+          : "Auto: prompt looks like a coding task",
     };
   }
 

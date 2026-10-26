@@ -110,6 +110,9 @@ const RESULT_ONLY_STEPS = Number(process.env.AGENT_RESULT_ONLY_STEPS || 8);
 const OVERWRITE_FROM_TEMPLATES_HINT =
   /\b(overwrite|restore|re-?seed|copy)\b[\s\S]{0,80}\b(from\s+templates|templates\/secure-treasury)\b/i;
 const OVERWRITE_SEED_STEPS = Number(process.env.AGENT_OVERWRITE_SEED_STEPS || 12);
+/** Soft coding demos — don't leave a 12–40 step budget after the goal is met. */
+const SOFT_CODING_STEPS = Number(process.env.AGENT_SOFT_CODING_STEPS || 8);
+const MEMORY_QUESTION_STEPS = Number(process.env.AGENT_MEMORY_QUESTION_STEPS || 6);
 const RUN_TIMEOUT_MS = Number(process.env.AGENT_RUN_TIMEOUT_MS || 20000);
 const INSTALL_TIMEOUT_MS = Number(process.env.AGENT_INSTALL_TIMEOUT_MS || 180000);
 const VERIFY_TIMEOUT_MS = Number(process.env.AGENT_VERIFY_TIMEOUT_MS || 120000);
@@ -825,6 +828,9 @@ async function ollamaChat(ollamaUrl, model, messages, onToken, opts = {}) {
 const SKIP_PUSH_NAME =
   /(^|\/)(package-lock\.json|yarn\.lock|pnpm-lock\.yaml|\.DS_Store)$/i;
 const SKIP_PUSH_DIR = /(^|\/)(node_modules|dist|build|\.next|coverage|\.git)\//;
+/** Never utf8-read these — Studio sync mangles binary (zip 58560f92 PNG → U+FFFD). */
+const SKIP_PUSH_BINARY =
+  /\.(png|jpe?g|gif|webp|ico|pdf|zip|gz|wasm|bin|hex|clvm|sym)$/i;
 
 async function collectLocalFiles(root) {
   const paths = await listTree(root);
@@ -832,6 +838,7 @@ async function collectLocalFiles(root) {
   for (const rel of paths) {
     if (rel.startsWith("turns/")) continue;
     if (SKIP_PUSH_NAME.test(rel) || SKIP_PUSH_DIR.test(rel)) continue;
+    if (SKIP_PUSH_BINARY.test(rel)) continue;
     try {
       const content = await fs.readFile(path.join(root, rel), "utf8");
       if (Buffer.byteLength(content, "utf8") > MAX_FILE_BYTES) continue;
@@ -944,19 +951,28 @@ export async function runAgentJob({
         job.prompt || "",
       );
     const intentionalVerifyFail = isIntentionalVerifyFail(job.prompt || "");
+    const screenshotThenDoneEarly = isScreenshotThenDonePrompt(job.prompt || "");
+    const softMultiFile = /\b(refactor|multi-?file|across\s+files|next\.js|react\s+app|migrate|typescript\s+project)\b/i.test(
+      job.prompt || "",
+    );
     // Shopping needs a few tool calls + one synthesis — keep budget modest so
     // the model finishes instead of tool-looping until the cap.
     // RESULT-only polish stays hard-domain for model routing but must not burn 40 steps.
     // Overwrite-from-templates: seed already restores puzzles — don't burn 40 rewrites.
+    // Soft demos (screenshot / intentional fail / memory Q) must not inherit hard 40.
     const stepLimit = resultOnly
       ? RESULT_ONLY_STEPS
-      : overwriteFromTemplates
-        ? OVERWRITE_SEED_STEPS
-        : hardTask
-          ? HARD_TASK_STEPS
-          : isShopping
-            ? Math.max(MAX_STEPS, 10)
-            : MAX_STEPS;
+      : checkpointQuestionEarly
+        ? MEMORY_QUESTION_STEPS
+        : screenshotThenDoneEarly || intentionalVerifyFail
+          ? SOFT_CODING_STEPS
+          : overwriteFromTemplates
+            ? OVERWRITE_SEED_STEPS
+            : hardTask
+              ? HARD_TASK_STEPS
+              : isShopping
+                ? Math.max(MAX_STEPS, 10)
+                : MAX_STEPS;
 
     await emit(
       "status",
@@ -1111,7 +1127,7 @@ export async function runAgentJob({
     let fetchSteps = 0;
     /** @type {{ writes: number, runs: number, idleSteps: number, lastWritePath?: string, screenshotOk?: boolean }} */
     let progress = { writes: 0, runs: 0, idleSteps: 0, screenshotOk: false };
-    const screenshotThenDone = isScreenshotThenDonePrompt(job.prompt || "");
+    const screenshotThenDone = screenshotThenDoneEarly;
     /** @type {string[]} */
     const filesTouched = Array.isArray(checkpoint?.filesTouched)
       ? [...checkpoint.filesTouched]
@@ -1563,6 +1579,7 @@ export async function runAgentJob({
             resultOnly,
             planPresent,
             planComplete,
+            softMultiFile,
             tool: "write_file",
             path: String(args.path || ""),
           })
@@ -1593,6 +1610,7 @@ export async function runAgentJob({
             resultOnly,
             planPresent,
             planComplete,
+            softMultiFile,
             tool: "str_replace",
             path: String(args.path || ""),
           })
