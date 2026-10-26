@@ -7,6 +7,7 @@ import {
   saveCheckpoint,
   formatCheckpointForPrompt,
   mergeLongHorizon,
+  memoryAnswerScaffold,
   CHECKPOINT_REL,
 } from "./project-memory.mjs";
 
@@ -41,6 +42,18 @@ assert.match(
   formatCheckpointForPrompt(merged),
   /VERIFY_FAIL_STREAK/,
 );
+
+const scaffold = memoryAnswerScaffold({
+  neverDo: ["xdg-open"],
+  openBugs: ["Verify failed: npm test"],
+  filesTouched: ["package.json", "index.js"],
+  lastCommand: "npm test",
+  verifyStatus: "failed",
+  decisions: ["leave test failing"],
+});
+assert.match(scaffold, /neverDo:.*xdg-open/);
+assert.match(scaffold, /filesTouched:.*package\.json/);
+assert.match(scaffold, /verifyStatus: failed/);
 
 await fs.rm(root, { recursive: true, force: true });
 console.log("project-memory.test.mjs ok");

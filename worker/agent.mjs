@@ -46,10 +46,12 @@ import {
   saveCheckpoint,
   formatCheckpointForPrompt,
   mergeLongHorizon,
+  memoryAnswerScaffold,
 } from "./project-memory.mjs";
 import {
   shouldEarlyExit,
   updateProgressState,
+  isScreenshotThenDonePrompt,
 } from "./progress-guard.mjs";
 import { applyStrReplace } from "./str-replace.mjs";
 import {
@@ -1015,19 +1017,25 @@ export async function runAgentJob({
 
     const checkpoint = isGeneral ? null : await loadCheckpoint(root);
     const priorFailStreak = Number(checkpoint?.verifyFailStreak || 0);
+    const priorToolFailStreak = Number(checkpoint?.invalidToolStreak || 0);
+    // Escalate after 2 verify fails, or after 1 verify fail + prior tool thrash.
+    const shouldEscalate =
+      priorFailStreak >= 2 ||
+      (priorFailStreak >= 1 && priorToolFailStreak >= 2) ||
+      priorToolFailStreak >= 4;
     if (
       !isGeneral &&
-      priorFailStreak >= 2 &&
+      shouldEscalate &&
       /qwen2\.5-coder:7b$/i.test(activeModel) &&
       HARD_CODING_MODEL &&
       HARD_CODING_MODEL !== activeModel
     ) {
       log(
-        `[agent] escalate model ${activeModel} → ${HARD_CODING_MODEL} (verifyFailStreak=${priorFailStreak})`,
+        `[agent] escalate model ${activeModel} → ${HARD_CODING_MODEL} (verifyFailStreak=${priorFailStreak} invalidToolStreak=${priorToolFailStreak})`,
       );
       await emit(
         "status",
-        `Escalating model · ${priorFailStreak} verify fails → ${HARD_CODING_MODEL}`,
+        `Escalating model · verify=${priorFailStreak} tools=${priorToolFailStreak} → ${HARD_CODING_MODEL}`,
       );
       activeModel = HARD_CODING_MODEL;
     }
@@ -1076,8 +1084,9 @@ export async function runAgentJob({
     let researchSteps = 0;
     let searchSteps = 0;
     let fetchSteps = 0;
-    /** @type {{ writes: number, runs: number, idleSteps: number, lastWritePath?: string }} */
-    let progress = { writes: 0, runs: 0, idleSteps: 0 };
+    /** @type {{ writes: number, runs: number, idleSteps: number, lastWritePath?: string, screenshotOk?: boolean }} */
+    let progress = { writes: 0, runs: 0, idleSteps: 0, screenshotOk: false };
+    const screenshotThenDone = isScreenshotThenDonePrompt(job.prompt || "");
     /** @type {string[]} */
     const filesTouched = Array.isArray(checkpoint?.filesTouched)
       ? [...checkpoint.filesTouched]
@@ -1218,15 +1227,26 @@ export async function runAgentJob({
       log(`[agent] native tools enabled (${ollamaTools.length})`);
     }
     let invalidToolStreak = 0;
+    let peakInvalidToolStreak = 0;
     const checkpointQuestion = isCheckpointQuestion(job.prompt || "");
     if (checkpointQuestion && checkpointMd) {
+      // Memory turns: JSON-only done answers — native tools often ignore the checkpoint.
+      if (nativeToolsEnabled) {
+        nativeToolsEnabled = false;
+        ollamaTools = null;
+        log("[agent] JSON-only mode for MEMORY_QUESTION");
+        await emit("status", "JSON protocol · checkpoint memory");
+      }
+      const scaffold = memoryAnswerScaffold(checkpoint);
       messages.push({
         role: "user",
         content:
           "MEMORY_QUESTION: Answer ONLY from the Project checkpoint / durable goal below. " +
           "List decisions, neverDo, openBugs, filesTouched, lastCommand, verifyStatus. " +
-          "Do not resume unrelated edits unless asked.\n\n" +
-          checkpointMd,
+          "Do not resume unrelated edits unless asked. " +
+          'Reply with {"done":true,"message":"..."} citing those fields.\n\n' +
+          checkpointMd +
+          (scaffold ? `\n\n${scaffold}` : ""),
       });
     } else if (
       !isGeneral &&
@@ -1333,6 +1353,10 @@ export async function runAgentJob({
       });
       if (!normalized.ok || !normalized.action) {
         invalidToolStreak += 1;
+        peakInvalidToolStreak = Math.max(
+          peakInvalidToolStreak,
+          invalidToolStreak,
+        );
         if (invalidToolStreak >= 2 && nativeToolsEnabled) {
           nativeToolsEnabled = false;
           ollamaTools = null;
@@ -1642,10 +1666,7 @@ export async function runAgentJob({
         if (shot.ok) {
           lastErrorKind = null;
           lastErrorSnippet = null;
-          if (
-            /\bscreenshot_url\b/i.test(job.prompt || "") &&
-            /\bthen done\b|\bdone\.\s*$/i.test(job.prompt || "")
-          ) {
+          if (screenshotThenDone || isScreenshotThenDonePrompt(job.prompt || "")) {
             observation +=
               '\n\nNEXT: screenshot captured. Reply {"done":true,"message":"Preview screenshot saved under .datstarcoder/ — open Preview screenshot in Studio."}';
           }
@@ -1736,15 +1757,26 @@ export async function runAgentJob({
         if (!filesTouched.includes(p)) filesTouched.push(p);
       }
       progress = updateProgressState(tool, observation, progress);
-      const early = !isGeneral && !resultOnly ? shouldEarlyExit(progress) : { exit: false };
+      const early =
+        !isGeneral && !resultOnly
+          ? shouldEarlyExit(progress, { screenshotThenDone })
+          : { exit: false };
       let obsMsg = `OBSERVATION:\n${observation}`;
       if (isGeneral && researchReady()) {
         obsMsg += `\n\n${finishNudge()}`;
       }
       if (early.exit) {
         obsMsg += `\n\nEARLY_EXIT: ${early.reason}\nReply NOW with {"done":true,"message":"..."} summarizing progress and the exact next user action.`;
-        await emit("status", "Early exit · no productive progress");
+        await emit(
+          "status",
+          early.doneMessage
+            ? "Early exit · screenshot complete"
+            : "Early exit · no productive progress",
+        );
         log(`[agent] early-exit: ${early.reason}`);
+        if (early.doneMessage) {
+          finalMessage = String(early.doneMessage);
+        }
       }
       if (nativeAction) {
         messages.push({
@@ -1762,46 +1794,50 @@ export async function runAgentJob({
         });
       }
       if (early.exit) {
-        // Give the model one more turn to emit done, then break if still empty.
-        try {
-          const earlyReply = await ollamaChat(
-            ollamaUrl,
-            activeModel,
-            [
-              ...messages,
-              {
-                role: "user",
-                content:
-                  'Stop tools. {"done":true,"message":"markdown summary of what failed / what to try next"}',
-              },
-            ],
-            undefined,
-            { tools: null },
-          );
-          const earlyContent = earlyReply.content || "";
-          const action = parseAction(earlyContent);
-          if (action?.done) {
-            finalMessage = unwrapDoneMessage(action.message || earlyContent);
-          } else if (earlyContent && earlyContent.length > 40) {
-            finalMessage = unwrapDoneMessage(earlyContent);
+        // Screenshot-then-done: skip the extra model turn — goal is already met.
+        if (!early.doneMessage) {
+          try {
+            const earlyReply = await ollamaChat(
+              ollamaUrl,
+              activeModel,
+              [
+                ...messages,
+                {
+                  role: "user",
+                  content:
+                    'Stop tools. {"done":true,"message":"markdown summary of what failed / what to try next"}',
+                },
+              ],
+              undefined,
+              { tools: null },
+            );
+            const earlyContent = earlyReply.content || "";
+            const action = parseAction(earlyContent);
+            if (action?.done) {
+              finalMessage = unwrapDoneMessage(action.message || earlyContent);
+            } else if (earlyContent && earlyContent.length > 40) {
+              finalMessage = unwrapDoneMessage(earlyContent);
+            }
+          } catch {
+            /* fall through to step-limit message */
           }
-        } catch {
-          /* fall through to step-limit message */
         }
         if (!finalMessage) {
-          finalMessage = [
-            "# Paused — need a clearer target",
-            "",
-            early.reason,
-            lastCommand ? `\nLast command: \`${lastCommand}\`` : "",
-            lastErrorSnippet
-              ? `\n\`\`\`\n${String(lastErrorSnippet).slice(0, 800)}\n\`\`\``
-              : "",
-            "",
-            "Send a follow-up with the failing command output or a single file path to change.",
-          ]
-            .filter(Boolean)
-            .join("\n");
+          finalMessage = early.doneMessage
+            ? String(early.doneMessage)
+            : [
+                "# Paused — need a clearer target",
+                "",
+                early.reason,
+                lastCommand ? `\nLast command: \`${lastCommand}\`` : "",
+                lastErrorSnippet
+                  ? `\n\`\`\`\n${String(lastErrorSnippet).slice(0, 800)}\n\`\`\``
+                  : "",
+                "",
+                "Send a follow-up with the failing command output or a single file path to change.",
+              ]
+                .filter(Boolean)
+                .join("\n");
         }
         break;
       }
@@ -1821,6 +1857,13 @@ export async function runAgentJob({
             : codingVerifyStatus === "passed"
               ? 0
               : prevStreak;
+        const prevToolStreak = Number(checkpoint?.invalidToolStreak || 0);
+        const invalidToolStreakSaved =
+          peakInvalidToolStreak > 0
+            ? peakInvalidToolStreak
+            : codingVerifyStatus === "passed"
+              ? 0
+              : prevToolStreak;
         const memoryPatch = mergeLongHorizon(checkpoint, {
           goal: goal.id,
           projectGoal,
@@ -1831,6 +1874,7 @@ export async function runAgentJob({
           previewPath: previewPath || checkpoint?.previewPath || null,
           verifyStatus: codingVerifyStatus,
           verifyFailStreak,
+          invalidToolStreak: invalidToolStreakSaved,
           notes: lastErrorKind
             ? `Last turn classified as ${lastErrorKind}`
             : checkpoint?.notes || null,

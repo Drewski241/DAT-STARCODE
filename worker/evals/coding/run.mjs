@@ -111,6 +111,25 @@ function check(id, cond, detail = "") {
         scripts: { test: 'node -e "process.exit(1)"' },
       })[0] === "npm test",
   );
+
+  const { isScreenshotThenDonePrompt, shouldEarlyExit, updateProgressState } =
+    await import("../../progress-guard.mjs");
+  check(
+    "screenshot-then-done-prompt",
+    isScreenshotThenDonePrompt(
+      "Use screenshot_url on the workspace index.html preview. Then done.",
+    ) === true,
+  );
+  const shotProg = updateProgressState(
+    "screenshot_url",
+    '{"ok":true,"path":".datstarcoder/preview.png"}',
+    { writes: 0, runs: 0, idleSteps: 0 },
+  );
+  const shotEarly = shouldEarlyExit(shotProg, { screenshotThenDone: true });
+  check(
+    "screenshot-early-done",
+    shotEarly.exit === true && /Preview screenshot/i.test(String(shotEarly.doneMessage || "")),
+  );
 }
 
 // str_replace uniqueness

@@ -112,6 +112,24 @@ export function formatCheckpointForPrompt(cp) {
 }
 
 /**
+ * Draft MEMORY_QUESTION answer skeleton so 7B cites real checkpoint fields.
+ * @param {Record<string, unknown>|null|undefined} cp
+ */
+export function memoryAnswerScaffold(cp) {
+  if (!cp || typeof cp !== "object") return "";
+  const lines = [
+    "Answer template (fill from checkpoint — do not invent):",
+    `- neverDo: ${(Array.isArray(cp.neverDo) ? cp.neverDo : []).join("; ") || "(none)"}`,
+    `- openBugs: ${(Array.isArray(cp.openBugs) ? cp.openBugs : []).join("; ") || "(none)"}`,
+    `- filesTouched: ${(Array.isArray(cp.filesTouched) ? cp.filesTouched : []).slice(0, 12).join(", ") || "(none)"}`,
+    `- lastCommand: ${cp.lastCommand || "(none)"}`,
+    `- verifyStatus: ${cp.verifyStatus || "(none)"}`,
+    `- decisions: ${(Array.isArray(cp.decisions) ? cp.decisions : []).slice(-4).join("; ") || "(none)"}`,
+  ];
+  return lines.join("\n");
+}
+
+/**
  * Merge long-horizon memory fields without wiping history.
  * @param {Record<string, unknown>|null|undefined} prev
  * @param {Record<string, unknown>} patch

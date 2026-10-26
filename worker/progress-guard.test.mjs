@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import {
   shouldEarlyExit,
   updateProgressState,
+  isScreenshotThenDonePrompt,
 } from "./progress-guard.mjs";
 
 let state = { writes: 0, runs: 0, idleSteps: 0 };
@@ -27,5 +28,29 @@ state = updateProgressState(
 assert.equal(state.writes, 2);
 state = updateProgressState("start_server", '{"ok":true}', state);
 assert.equal(state.runs, 1);
+
+assert.equal(
+  isScreenshotThenDonePrompt(
+    "Use screenshot_url on the workspace index.html preview. Then done.",
+  ),
+  true,
+);
+assert.equal(
+  isScreenshotThenDonePrompt(
+    "Use screenshot_url then write_file PLAN.md. Then done.",
+  ),
+  false,
+);
+
+let shotState = { writes: 0, runs: 0, idleSteps: 0, screenshotOk: false };
+shotState = updateProgressState(
+  "screenshot_url",
+  JSON.stringify({ ok: true, path: ".datstarcoder/preview.png" }),
+  shotState,
+);
+assert.equal(shotState.screenshotOk, true);
+const shotExit = shouldEarlyExit(shotState, { screenshotThenDone: true });
+assert.equal(shotExit.exit, true);
+assert.match(String(shotExit.doneMessage || ""), /Preview screenshot/);
 
 console.log("progress-guard.test.mjs ok");

@@ -53,6 +53,67 @@ export function normalizeToolName(name) {
 }
 
 /**
+ * Rebuild a minimal package.json when nested JSON content was truncated.
+ * Prefers an explicit scripts.test from the text (node -e "process.exit(1)").
+ * @param {string} text
+ * @param {unknown} partialContent
+ * @returns {string|null}
+ */
+export function recoverPackageJsonContent(text, partialContent) {
+  const raw = String(text || "");
+  const testFromProse =
+    raw.match(
+      /scripts\.test\s+is\s+exactly:\s*(node\s+-e\s+"[^"]+")/i,
+    )?.[1] ||
+    raw.match(
+      /"test"\s*:\s*"(node\s+-e\s+(?:\\"|")[^"\\]*(?:\\"|")[^"]*)"/i,
+    )?.[1] ||
+    raw.match(/node\s+-e\s+"process\.exit\(1\)"/i)?.[0] ||
+    null;
+  let testScript = testFromProse
+    ? testFromProse.replace(/\\"/g, '"')
+    : null;
+  if (!testScript && typeof partialContent === "string") {
+    const m = partialContent.match(/"test"\s*:\s*"((?:\\.|[^"\\])*)"/);
+    if (m) {
+      try {
+        testScript = JSON.parse(`"${m[1]}"`);
+      } catch {
+        testScript = m[1].replace(/\\"/g, '"');
+      }
+    }
+  }
+  if (!testScript && !/package\.json|scripts\.test/i.test(raw)) return null;
+
+  /** @type {Record<string, unknown>} */
+  let base = { name: "workspace", version: "1.0.0", private: true };
+  if (typeof partialContent === "string" && partialContent.trim()) {
+    try {
+      const parsed = JSON.parse(partialContent);
+      if (parsed && typeof parsed === "object") base = { ...base, ...parsed };
+    } catch {
+      const nameM = partialContent.match(/"name"\s*:\s*"([^"]+)"/);
+      const verM = partialContent.match(/"version"\s*:\s*"([^"]+)"/);
+      if (nameM) base.name = nameM[1];
+      if (verM) base.version = verM[1];
+    }
+  }
+  if (testScript) {
+    const scripts =
+      base.scripts && typeof base.scripts === "object"
+        ? /** @type {Record<string, unknown>} */ ({ ...base.scripts })
+        : {};
+    scripts.test = testScript;
+    base.scripts = scripts;
+  }
+  try {
+    return `${JSON.stringify(base, null, 2)}\n`;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Recover a tool action from free-form assistant text when JSON/native failed.
  * @param {string} text
  */
@@ -103,6 +164,15 @@ export function recoverActionFromText(text) {
             .replace(/\\\\/g, "\\");
         }
       }
+      // Nested package.json: truncated dumps often leave invalid JSON — rebuild
+      // a minimal package.json when the prompt/text names scripts.test.
+      if (
+        tool === "write_file" &&
+        /package\.json/i.test(String(args.path || ""))
+      ) {
+        const rebuilt = recoverPackageJsonContent(raw, args.content);
+        if (rebuilt) args.content = rebuilt;
+      }
       return { tool, args };
     }
   }
@@ -115,13 +185,30 @@ export function recoverActionFromText(text) {
     const contentMatch = raw.match(
       /content\s*=\s*([\s\S]+?)(?:\n\s*\d\)|\n\s*then\s+done|$)/i,
     );
-    return {
-      tool: "write_file",
-      args: {
-        path: writeEq[1],
-        content: contentMatch ? contentMatch[1].trim() : "",
-      },
+    /** @type {Record<string, unknown>} */
+    const args = {
+      path: writeEq[1],
+      content: contentMatch ? contentMatch[1].trim() : "",
     };
+    if (/package\.json/i.test(String(args.path))) {
+      const rebuilt = recoverPackageJsonContent(raw, args.content);
+      if (rebuilt) args.content = rebuilt;
+    }
+    return { tool: "write_file", args };
+  }
+
+  // Explicit "overwrite package.json / scripts.test" without a clean tool JSON
+  if (
+    /\b(overwrite\s+package\.json|scripts\.test)\b/i.test(raw) &&
+    /node\s+-e\s+"process\.exit\(1\)"/i.test(raw)
+  ) {
+    const rebuilt = recoverPackageJsonContent(raw, null);
+    if (rebuilt) {
+      return {
+        tool: "write_file",
+        args: { path: "package.json", content: rebuilt },
+      };
+    }
   }
 
   if (/\bscreenshot_url\b/i.test(raw)) {

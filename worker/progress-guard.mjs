@@ -3,15 +3,40 @@
  */
 
 /**
+ * Prompt is only "take a screenshot then done" — treat a successful shot as complete.
+ * @param {string} prompt
+ */
+export function isScreenshotThenDonePrompt(prompt) {
+  const p = String(prompt || "");
+  if (!/\bscreenshot_url\b/i.test(p)) return false;
+  if (!/\bthen done\b|\bdone\.\s*$/i.test(p)) return false;
+  // Still an edit task if they also asked to rewrite files.
+  if (/\b(write_file|str_replace|overwrite package\.json|scripts\.test)\b/i.test(p)) {
+    return false;
+  }
+  return true;
+}
+
+/**
  * @param {{
  *   writes: number,
  *   runs: number,
  *   idleSteps: number,
  *   lastObservation?: string,
+ *   screenshotOk?: boolean,
  * }} state
- * @param {{ maxIdle?: number }} [opts]
+ * @param {{ maxIdle?: number, screenshotThenDone?: boolean }} [opts]
  */
 export function shouldEarlyExit(state, opts = {}) {
+  if (opts.screenshotThenDone && state.screenshotOk) {
+    return {
+      exit: true,
+      reason:
+        "Screenshot captured — reply done with Preview screenshot path; do not start unrelated ChiaLisp / file edits.",
+      doneMessage:
+        "Preview screenshot saved under .datstarcoder/ — open Preview screenshot in Studio.",
+    };
+  }
   const maxIdle = opts.maxIdle ?? 6;
   const idle = Number(state.idleSteps || 0);
   if (idle >= maxIdle && Number(state.writes || 0) === 0) {
@@ -38,7 +63,7 @@ export function shouldEarlyExit(state, opts = {}) {
 /**
  * @param {string} tool
  * @param {string} observation
- * @param {{ writes: number, runs: number, idleSteps: number, lastWritePath?: string }} state
+ * @param {{ writes: number, runs: number, idleSteps: number, lastWritePath?: string, screenshotOk?: boolean }} state
  */
 export function updateProgressState(tool, observation, state) {
   const next = { ...state };
@@ -55,6 +80,11 @@ export function updateProgressState(tool, observation, state) {
   } else if (tool === "run" || tool === "start_server" || tool === "npm_install" || tool === "check_url" || tool === "screenshot_url") {
     next.runs = (next.runs || 0) + 1;
     next.idleSteps = 0;
+    if (tool === "screenshot_url") {
+      // captureScreenshot returns JSON { ok: true, ... }
+      next.screenshotOk =
+        /"ok"\s*:\s*true/i.test(obs) || /^OK\b/i.test(obs.trim());
+    }
   } else if (tool === "read_file" || tool === "list_files") {
     next.idleSteps = (next.idleSteps || 0) + 1;
   } else {

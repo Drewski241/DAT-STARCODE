@@ -20,6 +20,11 @@
       "rawAction": { "tool": "writeFile", "args": { "path": "x.js", "content": "1" } },
       "assistantText": "",
       "wantTool": "write_file"
+    },
+    {
+      "rawAction": null,
+      "assistantText": "Overwrite package.json so scripts.test is exactly: node -e \"process.exit(1)\"\n{\"name\": \"write_file\", \"arguments\": {\"path\": \"package.json\", \"content\": \"{\\\"name\\\":\\\"t\\\",\\\"scripts\\\":{\\\"test\\\":\\\"node",
+      "wantTool": "write_file"
     }
   ]
 }
