@@ -1134,9 +1134,9 @@ export async function runAgentJob({
     const filesTouched = Array.isArray(checkpoint?.filesTouched)
       ? [...checkpoint.filesTouched]
       : [];
-    // Capability #7: materialize package.json scripts.test + index.js up front
-    // so a weak 7B turn cannot finish with neither file on disk (zip 3b520e35).
-    let skipAgentLoopForIntentionalFail = false;
+    // Soft demos (#7 / #11): do the deliverable deterministically — 7B often
+    // burns the step budget on npm run dev / list_files instead (zip a2ae9ff0).
+    let skipAgentLoopForSoftDemo = false;
     if (intentionalVerifyFail && !isGeneral && !resultOnly) {
       try {
         const primed = await ensureIntentionalFailDeliverables(root);
@@ -1150,11 +1150,48 @@ export async function runAgentJob({
         progress.writes = Math.max(Number(progress.writes || 0), 2);
         finalMessage =
           "Wrote package.json (scripts.test → process.exit(1)) and index.js. Left the test failing as requested.";
-        skipAgentLoopForIntentionalFail = true;
+        skipAgentLoopForSoftDemo = true;
         stepsUsed = 1;
       } catch (err) {
         log(
           `[agent] intentional-fail prime: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    } else if (screenshotThenDone && !isGeneral && !resultOnly) {
+      try {
+        await emit("status", "Capturing preview screenshot…");
+        const shot = await captureScreenshot(root, {
+          url: "index.html",
+          name: "preview",
+        });
+        if (shot.ok) {
+          progress.screenshotOk = true;
+          progress.runs = Math.max(Number(progress.runs || 0), 1);
+          finalMessage =
+            "Preview screenshot saved under .datstarcoder/ — open Preview screenshot in Studio.";
+          skipAgentLoopForSoftDemo = true;
+          stepsUsed = 1;
+          log(`[agent] screenshot-then-done prime ok · ${shot.message || ""}`);
+          await emit("status", "Screenshot captured · done");
+        } else {
+          log(
+            `[agent] screenshot-then-done prime failed: ${shot.message || "unknown"}`,
+          );
+          await emit(
+            "log",
+            `Screenshot prime failed · ${String(shot.message || "unknown").slice(0, 120)}`,
+          );
+          // Fall through to the agent loop with a hard nudge.
+          messages.push({
+            role: "user",
+            content:
+              `SCREENSHOT_REQUIRED: automatic capture failed (${String(shot.message || "unknown").slice(0, 160)}). ` +
+              'Call screenshot_url on index.html next, then {"done":true}. Do not npm run / start_server unless the shot needs a live URL.',
+          });
+        }
+      } catch (err) {
+        log(
+          `[agent] screenshot-then-done prime: ${err instanceof Error ? err.message : String(err)}`,
         );
       }
     }
@@ -1380,7 +1417,7 @@ export async function runAgentJob({
     }
 
     for (let step = 0; step < stepLimit; step++) {
-      if (skipAgentLoopForIntentionalFail) break;
+      if (skipAgentLoopForSoftDemo) break;
       stepsUsed = step + 1;
       const stepsLeft = stepLimit - step;
       log(`[agent] step ${step + 1}/${stepLimit} job=${job.id.slice(0, 8)}`);
