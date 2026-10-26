@@ -1,0 +1,18 @@
+{
+  "steps": [
+    {
+      "tool": "write_file",
+      "args": {
+        "path": "package.json",
+        "content": "{\n  \"name\": \"t\",\n  \"version\": \"1.0.0\",\n  \"scripts\": {\n    \"test\": \"node -e \\\"process.exit(1)\\\"\"\n  }\n}\n"
+      }
+    },
+    {
+      "tool": "write_file",
+      "args": {
+        "path": "index.js",
+        "content": "console.log(\"ok\");\n"
+      }
+    }
+  ]
+}

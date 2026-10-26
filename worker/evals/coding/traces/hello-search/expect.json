@@ -1,0 +1,5 @@
+{
+  "filesContain": { "index.html": "Hello Search" },
+  "filesNotContain": { "index.html": "Hello Continuity" },
+  "liveTool": "search_files"
+}

@@ -1,0 +1,1 @@
+Use screenshot_url on the workspace index.html preview. Do not use xdg-open or a desktop browser. Then done.

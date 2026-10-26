@@ -1,0 +1,1 @@
+What did we learn last turn? Don't use xdg-open. Summarize open bugs from the checkpoint.

@@ -1,0 +1,8 @@
+{
+  "filesContain": {
+    "package.json": "process.exit(1)",
+    "index.js": "console.log(\"ok\")"
+  },
+  "liveTool": "write_file",
+  "liveArgsPath": "package.json"
+}

@@ -1,0 +1,13 @@
+{
+  "steps": [
+    { "tool": "search_files", "args": { "query": "Hello Continuity" } },
+    {
+      "tool": "str_replace",
+      "args": {
+        "path": "index.html",
+        "oldText": "Hello Continuity",
+        "newText": "Hello Search"
+      }
+    }
+  ]
+}

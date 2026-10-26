@@ -1,12 +1,15 @@
 #!/usr/bin/env node
 /**
- * Coding hillclimb harness:
- *   - Always: replay recorded tool traces against fixtures (offline, CI-safe)
- *   - Optional live: HILLCLIMB_LIVE=1 OLLAMA_URL=… model=… runs a short native-tool loop
+ * Coding hillclimb harness (offline + optional live):
+ *   - replay: apply golden tool traces to fixtures
+ *   - repair: score action-normalize against real bad assistant outputs
+ *   - memory: offline check that checkpoint Q detection + format fields exist
+ *   - live (HILLCLIMB_LIVE=1): one Ollama tool call; normalize/repair before scoring
  *
  * Run:
  *   node worker/evals/coding/hillclimb.mjs
- *   HILLCLIMB_LIVE=1 OLLAMA_URL=http://127.0.0.1:11434 OLLAMA_MODEL=qwen2.5-coder:7b node worker/evals/coding/hillclimb.mjs
+ *   HILLCLIMB_LIVE=1 OLLAMA_URL=http://127.0.0.1:11434 OLLAMA_MODEL=qwen2.5-coder:7b \
+ *     node worker/evals/coding/hillclimb.mjs
  */
 import assert from "node:assert/strict";
 import { promises as fs } from "fs";
@@ -14,8 +17,19 @@ import os from "os";
 import path from "path";
 import { fileURLToPath } from "url";
 import { applyStrReplace } from "../../str-replace.mjs";
-import { toOllamaTools, firstToolCallAction, mergeToolCalls } from "../../ollama-tools.mjs";
+import {
+  toOllamaTools,
+  firstToolCallAction,
+  mergeToolCalls,
+} from "../../ollama-tools.mjs";
 import { CODING_TOOL_SPECS } from "../../tool-specs.mjs";
+import {
+  normalizeAgentAction,
+  isCheckpointQuestion,
+} from "../../action-normalize.mjs";
+import { formatCheckpointForPrompt } from "../../project-memory.mjs";
+import { captureScreenshot } from "../../screenshot.mjs";
+import { searchWorkspace } from "../../workspace-retrieve.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const tracesDir = path.join(here, "traces");
@@ -33,6 +47,7 @@ async function copyDir(src, dest) {
   await fs.mkdir(dest, { recursive: true });
   const entries = await fs.readdir(src, { withFileTypes: true });
   for (const e of entries) {
+    if (e.name === ".keep") continue;
     const from = path.join(src, e.name);
     const to = path.join(dest, e.name);
     if (e.isDirectory()) await copyDir(from, to);
@@ -45,7 +60,6 @@ async function readJson(p) {
 }
 
 /**
- * Apply a recorded coding tool to a workspace root.
  * @param {string} root
  * @param {{ tool: string, args?: Record<string, unknown> }} step
  */
@@ -75,6 +89,19 @@ async function applyTool(root, step) {
   if (tool === "read_file" || tool === "list_files") {
     return { ok: true, tool, skipped: true };
   }
+  if (tool === "search_files") {
+    const result = await searchWorkspace(root, String(args.query || ""));
+    return { ok: true, tool, hits: result.hits?.length || 0 };
+  }
+  if (tool === "screenshot_url") {
+    const shot = await captureScreenshot(root, {
+      url: args.url || args.path || "index.html",
+      path: args.path,
+      name: args.name || "preview",
+    });
+    if (!shot.ok) throw new Error(shot.message || "screenshot failed");
+    return { ok: true, tool };
+  }
   throw new Error(`unsupported replay tool: ${tool}`);
 }
 
@@ -83,9 +110,13 @@ async function scoreExpect(root, expect) {
   const fails = [];
   if (expect.filesContain) {
     for (const [rel, needle] of Object.entries(expect.filesContain)) {
-      const body = await fs.readFile(path.join(root, rel), "utf8");
-      if (!body.includes(String(needle))) {
-        fails.push(`${rel} missing ${JSON.stringify(needle)}`);
+      try {
+        const body = await fs.readFile(path.join(root, rel), "utf8");
+        if (!body.includes(String(needle))) {
+          fails.push(`${rel} missing ${JSON.stringify(needle)}`);
+        }
+      } catch {
+        fails.push(`${rel} missing file`);
       }
     }
   }
@@ -97,32 +128,91 @@ async function scoreExpect(root, expect) {
       }
     }
   }
+  if (expect.filesExist) {
+    for (const rel of expect.filesExist) {
+      if (!(await pathExists(path.join(root, rel)))) {
+        fails.push(`missing path ${rel}`);
+      }
+    }
+  }
   return fails;
 }
 
 async function replayTrace(traceName) {
   const dir = path.join(tracesDir, traceName);
-  const workspaceSrc = path.join(dir, "files");
   const trace = await readJson(path.join(dir, "trace.json"));
   const expect = await readJson(path.join(dir, "expect.json"));
+
+  if (expect.mode === "repair" || trace.mode === "repair") {
+    /** @type {string[]} */
+    const fails = [];
+    for (const [i, case_] of (expect.repairs || []).entries()) {
+      const normalized = normalizeAgentAction(
+        case_.rawAction,
+        case_.assistantText || "",
+      );
+      const got = normalized.ok ? normalized.action?.tool : null;
+      if (got !== case_.wantTool) {
+        fails.push(
+          `repair[${i}] want ${case_.wantTool} got ${got} (${normalized.reason || "ok"})`,
+        );
+      }
+    }
+    return {
+      name: traceName,
+      ok: fails.length === 0,
+      fails,
+      mode: "repair",
+    };
+  }
+
+  if (expect.mode === "memory" || trace.mode === "memory") {
+    const prompt = await fs.readFile(path.join(dir, "prompt.txt"), "utf8");
+    /** @type {string[]} */
+    const fails = [];
+    if (!isCheckpointQuestion(prompt)) {
+      fails.push("prompt not detected as checkpoint question");
+    }
+    const cpPath = path.join(dir, "files", ".datstarcoder", "checkpoint.json");
+    const cp = await readJson(cpPath);
+    const formatted = formatCheckpointForPrompt(cp);
+    for (const pat of expect.mustMatch || []) {
+      if (!new RegExp(pat, "i").test(formatted)) {
+        fails.push(`checkpoint format missing /${pat}/`);
+      }
+    }
+    return {
+      name: traceName,
+      ok: fails.length === 0,
+      fails,
+      mode: "memory",
+    };
+  }
+
+  const workspaceSrc = path.join(dir, "files");
   const root = await fs.mkdtemp(path.join(os.tmpdir(), `hill-${traceName}-`));
   await copyDir(workspaceSrc, root);
-  for (const step of trace.steps || []) {
-    await applyTool(root, step);
+  try {
+    for (const step of trace.steps || []) {
+      await applyTool(root, step);
+    }
+    const fails = await scoreExpect(root, expect);
+    return { name: traceName, ok: fails.length === 0, fails, mode: "replay" };
+  } finally {
+    await fs.rm(root, { recursive: true, force: true }).catch(() => undefined);
   }
-  const fails = await scoreExpect(root, expect);
-  await fs.rm(root, { recursive: true, force: true }).catch(() => undefined);
-  return { name: traceName, ok: fails.length === 0, fails, mode: "replay" };
 }
 
 /**
- * One-shot live: ask Ollama for a single native tool call on the fixture prompt.
- * Scores whether the first tool matches expect.liveTool (optional).
+ * Live one-shot with normalize/repair (matches production agent path).
  */
 async function liveOneShot(traceName) {
   const dir = path.join(tracesDir, traceName);
   const prompt = await fs.readFile(path.join(dir, "prompt.txt"), "utf8");
   const expect = await readJson(path.join(dir, "expect.json"));
+  if (expect.mode === "repair" || expect.mode === "memory") {
+    return { name: traceName, ok: true, fails: [], mode: "live-skip" };
+  }
   const ollamaUrl = (process.env.OLLAMA_URL || "http://127.0.0.1:11434").replace(
     /\/$/,
     "",
@@ -130,9 +220,15 @@ async function liveOneShot(traceName) {
   const model = process.env.OLLAMA_MODEL || "qwen2.5-coder:7b";
   const tools = toOllamaTools(
     CODING_TOOL_SPECS.filter((t) =>
-      ["read_file", "list_files", "str_replace", "write_file", "run"].includes(
-        t.name,
-      ),
+      [
+        "read_file",
+        "list_files",
+        "search_files",
+        "str_replace",
+        "write_file",
+        "screenshot_url",
+        "run",
+      ].includes(t.name),
     ),
   );
 
@@ -149,7 +245,10 @@ async function liveOneShot(traceName) {
         {
           role: "system",
           content:
-            "You are DAT STARCODER. Call exactly one tool to make progress. Prefer str_replace for small edits.",
+            "You are DAT STARCODER. Call exactly one tool to make progress. " +
+            "Prefer str_replace for small edits, write_file for new files, " +
+            "search_files before editing unfamiliar code, screenshot_url for index.html. " +
+            'Never emit tool name undefined. JSON fallback: {"tool":"...","args":{...}}',
         },
         {
           role: "user",
@@ -169,32 +268,59 @@ async function liveOneShot(traceName) {
     };
   }
   const data = await res.json();
+  const content = String(data.message?.content || "");
   const calls = mergeToolCalls([], data.message?.tool_calls || []);
-  const action = firstToolCallAction(calls);
+  let native = firstToolCallAction(calls);
+  if (native && !native.tool) native = null;
+  const raw = native
+    ? { tool: native.tool, args: native.args }
+    : (() => {
+        try {
+          const start = content.indexOf("{");
+          const end = content.lastIndexOf("}");
+          if (start >= 0 && end > start) {
+            return JSON.parse(content.slice(start, end + 1));
+          }
+        } catch {
+          /* ignore */
+        }
+        return null;
+      })();
+  const normalized = normalizeAgentAction(raw, content);
   /** @type {string[]} */
   const fails = [];
-  if (!action) {
-    // Fallback: parse JSON tool from content
-    const content = String(data.message?.content || "");
-    const m = content.match(/"tool"\s*:\s*"(\w+)"/);
-    if (!m) fails.push("no native tool_calls and no JSON tool in content");
-    else if (expect.liveTool && m[1] !== expect.liveTool) {
-      fails.push(`wanted tool ${expect.liveTool}, got ${m[1]}`);
+  if (!normalized.ok || !normalized.action?.tool) {
+    fails.push(
+      `no usable tool after normalize (${normalized.reason || "unparsed"}); content=${content.slice(0, 120)}`,
+    );
+  } else if (expect.liveTool && normalized.action.tool !== expect.liveTool) {
+    fails.push(
+      `wanted tool ${expect.liveTool}, got ${normalized.action.tool}`,
+    );
+  }
+  if (
+    expect.liveArgsPath &&
+    normalized.action?.args &&
+    String(normalized.action.args.path || "") !== expect.liveArgsPath
+  ) {
+    // Soft: first tool may be read/list; only fail if write_file with wrong path
+    if (normalized.action.tool === "write_file") {
+      fails.push(
+        `wanted path ${expect.liveArgsPath}, got ${normalized.action.args.path}`,
+      );
     }
-  } else if (expect.liveTool && action.tool !== expect.liveTool) {
-    fails.push(`wanted tool ${expect.liveTool}, got ${action.tool}`);
   }
   return {
     name: traceName,
     ok: fails.length === 0,
     fails,
     mode: "live",
-    tool: action?.tool || null,
+    tool: normalized.action?.tool || null,
+    repaired: Boolean(normalized.repaired),
   };
 }
 
 async function main() {
-  const names = (await fs.readdir(tracesDir)).filter(async () => true);
   const traceNames = [];
   for (const n of await fs.readdir(tracesDir)) {
     if (await pathExists(path.join(tracesDir, n, "trace.json"))) {
@@ -202,14 +328,15 @@ async function main() {
     }
   }
   assert.ok(traceNames.length > 0, "no traces found");
+  traceNames.sort();
 
   let failed = 0;
   for (const name of traceNames) {
     const result = await replayTrace(name);
-    if (result.ok) console.log(`ok   replay:${name}`);
+    if (result.ok) console.log(`ok   ${result.mode}:${name}`);
     else {
       failed += 1;
-      console.error(`FAIL replay:${name} — ${result.fails.join("; ")}`);
+      console.error(`FAIL ${result.mode}:${name} — ${result.fails.join("; ")}`);
     }
   }
 
@@ -219,8 +346,12 @@ async function main() {
       if (!expect.liveTool) continue;
       try {
         const result = await liveOneShot(name);
-        if (result.ok) console.log(`ok   live:${name} tool=${result.tool}`);
-        else {
+        if (result.mode === "live-skip") continue;
+        if (result.ok) {
+          console.log(
+            `ok   live:${name} tool=${result.tool}${result.repaired ? " (repaired)" : ""}`,
+          );
+        } else {
           failed += 1;
           console.error(`FAIL live:${name} — ${result.fails.join("; ")}`);
         }
@@ -239,7 +370,7 @@ async function main() {
     console.error(`\n${failed} hillclimb case(s) failed`);
     process.exit(1);
   }
-  console.log("\nhillclimb ok");
+  console.log(`\nhillclimb ok (${traceNames.length} traces)`);
 }
 
 await main();

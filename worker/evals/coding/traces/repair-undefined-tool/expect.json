@@ -1,0 +1,25 @@
+{
+  "mode": "repair",
+  "repairs": [
+    {
+      "rawAction": { "tool": "undefined", "args": {} },
+      "assistantText": "The tool 'undefined' is not recognized. write_file path=index.js content=\nconsole.log(\"ok\");",
+      "wantTool": "write_file"
+    },
+    {
+      "rawAction": null,
+      "assistantText": "Use screenshot_url on the workspace index.html preview (file:// or local server).",
+      "wantTool": "screenshot_url"
+    },
+    {
+      "rawAction": { "args": { "query": "Hello Continuity" } },
+      "assistantText": "Find where \"Hello Continuity\" is defined",
+      "wantTool": "search_files"
+    },
+    {
+      "rawAction": { "tool": "writeFile", "args": { "path": "x.js", "content": "1" } },
+      "assistantText": "",
+      "wantTool": "write_file"
+    }
+  ]
+}

@@ -1,0 +1,5 @@
+{
+  "steps": [
+    { "tool": "screenshot_url", "args": { "url": "index.html", "name": "preview" } }
+  ]
+}

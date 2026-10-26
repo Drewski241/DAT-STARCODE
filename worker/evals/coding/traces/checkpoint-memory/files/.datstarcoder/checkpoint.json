@@ -1,0 +1,9 @@
+{
+  "goal": "coding",
+  "neverDo": ["xdg-open / desktop browser on worker"],
+  "openBugs": [],
+  "filesTouched": ["index.html", "package.json"],
+  "lastCommand": "npm install playwright",
+  "verifyStatus": null,
+  "decisions": ["Plan locked (2026-10-26)"]
+}

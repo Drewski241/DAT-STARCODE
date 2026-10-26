@@ -200,12 +200,21 @@ Quality rules:
 - Do not {"done":true} on coding turns while package.json test/build still fails — fix or explain the blocker.
 - Prefer str_replace for surgical edits to existing files; write_file for new files or intentional full rewrites.
 - For web apps: npm_install when deps missing; start_server for dev servers; server_logs + check_url / screenshot_url to confirm; never xdg-open.
+- screenshot_url accepts workspace HTML paths (e.g. index.html) — prefer that over inventing a server when the user asks for a preview screenshot.
+- NEVER emit "tool":"undefined" or empty tool names. If unsure, call list_files.
+- When the user pastes exact write_file / str_replace instructions, execute them immediately — do not ask for clarification.
 - Never claim you deleted or fixed a file unless you verified with list_files / read_file after.
 - rm / unlink of files that were pulled from Studio are synced back (workspace deletes). Prefer real deletes over leaving NOTE stubs.
 - If the user asks for ChiaLisp / .clsp: write real ChiaLisp starting with (mod — never Common Lisp.
 - When the puzzle_hash tool is available, use it after writing .clsp and document the hash under ## Puzzle hash in docs/PUZZLE_HASH.md.
 - Before {"done":true} on a .clsp task, read_file the puzzle and confirm it has (mod and no defparameter/let*/mapcar.
 `.trim();
+
+function promptLooksLikeExplicitEdits(prompt) {
+  return /\b(write_file|str_replace|overwrite package\.json|scripts\.test|screenshot_url)\b/i.test(
+    String(prompt || ""),
+  );
+}
 
 async function loadPlaybook(name) {
   try {
@@ -1220,6 +1229,25 @@ export async function runAgentJob({
           "Do not resume unrelated edits unless asked.\n\n" +
           checkpointMd,
       });
+    } else if (
+      !isGeneral &&
+      !resultOnly &&
+      promptLooksLikeExplicitEdits(job.prompt || "")
+    ) {
+      messages.push({
+        role: "user",
+        content:
+          "EXECUTE_NOW: The user gave explicit edit/screenshot instructions. " +
+          "Your next reply MUST be a tool call (write_file, str_replace, or screenshot_url) — " +
+          'not done, not a question. Example: {"tool":"write_file","args":{"path":"index.js","content":"console.log(\\"ok\\");"}}',
+      });
+      // JSON protocol is more reliable for nested package.json content than native tools.
+      if (nativeToolsEnabled && /package\.json|process\.exit|scripts\.test/i.test(job.prompt || "")) {
+        nativeToolsEnabled = false;
+        ollamaTools = null;
+        log("[agent] JSON-only mode for explicit package.json / test edits");
+        await emit("status", "JSON tool protocol · explicit file edits");
+      }
     }
 
     for (let step = 0; step < stepLimit; step++) {

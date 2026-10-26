@@ -1,0 +1,1 @@
+(repair-only) Recover a valid tool from broken assistant outputs seen in production.

@@ -1,0 +1,5 @@
+{
+  "mode": "memory",
+  "mustMatch": ["neverDo|never do|xdg-open", "filesTouched|files touched|index\\.html|package\\.json"],
+  "liveTool": null
+}
