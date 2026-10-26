@@ -36,3 +36,25 @@ if (pw) {
 }
 
 server.close();
+
+// Workspace-relative HTML → file:// (no HTTP server required for path resolve)
+{
+  const fileRoot = await fs.mkdtemp(path.join(os.tmpdir(), "dsc-shot-file-"));
+  await fs.writeFile(
+    path.join(fileRoot, "index.html"),
+    "<html><title>File</title><body>file</body></html>",
+    "utf8",
+  );
+  const fileShot = await captureScreenshot(fileRoot, {
+    url: "index.html",
+    name: "filehtml",
+  });
+  if (pw) {
+    assert.equal(fileShot.ok, true, fileShot.message);
+    assert.match(String(fileShot.url || ""), /^file:/);
+  } else {
+    assert.equal(fileShot.ok, false);
+    assert.match(String(fileShot.message), /Playwright not installed/i);
+  }
+  await fs.rm(fileRoot, { recursive: true, force: true });
+}

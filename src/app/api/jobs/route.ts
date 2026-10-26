@@ -81,10 +81,9 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  const resolved = resolveModel(body.model, body.prompt);
-
   let parentJobId: string | null = null;
   let context: string | null = null;
+  let preferCoding = false;
 
   // Prefer explicit continue; otherwise last completed turn in the project.
   const continueId = body.continueFromJobId?.trim() || null;
@@ -93,6 +92,7 @@ export async function POST(req: NextRequest) {
     if (built) {
       parentJobId = built.parent.id;
       context = built.context;
+      preferCoding = true;
       if (!projectId && built.parent.projectId) {
         projectId = built.parent.projectId;
       }
@@ -101,6 +101,7 @@ export async function POST(req: NextRequest) {
     const prior = await listJobsForProject(projectId);
     const lastDone = [...prior].reverse().find((j) => j.status === "completed");
     if (lastDone) {
+      preferCoding = true;
       const built = await buildContinueContext(lastDone.id, auth.account.id);
       if (built) {
         parentJobId = built.parent.id;
@@ -108,6 +109,8 @@ export async function POST(req: NextRequest) {
       }
     }
   }
+
+  const resolved = resolveModel(body.model, body.prompt, { preferCoding });
 
   try {
     const result = await enqueueJob({

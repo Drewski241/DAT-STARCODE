@@ -70,6 +70,11 @@ import {
   firstToolCallAction,
   trimMessagesForContext,
 } from "./ollama-tools.mjs";
+import {
+  normalizeAgentAction,
+  toolRepairMessage,
+  isCheckpointQuestion,
+} from "./action-normalize.mjs";
 import { checkHttpUrl, extractListenUrls } from "./http-check.mjs";
 import {
   captureScreenshot,
@@ -907,8 +912,12 @@ export async function runAgentJob({
     const goal = inferGoal(
       [job.prompt, job.context].filter(Boolean).join("\n"),
     );
+    const checkpointQuestionEarly = isCheckpointQuestion(job.prompt || "");
     const hardTask = goal.hard;
-    const isGeneral = goal.id === "general";
+    // Memory / checkpoint questions must stay on the coding workspace path
+    // (load checkpoint, no web-search-only general loop).
+    const isGeneral =
+      goal.id === "general" && !checkpointQuestionEarly;
     const isShopping = isGeneral && SHOPPING_HINT.test(job.prompt || "");
     const resultOnly = RESULT_ONLY_HINT.test(job.prompt || "");
     // Shopping needs a few tool calls + one synthesis — keep budget modest so
@@ -1191,11 +1200,26 @@ export async function runAgentJob({
         "Include ranked purchase paths, caveats (no invented premiums), ## Sources with real https URLs from observations, and ## Next steps.",
       ].join(" ");
 
-    const ollamaTools = NATIVE_TOOLS
+    let nativeToolsEnabled = NATIVE_TOOLS && !isGeneral;
+    let ollamaTools = nativeToolsEnabled
       ? toOllamaTools(CODING_TOOL_SPECS, { general: isGeneral })
-      : null;
+      : isGeneral && NATIVE_TOOLS
+        ? toOllamaTools(CODING_TOOL_SPECS, { general: true })
+        : null;
     if (ollamaTools?.length) {
       log(`[agent] native tools enabled (${ollamaTools.length})`);
+    }
+    let invalidToolStreak = 0;
+    const checkpointQuestion = isCheckpointQuestion(job.prompt || "");
+    if (checkpointQuestion && checkpointMd) {
+      messages.push({
+        role: "user",
+        content:
+          "MEMORY_QUESTION: Answer ONLY from the Project checkpoint / durable goal below. " +
+          "List decisions, neverDo, openBugs, filesTouched, lastCommand, verifyStatus. " +
+          "Do not resume unrelated edits unless asked.\n\n" +
+          checkpointMd,
+      });
     }
 
     for (let step = 0; step < stepLimit; step++) {
@@ -1258,7 +1282,9 @@ export async function runAgentJob({
         break;
       }
 
-      const nativeAction = firstToolCallAction(nativeToolCalls);
+      let nativeAction = firstToolCallAction(nativeToolCalls);
+      // Empty/partial native tool_calls → prefer JSON text in content.
+      if (nativeAction && !nativeAction.tool) nativeAction = null;
       if (nativeAction) {
         messages.push({
           role: "assistant",
@@ -1268,25 +1294,66 @@ export async function runAgentJob({
       } else {
         messages.push({ role: "assistant", content });
       }
-      const action = nativeAction
+      const rawAction = nativeAction
         ? {
             thought: content,
             tool: nativeAction.tool,
             args: nativeAction.args,
           }
         : parseAction(content);
-
-      if (!action) {
+      const normalized = normalizeAgentAction(rawAction, content, {
+        general: isGeneral,
+      });
+      if (!normalized.ok || !normalized.action) {
+        invalidToolStreak += 1;
+        if (invalidToolStreak >= 2 && nativeToolsEnabled) {
+          nativeToolsEnabled = false;
+          ollamaTools = null;
+          log("[agent] disabling native tools after invalid tool streak");
+          await emit("status", "Falling back to JSON tool protocol");
+        }
         messages.push({
           role: "user",
-          content: isGeneral
-            ? 'Could not parse JSON. Reply with only one JSON object, e.g. {"tool":"web_search","args":{"query":"..."}} or {"done":true,"message":"..."}'
-            : 'Could not parse JSON. Reply with only one JSON object, e.g. {"tool":"list_files","args":{}} or {"done":true,"message":"..."}',
+          content:
+            (normalized.reason === "unparsed" || !rawAction
+              ? isGeneral
+                ? 'Could not parse JSON. Reply with only one JSON object, e.g. {"tool":"web_search","args":{"query":"..."}} or {"done":true,"message":"..."}'
+                : 'Could not parse JSON. Reply with only one JSON object, e.g. {"tool":"list_files","args":{}} or {"done":true,"message":"..."}'
+              : toolRepairMessage({ reason: normalized.reason })) +
+            (checkpointQuestion
+              ? '\nIf this is a memory question, reply {"done":true,"message":"..."} summarizing the checkpoint.'
+              : ""),
         });
         continue;
       }
+      const action = normalized.action;
+      if (normalized.repaired) {
+        log(`[agent] repaired action → ${action.tool || "done"}`);
+      }
+      invalidToolStreak = 0;
 
       if (action.done) {
+        if (checkpointQuestion && checkpointMd && stepsLeft > 1) {
+          const msg = String(action.message || "");
+          const grounded =
+            /neverDo|never do|openBugs|open bugs|filesTouched|files touched|lastCommand|verifyStatus|checkpoint/i.test(
+              msg,
+            ) ||
+            (Array.isArray(checkpoint?.neverDo) &&
+              checkpoint.neverDo.some((n) =>
+                msg.toLowerCase().includes(String(n).toLowerCase().slice(0, 24)),
+              ));
+          if (!grounded) {
+            messages.push({
+              role: "user",
+              content:
+                "Not done — MEMORY_QUESTION answers must cite checkpoint fields " +
+                "(neverDo / openBugs / filesTouched / lastCommand / verifyStatus). " +
+                'Rewrite {"done":true,"message":"..."} from the checkpoint only.',
+            });
+            continue;
+          }
+        }
         if (
           !isGeneral &&
           !resultOnly &&
@@ -1338,6 +1405,12 @@ export async function runAgentJob({
                 continue;
               }
               codingVerifyStatus = "passed";
+            } else if (plan.hasPackage && !plan.commands.length) {
+              codingVerifyStatus = "skipped";
+              await emit(
+                "status",
+                "Coding verify skipped · no test/build scripts in package.json",
+              );
             }
           } catch (err) {
             log(
@@ -1532,7 +1605,8 @@ export async function runAgentJob({
           /* no server */
         }
         const shot = await captureScreenshot(root, {
-          url: args.url,
+          url: args.url || args.path || "index.html",
+          path: args.path,
           name: args.shotName || args.label || "preview",
           fullPage: args.fullPage,
           logText,
@@ -2168,6 +2242,19 @@ export async function runAgentJob({
             } catch {
               /* non-fatal */
             }
+          } else if (plan.hasPackage && !plan.commands.length) {
+            codingVerifyStatus = codingVerifyStatus || "skipped";
+            finalMessage += [
+              "",
+              "## Coding verify skipped",
+              "",
+              "package.json has no `test` / `build` / `typecheck` scripts — nothing to gate on.",
+              "Add a `scripts.test` (or build) if you want the done-gate to run.",
+            ].join("\n");
+            await emit(
+              "status",
+              "Coding verify skipped · no test/build scripts",
+            );
           }
         } catch (err) {
           log(

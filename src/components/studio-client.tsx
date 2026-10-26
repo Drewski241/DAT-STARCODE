@@ -772,7 +772,9 @@ export function StudioClient() {
               promptGoal.label === "Multi-file coding"
             ? "Skill pack · web-app"
             : null;
-  const resolvedForPrice = resolveModel(modelId, prompt);
+  const resolvedForPrice = resolveModel(modelId, prompt, {
+    preferCoding: Boolean(projectId && jobs.length > 0),
+  });
   const turnPrice = priceJob({
     prompt,
     modelId: resolvedForPrice.resolved,

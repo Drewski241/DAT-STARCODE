@@ -72,6 +72,14 @@ function check(id, cond, detail = "") {
 
   const multi = inferGoal("Refactor this Next.js react app across files");
   check("goal-multi-hard", multi.id === "coding" && multi.hard === true);
+
+  const heading = inferGoal("Change the heading to Hello Continuity");
+  check("goal-heading-followup", heading.id === "coding");
+
+  const memory = inferGoal(
+    "What did we learn last turn? Summarize open bugs from the checkpoint.",
+  );
+  check("goal-checkpoint-q", memory.id === "coding");
 }
 
 // str_replace uniqueness
@@ -192,6 +200,26 @@ function check(id, cond, detail = "") {
   check(
     "diff-summary",
     diff.changed.includes("a.ts") && diff.added.includes("b.ts"),
+  );
+}
+
+{
+  const {
+    normalizeAgentAction,
+    normalizeToolName,
+    isCheckpointQuestion,
+  } = await import("../../action-normalize.mjs");
+  check("tool-name-undef", normalizeToolName("undefined") === null);
+  check(
+    "tool-repair-write",
+    normalizeAgentAction(
+      { tool: "undefined", args: {} },
+      "write_file path=index.js content=\nconsole.log(1)",
+    ).action?.tool === "write_file",
+  );
+  check(
+    "checkpoint-q",
+    isCheckpointQuestion("What did we learn last turn from the checkpoint?"),
   );
 }
 

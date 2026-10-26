@@ -29,26 +29,58 @@ export async function loadPlaywright() {
  * }} opts
  */
 export async function captureScreenshot(root, opts = {}) {
-  let url = String(opts.url || "").trim();
+  let url = String(opts.url || opts.path || "").trim();
   if (!url && opts.logText) {
     url = extractListenUrls(opts.logText)[0] || "";
+  }
+  // Workspace-relative HTML → file:// so Studio can preview without a server.
+  if (url && !/^https?:\/\//i.test(url) && !/^file:/i.test(url)) {
+    const rel = url.replace(/^\.\//, "");
+    if (/\.(html?|htm)$/i.test(rel) || rel === "index.html") {
+      const full = path.resolve(root, rel);
+      const rootResolved = path.resolve(root);
+      if (
+        full === rootResolved ||
+        full.startsWith(rootResolved + path.sep)
+      ) {
+        try {
+          await fs.access(full);
+          url = `file://${full}`;
+        } catch {
+          return {
+            ok: false,
+            message: `screenshot path not found in workspace: ${rel}`,
+          };
+        }
+      }
+    }
   }
   if (!url) {
     return {
       ok: false,
       message:
-        "screenshot_url needs url (http://127.0.0.1:PORT/) or a running start_server with a listen line in logs",
+        "screenshot_url needs url (http://127.0.0.1:PORT/ or index.html) or a running start_server with a listen line in logs",
     };
   }
 
-  // Quick reachability first (also SSRF-guards to localhost).
-  const probe = await checkHttpUrl(url);
-  if (!probe.ok) {
+  /** @type {{ ok: boolean, status?: number, url?: string, title?: string, message?: string }} */
+  let probe = { ok: true, url, message: "file" };
+  if (/^https?:\/\//i.test(url)) {
+    // Quick reachability first (also SSRF-guards to localhost).
+    probe = await checkHttpUrl(url);
+    if (!probe.ok) {
+      return {
+        ok: false,
+        url,
+        probe,
+        message: `page not reachable: ${probe.message}`,
+      };
+    }
+  } else if (!/^file:/i.test(url)) {
     return {
       ok: false,
       url,
-      probe,
-      message: `page not reachable: ${probe.message}`,
+      message: "screenshot_url only allows http(s) localhost or workspace .html paths",
     };
   }
 

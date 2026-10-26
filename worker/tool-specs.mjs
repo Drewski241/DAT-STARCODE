@@ -71,8 +71,13 @@ export const CODING_TOOL_SPECS = [
   {
     name: "screenshot_url",
     description:
-      "Playwright screenshot of a localhost URL; saves Studio preview JSON + base64 sidecar",
-    args: { url: "string?", name: "string?", fullPage: "boolean?" },
+      "Playwright screenshot of localhost URL or workspace HTML path (e.g. index.html); saves Studio preview JSON + base64 sidecar",
+    args: {
+      url: "string?",
+      path: "string?",
+      name: "string?",
+      fullPage: "boolean?",
+    },
   },
   {
     name: "web_search",
