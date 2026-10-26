@@ -28,7 +28,7 @@ import {
   isCheckpointQuestion,
 } from "../../action-normalize.mjs";
 import { formatCheckpointForPrompt } from "../../project-memory.mjs";
-import { captureScreenshot } from "../../screenshot.mjs";
+import { captureScreenshot, loadPlaywright } from "../../screenshot.mjs";
 import { searchWorkspace } from "../../workspace-retrieve.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -99,7 +99,14 @@ async function applyTool(root, step) {
       path: args.path,
       name: args.name || "preview",
     });
-    if (!shot.ok) throw new Error(shot.message || "screenshot failed");
+    if (!shot.ok) {
+      const msg = String(shot.message || "screenshot failed");
+      // Soft-skip when Chromium/Playwright isn't on the box — still run other traces.
+      if (/Playwright not installed/i.test(msg)) {
+        return { ok: true, tool, skipped: true, skipReason: msg };
+      }
+      throw new Error(msg);
+    }
     return { ok: true, tool };
   }
   throw new Error(`unsupported replay tool: ${tool}`);
@@ -193,8 +200,22 @@ async function replayTrace(traceName) {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), `hill-${traceName}-`));
   await copyDir(workspaceSrc, root);
   try {
+    /** @type {string|null} */
+    let skipReason = null;
     for (const step of trace.steps || []) {
-      await applyTool(root, step);
+      const applied = await applyTool(root, step);
+      if (applied?.skipped && applied.skipReason) {
+        skipReason = String(applied.skipReason);
+      }
+    }
+    if (skipReason) {
+      return {
+        name: traceName,
+        ok: true,
+        fails: [],
+        mode: "replay-skip",
+        skipReason,
+      };
     }
     const fails = await scoreExpect(root, expect);
     return { name: traceName, ok: fails.length === 0, fails, mode: "replay" };
@@ -333,7 +354,11 @@ async function main() {
   let failed = 0;
   for (const name of traceNames) {
     const result = await replayTrace(name);
-    if (result.ok) console.log(`ok   ${result.mode}:${name}`);
+    if (result.ok && result.mode === "replay-skip") {
+      console.log(
+        `skip ${name} — ${result.skipReason || "optional dependency missing"}`,
+      );
+    } else if (result.ok) console.log(`ok   ${result.mode}:${name}`);
     else {
       failed += 1;
       console.error(`FAIL ${result.mode}:${name} — ${result.fails.join("; ")}`);
@@ -341,9 +366,16 @@ async function main() {
   }
 
   if (process.env.HILLCLIMB_LIVE === "1") {
+    const pw = await loadPlaywright();
     for (const name of traceNames) {
       const expect = await readJson(path.join(tracesDir, name, "expect.json"));
       if (!expect.liveTool) continue;
+      if (expect.liveTool === "screenshot_url" && !pw) {
+        console.log(
+          `skip live:${name} — Playwright not installed (npm i -D playwright && npx playwright install chromium)`,
+        );
+        continue;
+      }
       try {
         const result = await liveOneShot(name);
         if (result.mode === "live-skip") continue;
