@@ -138,6 +138,17 @@ function check(id, cond, detail = "") {
     ) === true &&
       isIntentionalVerifyFail("please fix npm test") === false,
   );
+
+  const { recoverActionFromText } = await import("../../action-normalize.mjs");
+  const findWhere = recoverActionFromText(
+    "Find where Hello Continuity is defined and change it to Hello Search",
+  );
+  check(
+    "search-find-where-query",
+    findWhere?.tool === "search_files" &&
+      /Hello Continuity/i.test(String(findWhere?.args?.query || "")) &&
+      findWhere?.args?.query !== "TODO",
+  );
 }
 
 // str_replace uniqueness

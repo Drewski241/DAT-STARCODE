@@ -1317,6 +1317,40 @@ export async function runAgentJob({
         log("[agent] JSON-only mode for explicit package.json / test edits");
         await emit("status", "JSON tool protocol · explicit file edits");
       }
+    } else if (
+      !isGeneral &&
+      !resultOnly &&
+      !checkpointQuestion &&
+      /\b(find where|search_files|change .+ to )\b/i.test(job.prompt || "")
+    ) {
+      // RAG-lite: one workspace search before the model wanders.
+      const q =
+        (job.prompt || "").match(/["“]([^"”]+)["”]/)?.[1] ||
+        (job.prompt || "").match(/find where\s+(.+?)\s+is\b/i)?.[1] ||
+        (job.prompt || "").match(/\bHello\s+[A-Za-z][A-Za-z0-9 _-]{0,40}/)?.[0] ||
+        "Hello";
+      try {
+        const hits = await searchWorkspace(root, String(q).slice(0, 80), {
+          maxHits: 12,
+        });
+        const lines = (hits.hits || [])
+          .slice(0, 8)
+          .map((h) => `- ${h.path}:${h.line} ${h.text}`)
+          .join("\n");
+        messages.push({
+          role: "user",
+          content:
+            `RAG_LITE search for “${String(q).slice(0, 80)}” (${hits.engine}, ${hits.hits?.length || 0} hits):\n` +
+            (lines || "(no hits)") +
+            "\n\nEXECUTE_NOW: call str_replace (or search_files again) on the hit path — do not list_files thrash.",
+        });
+        log(`[agent] rag-lite search “${String(q).slice(0, 40)}” → ${hits.hits?.length || 0}`);
+        await emit("status", `RAG-lite · ${hits.hits?.length || 0} hit(s)`);
+      } catch (err) {
+        log(
+          `[agent] rag-lite: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
     }
 
     for (let step = 0; step < stepLimit; step++) {
