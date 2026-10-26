@@ -14,6 +14,7 @@ import {
   codingWorkspaceWorthVerify,
   planCodingVerify,
   verifyObservationOk,
+  isIntentionalVerifyFail,
 } from "../../coding-verify.mjs";
 import {
   isAllowedServerCommand,
@@ -129,6 +130,13 @@ function check(id, cond, detail = "") {
   check(
     "screenshot-early-done",
     shotEarly.exit === true && /Preview screenshot/i.test(String(shotEarly.doneMessage || "")),
+  );
+  check(
+    "intentional-verify-fail",
+    isIntentionalVerifyFail(
+      'scripts.test is exactly: node -e "process.exit(1)". Do not change the test to pass.',
+    ) === true &&
+      isIntentionalVerifyFail("please fix npm test") === false,
   );
 }
 

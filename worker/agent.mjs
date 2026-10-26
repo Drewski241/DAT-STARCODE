@@ -64,6 +64,7 @@ import {
   planCodingVerify,
   codingWorkspaceWorthVerify,
   verifyObservationOk,
+  isIntentionalVerifyFail,
 } from "./coding-verify.mjs";
 import { formatToolSpecsForPrompt, CODING_TOOL_SPECS } from "./tool-specs.mjs";
 import {
@@ -104,6 +105,10 @@ const HARD_TASK_STEPS = Number(process.env.AGENT_HARD_TASK_STEPS || 40);
 const RESULT_ONLY_HINT =
   /\b(replace\s+result\.md\s+only|result\.md\s+only|do\s+not\s+edit\s+any\s+\.clsp|don'?t\s+edit\s+(any\s+)?\.clsp|summarize\s+the\s+(three\s+)?puzzles)\b/i;
 const RESULT_ONLY_STEPS = Number(process.env.AGENT_RESULT_ONLY_STEPS || 8);
+/** Overwrite puzzles from templates — seed already ran; tiny budget to hash + done. */
+const OVERWRITE_FROM_TEMPLATES_HINT =
+  /\b(overwrite|restore|re-?seed|copy)\b[\s\S]{0,80}\b(from\s+templates|templates\/secure-treasury)\b/i;
+const OVERWRITE_SEED_STEPS = Number(process.env.AGENT_OVERWRITE_SEED_STEPS || 12);
 const RUN_TIMEOUT_MS = Number(process.env.AGENT_RUN_TIMEOUT_MS || 20000);
 const INSTALL_TIMEOUT_MS = Number(process.env.AGENT_INSTALL_TIMEOUT_MS || 180000);
 const VERIFY_TIMEOUT_MS = Number(process.env.AGENT_VERIFY_TIMEOUT_MS || 120000);
@@ -930,16 +935,27 @@ export async function runAgentJob({
       goal.id === "general" && !checkpointQuestionEarly;
     const isShopping = isGeneral && SHOPPING_HINT.test(job.prompt || "");
     const resultOnly = RESULT_ONLY_HINT.test(job.prompt || "");
+    const overwriteFromTemplates =
+      !resultOnly &&
+      goal.wantCdv &&
+      OVERWRITE_FROM_TEMPLATES_HINT.test(job.prompt || "") &&
+      /\b(do not rewrite|don'?t rewrite|do not edit|keep interest_payout|from templates)\b/i.test(
+        job.prompt || "",
+      );
+    const intentionalVerifyFail = isIntentionalVerifyFail(job.prompt || "");
     // Shopping needs a few tool calls + one synthesis — keep budget modest so
     // the model finishes instead of tool-looping until the cap.
     // RESULT-only polish stays hard-domain for model routing but must not burn 40 steps.
+    // Overwrite-from-templates: seed already restores puzzles — don't burn 40 rewrites.
     const stepLimit = resultOnly
       ? RESULT_ONLY_STEPS
-      : hardTask
-        ? HARD_TASK_STEPS
-        : isShopping
-          ? Math.max(MAX_STEPS, 10)
-          : MAX_STEPS;
+      : overwriteFromTemplates
+        ? OVERWRITE_SEED_STEPS
+        : hardTask
+          ? HARD_TASK_STEPS
+          : isShopping
+            ? Math.max(MAX_STEPS, 10)
+            : MAX_STEPS;
 
     await emit(
       "status",
@@ -985,6 +1001,14 @@ export async function runAgentJob({
         `[agent] result-only polish — stepLimit=${stepLimit}, skip seed/spend-fixtures`,
       );
       await emit("status", "RESULT-only polish · skipping seed/fixtures");
+    } else if (overwriteFromTemplates) {
+      log(
+        `[agent] overwrite-from-templates — stepLimit=${stepLimit} (seed+hash+done)`,
+      );
+      await emit(
+        "status",
+        `Overwrite-from-templates · up to ${stepLimit} steps (no rewrite thrash)`,
+      );
     }
 
     const playbook = await loadPlaybooks(goal.playbooks);
@@ -1247,6 +1271,15 @@ export async function runAgentJob({
           'Reply with {"done":true,"message":"..."} citing those fields.\n\n' +
           checkpointMd +
           (scaffold ? `\n\n${scaffold}` : ""),
+      });
+    } else if (overwriteFromTemplates) {
+      messages.push({
+        role: "user",
+        content:
+          "SEED_DONE: puzzles/*.clsp were already restored from templates/secure-treasury at turn start. " +
+          "Do NOT rewrite or invent ChiaLisp. Next: puzzle_hash on puzzles/savings_vault.clsp → " +
+          "docs/PUZZLE_HASH.md (bare 64-hex), optionally confirm docs/SECURITY.md, then " +
+          '{"done":true,"message":"..."}.',
       });
     } else if (
       !isGeneral &&
@@ -1852,11 +1885,13 @@ export async function runAgentJob({
           || (await fs.access(path.join(root, "index.html")).then(() => "index.html").catch(() => null));
         const prevStreak = Number(checkpoint?.verifyFailStreak || 0);
         const verifyFailStreak =
-          codingVerifyStatus === "failed"
-            ? prevStreak + 1
-            : codingVerifyStatus === "passed"
-              ? 0
-              : prevStreak;
+          intentionalVerifyFail
+            ? prevStreak // capability demo — don't escalate on purpose-fail
+            : codingVerifyStatus === "failed"
+              ? prevStreak + 1
+              : codingVerifyStatus === "passed"
+                ? 0
+                : prevStreak;
         const prevToolStreak = Number(checkpoint?.invalidToolStreak || 0);
         const invalidToolStreakSaved =
           peakInvalidToolStreak > 0
@@ -2283,16 +2318,31 @@ export async function runAgentJob({
             }
             if (failures.length) {
               codingVerifyStatus = "failed";
-              finalMessage += [
-                "",
-                "## Coding verify failed",
-                "",
-                "DAT STARCODER re-ran project scripts after the agent loop:",
-                ...failures.map((f) => `- ${f}`),
-                "",
-                "Fix with another turn (or paste the log via Studio Fix this).",
-              ].join("\n");
-              await emit("log", "Coding verify failed");
+              finalMessage += intentionalVerifyFail
+                ? [
+                    "",
+                    "## Coding verify failed",
+                    "",
+                    "Intentional fail as requested — verify gate observed the failing test:",
+                    ...failures.map((f) => `- ${f}`),
+                    "",
+                    "Do not “fix” this on the next turn unless the user asks.",
+                  ].join("\n")
+                : [
+                    "",
+                    "## Coding verify failed",
+                    "",
+                    "DAT STARCODER re-ran project scripts after the agent loop:",
+                    ...failures.map((f) => `- ${f}`),
+                    "",
+                    "Fix with another turn (or paste the log via Studio Fix this).",
+                  ].join("\n");
+              await emit(
+                "log",
+                intentionalVerifyFail
+                  ? "Coding verify failed (intentional)"
+                  : "Coding verify failed",
+              );
             } else {
               codingVerifyStatus = "passed";
               finalMessage += [
@@ -2305,18 +2355,31 @@ export async function runAgentJob({
             }
             try {
               const prevStreak = Number(checkpoint?.verifyFailStreak || 0);
-              await saveCheckpoint(root, {
+              /** @type {Record<string, unknown>} */
+              const verifyPatch = {
                 verifyStatus: codingVerifyStatus,
-                verifyFailStreak:
-                  codingVerifyStatus === "failed"
+                verifyFailStreak: intentionalVerifyFail
+                  ? prevStreak
+                  : codingVerifyStatus === "failed"
                     ? prevStreak + 1
                     : codingVerifyStatus === "passed"
                       ? 0
                       : prevStreak,
                 lastCommand,
-                lastErrorKind,
+                lastErrorKind: intentionalVerifyFail
+                  ? "intentional_verify_fail"
+                  : lastErrorKind,
                 lastErrorSnippet,
-              });
+              };
+              if (intentionalVerifyFail) {
+                const mem = mergeLongHorizon(checkpoint, {
+                  neverDo: [
+                    "Auto-fix intentional process.exit(1) demo test",
+                  ],
+                });
+                if (Array.isArray(mem.neverDo)) verifyPatch.neverDo = mem.neverDo;
+              }
+              await saveCheckpoint(root, verifyPatch);
             } catch {
               /* non-fatal */
             }

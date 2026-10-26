@@ -4,6 +4,7 @@ import {
   testCommandForScript,
   codingWorkspaceWorthVerify,
   verifyObservationOk,
+  isIntentionalVerifyFail,
 } from "./coding-verify.mjs";
 
 assert.deepEqual(
@@ -27,6 +28,14 @@ assert.deepEqual(
 assert.deepEqual(pickVerifyCommands({ scripts: { lint: "eslint ." } }), [
   "npm run lint",
 ]);
+
+assert.equal(
+  isIntentionalVerifyFail(
+    'Overwrite package.json so scripts.test is exactly: node -e "process.exit(1)"\nDo not change the test to pass.',
+  ),
+  true,
+);
+assert.equal(isIntentionalVerifyFail("Fix the failing unit tests"), false);
 
 assert.equal(
   codingWorkspaceWorthVerify([{ path: "package.json" }, { path: "index.html" }]),

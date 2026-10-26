@@ -93,3 +93,17 @@ export function verifyObservationOk(observation) {
   if (m && Number(m[1]) !== 0) return false;
   return true;
 }
+
+/**
+ * User asked for a failing test on purpose (capability / demo) — do not treat
+ * verify fail as a bug to escalate or "fix next turn".
+ * @param {string} prompt
+ */
+export function isIntentionalVerifyFail(prompt) {
+  const p = String(prompt || "");
+  return (
+    /\b(do not change the test to pass|leave (the )?test failing|intentional(ly)? fail|process\.exit\(1\)|scripts\.test is exactly)\b/i.test(
+      p,
+    ) && /\b(test|npm test|scripts\.test|process\.exit)\b/i.test(p)
+  );
+}
