@@ -58,17 +58,22 @@ export function formatProjectGoalForPrompt(cp) {
  * Prefer checkpoint-touched files when ranking continue context.
  * @param {string[]} paths
  * @param {string[]} filesTouched
+ * @param {{ softCoding?: boolean }} [opts] softCoding demotes seeded .clsp / puzzles/
  */
-export function rankContinueFiles(paths, filesTouched = []) {
+export function rankContinueFiles(paths, filesTouched = [], opts = {}) {
   const touched = new Set(
     (filesTouched || []).map((p) => String(p).replace(/\\/g, "/")),
   );
+  const softCoding = Boolean(opts.softCoding);
   const scored = paths.map((p, i) => {
     let score = 0;
     if (touched.has(p)) score += 100;
     if (/(^|\/)(package\.json|index\.html|PLAN\.md)$/i.test(p)) score += 40;
     if (/\.(tsx?|jsx?|mjs|css)$/i.test(p)) score += 10;
     if (/RESULT\.md$|README\.md$/i.test(p)) score -= 20;
+    if (softCoding && (/\.clsp$/i.test(p) || /(^|\/)puzzles\//i.test(p))) {
+      score -= 80;
+    }
     return { p, score, i };
   });
   scored.sort((a, b) => b.score - a.score || a.i - b.i);

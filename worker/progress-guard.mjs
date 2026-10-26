@@ -18,6 +18,26 @@ export function isScreenshotThenDonePrompt(prompt) {
 }
 
 /**
+ * Intentional failing-test demo (#7): package.json test + index.js written → done.
+ * @param {string} prompt
+ * @param {string[]} filesTouched
+ */
+export function intentionalFailFilesReady(prompt, filesTouched) {
+  const p = String(prompt || "");
+  if (
+    !/\b(do not change the test to pass|leave (the )?test failing|scripts\.test is exactly|process\.exit\(1\))\b/i.test(
+      p,
+    )
+  ) {
+    return false;
+  }
+  const touched = (filesTouched || []).map((f) => String(f).replace(/^\.\//, ""));
+  const hasPkg = touched.some((f) => /(^|\/)package\.json$/i.test(f));
+  const hasIndex = touched.some((f) => /(^|\/)index\.js$/i.test(f));
+  return hasPkg && hasIndex;
+}
+
+/**
  * @param {{
  *   writes: number,
  *   runs: number,
@@ -25,7 +45,7 @@ export function isScreenshotThenDonePrompt(prompt) {
  *   lastObservation?: string,
  *   screenshotOk?: boolean,
  * }} state
- * @param {{ maxIdle?: number, screenshotThenDone?: boolean }} [opts]
+ * @param {{ maxIdle?: number, screenshotThenDone?: boolean, intentionalFailReady?: boolean }} [opts]
  */
 export function shouldEarlyExit(state, opts = {}) {
   if (opts.screenshotThenDone && state.screenshotOk) {
@@ -35,6 +55,15 @@ export function shouldEarlyExit(state, opts = {}) {
         "Screenshot captured — reply done with Preview screenshot path; do not start unrelated ChiaLisp / file edits.",
       doneMessage:
         "Preview screenshot saved under .datstarcoder/ — open Preview screenshot in Studio.",
+    };
+  }
+  if (opts.intentionalFailReady && Number(state.writes || 0) >= 2) {
+    return {
+      exit: true,
+      reason:
+        "Intentional failing test files written — call done; do not change the test to pass.",
+      doneMessage:
+        "Wrote package.json (scripts.test → process.exit(1)) and index.js. Left the test failing as requested.",
     };
   }
   const maxIdle = opts.maxIdle ?? 6;

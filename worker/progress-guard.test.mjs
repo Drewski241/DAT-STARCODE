@@ -3,6 +3,7 @@ import {
   shouldEarlyExit,
   updateProgressState,
   isScreenshotThenDonePrompt,
+  intentionalFailFilesReady,
 } from "./progress-guard.mjs";
 
 let state = { writes: 0, runs: 0, idleSteps: 0 };
@@ -52,5 +53,19 @@ assert.equal(shotState.screenshotOk, true);
 const shotExit = shouldEarlyExit(shotState, { screenshotThenDone: true });
 assert.equal(shotExit.exit, true);
 assert.match(String(shotExit.doneMessage || ""), /Preview screenshot/);
+
+assert.equal(
+  intentionalFailFilesReady(
+    'scripts.test is exactly: node -e "process.exit(1)". Do not change the test to pass.',
+    ["package.json", "index.js"],
+  ),
+  true,
+);
+const failExit = shouldEarlyExit(
+  { writes: 2, runs: 0, idleSteps: 0 },
+  { intentionalFailReady: true },
+);
+assert.equal(failExit.exit, true);
+assert.match(String(failExit.doneMessage || ""), /Left the test failing/);
 
 console.log("progress-guard.test.mjs ok");

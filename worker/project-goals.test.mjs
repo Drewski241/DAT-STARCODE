@@ -19,4 +19,12 @@ const ranked = rankContinueFiles(
 assert.equal(ranked[0], "src/a.ts");
 assert.ok(ranked.indexOf("package.json") < ranked.indexOf("RESULT.md"));
 
+const soft = rankContinueFiles(
+  ["puzzles/vault.clsp", "index.html", "package.json"],
+  [],
+  { softCoding: true },
+);
+assert.equal(soft[soft.length - 1], "puzzles/vault.clsp");
+assert.ok(soft.indexOf("package.json") < soft.indexOf("puzzles/vault.clsp"));
+
 console.log("project-goals.test.mjs ok");

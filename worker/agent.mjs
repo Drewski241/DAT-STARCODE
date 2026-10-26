@@ -52,6 +52,7 @@ import {
   shouldEarlyExit,
   updateProgressState,
   isScreenshotThenDonePrompt,
+  intentionalFailFilesReady,
 } from "./progress-guard.mjs";
 import { applyStrReplace } from "./str-replace.mjs";
 import {
@@ -1792,7 +1793,13 @@ export async function runAgentJob({
       progress = updateProgressState(tool, observation, progress);
       const early =
         !isGeneral && !resultOnly
-          ? shouldEarlyExit(progress, { screenshotThenDone })
+          ? shouldEarlyExit(progress, {
+              screenshotThenDone,
+              intentionalFailReady: intentionalFailFilesReady(
+                job.prompt || "",
+                filesTouched,
+              ),
+            })
           : { exit: false };
       let obsMsg = `OBSERVATION:\n${observation}`;
       if (isGeneral && researchReady()) {
