@@ -1,0 +1,4 @@
+{
+  "filesContain": { "README.md": "# Demo" },
+  "liveTool": "write_file"
+}

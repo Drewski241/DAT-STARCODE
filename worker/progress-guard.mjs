@@ -52,7 +52,7 @@ export function updateProgressState(tool, observation, state) {
     const m =
       obs.match(/^OK wrote (\S+)/i) || obs.match(/^OK str_replace (\S+)/i);
     if (m) next.lastWritePath = m[1];
-  } else if (tool === "run" || tool === "start_server" || tool === "npm_install") {
+  } else if (tool === "run" || tool === "start_server" || tool === "npm_install" || tool === "check_url" || tool === "screenshot_url") {
     next.runs = (next.runs || 0) + 1;
     next.idleSteps = 0;
   } else if (tool === "read_file" || tool === "list_files") {

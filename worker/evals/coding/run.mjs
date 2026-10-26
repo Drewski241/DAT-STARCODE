@@ -127,7 +127,12 @@ function check(id, cond, detail = "") {
       "benign_noise",
   );
   const spec = formatToolSpecsForPrompt();
-  check("tool-specs", /str_replace/.test(spec) && /start_server/.test(spec));
+  check(
+    "tool-specs",
+    /str_replace/.test(spec) &&
+      /start_server/.test(spec) &&
+      /screenshot_url/.test(spec),
+  );
 }
 
 {

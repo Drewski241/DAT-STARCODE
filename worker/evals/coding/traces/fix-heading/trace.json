@@ -1,0 +1,12 @@
+{
+  "steps": [
+    {
+      "tool": "str_replace",
+      "args": {
+        "path": "index.html",
+        "oldText": "<h1>Welcome</h1>",
+        "newText": "<h1>DAT Forge</h1>"
+      }
+    }
+  ]
+}

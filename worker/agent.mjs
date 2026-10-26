@@ -71,6 +71,10 @@ import {
 } from "./ollama-tools.mjs";
 import { checkHttpUrl, extractListenUrls } from "./http-check.mjs";
 import {
+  captureScreenshot,
+  ensurePreviewFilesListed,
+} from "./screenshot.mjs";
+import {
   deriveProjectGoal,
   formatProjectGoalForPrompt,
 } from "./project-goals.mjs";
@@ -115,6 +119,8 @@ function toolHeadline(tool, args = {}) {
       return `Reading server logs · ${a.name || "default"}`;
     case "check_url":
       return `Checking ${String(a.url || "url").slice(0, 64)}`;
+    case "screenshot_url":
+      return `Screenshot ${String(a.url || a.name || "page").slice(0, 48)}`;
     case "web_search":
       return `Searching “${String(a.query || "").slice(0, 72)}”`;
     case "fetch_url":
@@ -172,7 +178,7 @@ Quality rules:
 - Infer the user's end goal from a short prompt; use the domain playbook(s) below — do not wait for a novel-length spec.
 - For hard goals: FIRST write_file PLAN.md (Goal / Done when / Files), then implement.
 - Prefer str_replace for surgical edits to existing files; write_file for new files or intentional full rewrites.
-- For web apps: npm_install when deps missing; start_server for dev servers; server_logs to confirm; never xdg-open.
+- For web apps: npm_install when deps missing; start_server for dev servers; server_logs + check_url / screenshot_url to confirm; never xdg-open.
 - Never claim you deleted or fixed a file unless you verified with list_files / read_file after.
 - rm / unlink of files that were pulled from Studio are synced back (workspace deletes). Prefer real deletes over leaving NOTE stubs.
 - If the user asks for ChiaLisp / .clsp: write real ChiaLisp starting with (mod — never Common Lisp.
@@ -520,7 +526,7 @@ function agentSystem(job, github, githubClone, extras = {}) {
       : "",
     "On every turn respond with ONLY one JSON object (optionally in a ```json fence):",
     "",
-    '1) Call a tool: {"thought":"...","tool":"list_files"|"read_file"|"write_file"|"str_replace"|"run"|"npm_install"|"start_server"|"stop_server"|"server_logs"|"check_url"|"web_search"|"fetch_url"|"clvm_verify"|"spend_check"|"puzzle_hash","args":{...}}',
+    '1) Call a tool: {"thought":"...","tool":"list_files"|"read_file"|"write_file"|"str_replace"|"run"|"npm_install"|"start_server"|"stop_server"|"server_logs"|"check_url"|"screenshot_url"|"web_search"|"fetch_url"|"clvm_verify"|"spend_check"|"puzzle_hash","args":{...}}',
     '   - list_files args: {}',
     '   - read_file args: {"path":"relative/path"}',
     '   - write_file args: {"path":"relative/path","content":"full file contents"}',
@@ -531,6 +537,7 @@ function agentSystem(job, github, githubClone, extras = {}) {
     '   - stop_server args: {"name":"default"}',
     '   - server_logs args: {"name":"default","lines":80}',
     '   - check_url args: {"url":"http://127.0.0.1:3000/"}',
+    '   - screenshot_url args: {"url":"http://127.0.0.1:3000/","name":"preview"}',
     '   - web_search args: {"query":"..."}',
     '   - fetch_url args: {"url":"https://..."}',
     '   - clvm_verify args: {"program":"...","solution":"()","mode":"brun"|"run","expect":"optional"}',
@@ -1356,6 +1363,27 @@ export async function runAgentJob({
           null,
           2,
         );
+      } else if (tool === "screenshot_url") {
+        let logText = "";
+        try {
+          const logs = await serverLogs(root, {
+            name: args.name || "default",
+          });
+          logText = String(logs.logTail || "");
+        } catch {
+          /* no server */
+        }
+        const shot = await captureScreenshot(root, {
+          url: args.url,
+          name: args.shotName || args.label || "preview",
+          fullPage: args.fullPage,
+          logText,
+        });
+        observation = JSON.stringify(shot, null, 2);
+        if (shot.ok) {
+          lastErrorKind = null;
+          lastErrorSnippet = null;
+        }
       } else if (tool === "run") {
         const cmd = String(args.command || "true");
         lastCommand = cmd;
@@ -1403,7 +1431,8 @@ export async function runAgentJob({
           tool === "start_server" ||
           tool === "stop_server" ||
           tool === "server_logs" ||
-          tool === "check_url")
+          tool === "check_url" ||
+          tool === "screenshot_url")
       ) {
         observation =
           "ERROR: this is a general Q&A turn — do not create code or run shell. Use web_search / fetch_url, then {" +
@@ -1763,6 +1792,9 @@ export async function runAgentJob({
 
     // General Q&A should not litter the project workspace with scaffold files.
     let files = isGeneral ? [] : await collectLocalFiles(root);
+    if (!isGeneral) {
+      files = await ensurePreviewFilesListed(root, files);
+    }
 
     // Drop leftover root stubs that fail sibling CREATE_COIN checks when the
     // real puzzles/savings_vault.clsp pair is present (any hard goal).

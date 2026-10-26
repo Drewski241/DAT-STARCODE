@@ -1,0 +1,5 @@
+{
+  "filesContain": { "index.html": "<h1>DAT Forge</h1>" },
+  "filesNotContain": { "index.html": "<h1>Welcome</h1>" },
+  "liveTool": "str_replace"
+}

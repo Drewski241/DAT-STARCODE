@@ -1,0 +1,11 @@
+{
+  "steps": [
+    {
+      "tool": "write_file",
+      "args": {
+        "path": "README.md",
+        "content": "# Demo\n\nShip it.\n"
+      }
+    }
+  ]
+}

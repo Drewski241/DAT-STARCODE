@@ -9,8 +9,9 @@
     "start": "next start -H 0.0.0.0 -p 43127",
     "lint": "next lint",
     "worker": "node worker/index.mjs",
-    "test:worker": "node worker/verify.test.mjs && node worker/tooling.test.mjs && node worker/hash-doc.test.mjs && node worker/curry-check.test.mjs && node worker/secure-checks.test.mjs && node worker/seed-templates.test.mjs && node worker/treasury-rescue.test.mjs && node worker/error-classify.test.mjs && node worker/progress-guard.test.mjs && node worker/str-replace.test.mjs && node worker/coding-verify.test.mjs && node worker/process-supervisor.test.mjs && node worker/ollama-tools.test.mjs && node worker/http-check.test.mjs && node worker/project-goals.test.mjs && node worker/project-memory.test.mjs && node worker/cdv.test.mjs && node worker/evals/chialisp/run.mjs && node worker/evals/coding/run.mjs",
+    "test:worker": "node worker/verify.test.mjs && node worker/tooling.test.mjs && node worker/hash-doc.test.mjs && node worker/curry-check.test.mjs && node worker/secure-checks.test.mjs && node worker/seed-templates.test.mjs && node worker/treasury-rescue.test.mjs && node worker/error-classify.test.mjs && node worker/progress-guard.test.mjs && node worker/str-replace.test.mjs && node worker/coding-verify.test.mjs && node worker/process-supervisor.test.mjs && node worker/ollama-tools.test.mjs && node worker/http-check.test.mjs && node worker/screenshot.test.mjs && node worker/project-goals.test.mjs && node worker/project-memory.test.mjs && node worker/cdv.test.mjs && node worker/evals/chialisp/run.mjs && node worker/evals/coding/run.mjs && node worker/evals/coding/hillclimb.mjs",
     "test:coding": "node worker/evals/coding/run.mjs",
+    "test:hillclimb": "node worker/evals/coding/hillclimb.mjs",
     "test:chialisp": "node worker/evals/chialisp/run.mjs"
   },
   "dependencies": {
@@ -40,6 +41,9 @@
     "uuid": "^14.0.3",
     "zod": "^4.6.7"
   },
+  "optionalDependencies": {
+    "playwright": "^1.55.0"
+  },
   "devDependencies": {
     "@eslint/eslintrc": "^3",
     "@types/node": "^20",
@@ -49,6 +53,7 @@
     "@types/uuid": "^10.0.0",
     "eslint": "^9",
     "eslint-config-next": "^15.1.0",
+    "playwright": "^1.64.1",
     "postcss": "^8",
     "tailwindcss": "^3.4.1",
     "tsx": "^4.23.15",

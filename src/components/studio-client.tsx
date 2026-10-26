@@ -87,6 +87,12 @@ export function StudioClient() {
   const [previewPath, setPreviewPath] = useState<string | null>(null);
   const [previewContent, setPreviewContent] = useState<string | null>(null);
   const [htmlPreview, setHtmlPreview] = useState(false);
+  const [shotPreview, setShotPreview] = useState<{
+    url: string;
+    title: string | null;
+    dataUrl: string;
+    capturedAt?: string;
+  } | null>(null);
   const [panel, setPanel] = useState<"output" | "workspace">("output");
   const [githubConfigured, setGithubConfigured] = useState(false);
   const [repos, setRepos] = useState<GithubRepo[]>([]);
@@ -106,6 +112,8 @@ export function StudioClient() {
     setWorkspaceFiles([]);
     setPreviewPath(null);
     setPreviewContent(null);
+    setShotPreview(null);
+    setHtmlPreview(false);
     setLiveEvents([]);
     setLiveDraft("");
     setPanel("output");
@@ -530,6 +538,8 @@ export function StudioClient() {
       setWorkspaceFiles([]);
       setPreviewPath(null);
       setPreviewContent(null);
+      setShotPreview(null);
+      setHtmlPreview(false);
       return;
     }
     void loadWorkspace(selectedId);
@@ -538,6 +548,8 @@ export function StudioClient() {
   async function openFile(jobId: string, filePath: string) {
     setPreviewPath(filePath);
     setPreviewContent("Loading…");
+    setShotPreview(null);
+    setHtmlPreview(false);
     setPanel("workspace");
     const res = await fetch(
       `/api/jobs/${jobId}/workspace/file?path=${encodeURIComponent(filePath)}`,
@@ -549,6 +561,59 @@ export function StudioClient() {
       return;
     }
     setPreviewContent(data.content);
+  }
+
+  async function openScreenshotPreview(jobId: string) {
+    setPanel("workspace");
+    setHtmlPreview(false);
+    setPreviewContent("Loading screenshot…");
+    setPreviewPath(".datstarcoder/preview.meta.json");
+    try {
+      const metaRes = await fetch(
+        `/api/jobs/${jobId}/workspace/file?path=${encodeURIComponent(".datstarcoder/preview.meta.json")}`,
+        { credentials: "same-origin" },
+      );
+      const metaData = await metaRes.json();
+      if (!metaRes.ok) {
+        setPreviewContent(metaData.error ?? "No screenshot preview yet");
+        setShotPreview(null);
+        return;
+      }
+      const meta = JSON.parse(String(metaData.content || "{}")) as {
+        url?: string;
+        title?: string | null;
+        b64Rel?: string;
+        capturedAt?: string;
+      };
+      const b64Rel =
+        meta.b64Rel || ".datstarcoder/screenshots/preview.png.b64";
+      const b64Res = await fetch(
+        `/api/jobs/${jobId}/workspace/file?path=${encodeURIComponent(b64Rel)}`,
+        { credentials: "same-origin" },
+      );
+      const b64Data = await b64Res.json();
+      if (!b64Res.ok || !b64Data.content) {
+        setPreviewContent(
+          b64Data.error ??
+            "Screenshot metadata found but image sidecar missing",
+        );
+        setShotPreview(null);
+        return;
+      }
+      const dataUrl = `data:image/png;base64,${String(b64Data.content).trim()}`;
+      setShotPreview({
+        url: meta.url || "",
+        title: meta.title ?? null,
+        dataUrl,
+        capturedAt: meta.capturedAt,
+      });
+      setPreviewContent(null);
+    } catch (err) {
+      setShotPreview(null);
+      setPreviewContent(
+        err instanceof Error ? err.message : "Could not load screenshot",
+      );
+    }
   }
 
   async function createProject() {
@@ -1177,11 +1242,25 @@ export function StudioClient() {
                           )?.path || "index.html";
                         await openFile(selected.id, htmlPath);
                         setHtmlPreview(true);
+                        setShotPreview(null);
                         setPanel("workspace");
                       }}
                       className="font-mono text-[11px] uppercase tracking-widest text-emerald-300/90 hover:text-emerald-200"
                     >
                       Preview HTML
+                    </button>
+                  )}
+                  {workspaceFiles.some(
+                    (f) =>
+                      f.path === ".datstarcoder/preview.meta.json" ||
+                      /\.png\.b64$/i.test(f.path),
+                  ) && (
+                    <button
+                      type="button"
+                      onClick={() => void openScreenshotPreview(selected.id)}
+                      className="font-mono text-[11px] uppercase tracking-widest text-sky-300/90 hover:text-sky-200"
+                    >
+                      Preview screenshot
                     </button>
                   )}
                   {workspaceFiles.length > 0 && (
@@ -1240,10 +1319,39 @@ export function StudioClient() {
                           </li>
                         ))}
                       </ul>
-                      {htmlPreview &&
-                      previewPath &&
-                      /\.html?$/i.test(previewPath) &&
-                      previewContent ? (
+                      {shotPreview ? (
+                        <div className="min-h-[12rem] space-y-2">
+                          <div className="flex flex-wrap items-center justify-between gap-2">
+                            <p className="font-mono text-[11px] text-sky-300/90">
+                              Playwright screenshot
+                              {shotPreview.title
+                                ? ` · ${shotPreview.title}`
+                                : ""}
+                              {shotPreview.url ? ` · ${shotPreview.url}` : ""}
+                            </p>
+                            <button
+                              type="button"
+                              className="font-mono text-[11px] text-steel-400 hover:text-copper-200"
+                              onClick={() => setShotPreview(null)}
+                            >
+                              Close
+                            </button>
+                          </div>
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          <img
+                            src={shotPreview.dataUrl}
+                            alt={
+                              shotPreview.title ||
+                              shotPreview.url ||
+                              "Workspace screenshot"
+                            }
+                            className="max-h-[28rem] w-full border border-copper-800/60 bg-ink-950 object-contain object-top"
+                          />
+                        </div>
+                      ) : htmlPreview &&
+                        previewPath &&
+                        /\.html?$/i.test(previewPath) &&
+                        previewContent ? (
                         <div className="min-h-[12rem] space-y-2">
                           <div className="flex items-center justify-between gap-2">
                             <p className="font-mono text-[11px] text-emerald-300/90">

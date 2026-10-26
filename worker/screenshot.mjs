@@ -1,0 +1,198 @@
+/**
+ * Optional Playwright screenshots (headless). Falls back with install hints.
+ * Saves UTF-8-safe preview JSON for Studio sync.
+ */
+import { promises as fs } from "fs";
+import path from "path";
+import { checkHttpUrl, extractListenUrls } from "./http-check.mjs";
+
+export const PREVIEW_JSON_REL = ".datstarcoder/preview.json";
+
+/**
+ * @returns {Promise<false | typeof import('playwright')>}
+ */
+export async function loadPlaywright() {
+  try {
+    return await import("playwright");
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * @param {string} root
+ * @param {{
+ *   url?: string,
+ *   name?: string,
+ *   fullPage?: boolean,
+ *   logText?: string,
+ * }} opts
+ */
+export async function captureScreenshot(root, opts = {}) {
+  let url = String(opts.url || "").trim();
+  if (!url && opts.logText) {
+    url = extractListenUrls(opts.logText)[0] || "";
+  }
+  if (!url) {
+    return {
+      ok: false,
+      message:
+        "screenshot_url needs url (http://127.0.0.1:PORT/) or a running start_server with a listen line in logs",
+    };
+  }
+
+  // Quick reachability first (also SSRF-guards to localhost).
+  const probe = await checkHttpUrl(url);
+  if (!probe.ok) {
+    return {
+      ok: false,
+      url,
+      probe,
+      message: `page not reachable: ${probe.message}`,
+    };
+  }
+
+  const pw = await loadPlaywright();
+  if (!pw) {
+    return {
+      ok: false,
+      url,
+      probe,
+      playwright: false,
+      message:
+        "Playwright not installed on worker. Run: npm i -D playwright && npx playwright install chromium",
+      hint: "check_url still works without Playwright; install it for screenshots in Studio.",
+    };
+  }
+
+  const name = String(opts.name || "preview")
+    .replace(/[^a-zA-Z0-9._-]+/g, "_")
+    .slice(0, 40);
+  const shotDir = path.join(root, ".datstarcoder", "screenshots");
+  await fs.mkdir(shotDir, { recursive: true });
+  const pngPath = path.join(shotDir, `${name}.png`);
+
+  let browser;
+  try {
+    browser = await pw.chromium.launch({
+      headless: true,
+      args: ["--no-sandbox", "--disable-dev-shm-usage"],
+    });
+    const page = await browser.newPage({
+      viewport: { width: 1280, height: 800 },
+    });
+    await page.goto(url, { waitUntil: "networkidle", timeout: 20_000 });
+    const title = await page.title();
+    await page.screenshot({
+      path: pngPath,
+      fullPage: Boolean(opts.fullPage),
+      type: "png",
+    });
+    const buf = await fs.readFile(pngPath);
+    const pngBase64 = buf.toString("base64");
+    // Keep a UTF-8 sidecar so Studio sync (text-only) still gets the image.
+    const b64Rel = `.datstarcoder/screenshots/${name}.png.b64`;
+    await fs.writeFile(path.join(root, b64Rel), pngBase64, "utf8");
+
+    const preview = {
+      url,
+      title: title || probe.title || null,
+      status: probe.status,
+      name,
+      pngRel: `.datstarcoder/screenshots/${name}.png`,
+      b64Rel,
+      pngBase64,
+      bytes: buf.length,
+      capturedAt: new Date().toISOString(),
+      playwright: true,
+    };
+    await fs.writeFile(
+      path.join(root, PREVIEW_JSON_REL),
+      `${JSON.stringify({ ...preview, pngBase64: undefined, hasImage: true, b64Rel }, null, 2)}\n`,
+      "utf8",
+    );
+    // Also write a small index that embeds truncated meta + points at b64
+    await fs.writeFile(
+      path.join(root, ".datstarcoder", "preview.meta.json"),
+      `${JSON.stringify(
+        {
+          url: preview.url,
+          title: preview.title,
+          status: preview.status,
+          name: preview.name,
+          b64Rel: preview.b64Rel,
+          capturedAt: preview.capturedAt,
+        },
+        null,
+        2,
+      )}\n`,
+      "utf8",
+    );
+
+    return {
+      ok: true,
+      url,
+      title: preview.title,
+      status: probe.status,
+      b64Rel,
+      previewPath: PREVIEW_JSON_REL,
+      bytes: buf.length,
+      message: `screenshot ok · ${title || url} (${buf.length} bytes)`,
+    };
+  } catch (err) {
+    return {
+      ok: false,
+      url,
+      probe,
+      message: err instanceof Error ? err.message : String(err),
+    };
+  } finally {
+    if (browser) {
+      try {
+        await browser.close();
+      } catch {
+        /* ignore */
+      }
+    }
+  }
+}
+
+/**
+ * Collect screenshot base64 sidecars into pushable UTF-8 files.
+ * Binary .png may fail utf8 read — sidecars + preview.meta are enough for Studio.
+ * @param {string} root
+ * @param {{ path: string, content: string }[]} files
+ */
+export async function ensurePreviewFilesListed(root, files) {
+  const out = [...files];
+  const have = new Set(out.map((f) => f.path));
+  for (const rel of [
+    PREVIEW_JSON_REL,
+    ".datstarcoder/preview.meta.json",
+  ]) {
+    if (have.has(rel)) continue;
+    try {
+      const content = await fs.readFile(path.join(root, rel), "utf8");
+      out.push({ path: rel, content });
+      have.add(rel);
+    } catch {
+      /* missing */
+    }
+  }
+  // Include .b64 sidecars (may be large but text)
+  try {
+    const shotDir = path.join(root, ".datstarcoder", "screenshots");
+    const names = await fs.readdir(shotDir);
+    for (const n of names) {
+      if (!n.endsWith(".png.b64")) continue;
+      const rel = `.datstarcoder/screenshots/${n}`;
+      if (have.has(rel)) continue;
+      const content = await fs.readFile(path.join(root, rel), "utf8");
+      if (Buffer.byteLength(content, "utf8") > 900_000) continue;
+      out.push({ path: rel, content });
+    }
+  } catch {
+    /* no shots */
+  }
+  return out;
+}
