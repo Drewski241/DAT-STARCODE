@@ -107,3 +107,77 @@ export function isIntentionalVerifyFail(prompt) {
     ) && /\b(test|npm test|scripts\.test|process\.exit)\b/i.test(p)
   );
 }
+
+/** Canonical scripts.test for Studio capability #7. */
+export const INTENTIONAL_FAIL_TEST_SCRIPT = 'node -e "process.exit(1)"';
+
+/**
+ * Force scripts.test to the intentional fail command; never leave exit(1) on
+ * scripts.dev (live zip f4fc292f put the fail on "dev" and skipped verify).
+ * @param {unknown} pkg
+ * @returns {{ pkg: Record<string, unknown>, changed: boolean, message: string }}
+ */
+export function enforceIntentionalFailScripts(pkg) {
+  const base =
+    pkg && typeof pkg === "object" && !Array.isArray(pkg)
+      ? /** @type {Record<string, unknown>} */ ({ ...pkg })
+      : { name: "workspace", version: "1.0.0", private: true };
+  const scripts =
+    base.scripts && typeof base.scripts === "object" && !Array.isArray(base.scripts)
+      ? /** @type {Record<string, unknown>} */ ({ ...base.scripts })
+      : {};
+  let changed = false;
+  const want = INTENTIONAL_FAIL_TEST_SCRIPT;
+  if (scripts.test !== want) {
+    scripts.test = want;
+    changed = true;
+  }
+  // Undo mistaken "put exit(1) on dev" — restore a normal http-server when needed.
+  if (
+    typeof scripts.dev === "string" &&
+    /process\.exit\(1\)/i.test(scripts.dev)
+  ) {
+    scripts.dev = "http-server";
+    changed = true;
+  }
+  if (!scripts.dev) {
+    scripts.dev = "http-server";
+    changed = true;
+  }
+  base.scripts = scripts;
+  return {
+    pkg: base,
+    changed,
+    message: changed
+      ? `Enforced scripts.test=${JSON.stringify(want)} (dev kept as ${JSON.stringify(scripts.dev)})`
+      : "scripts.test already intentional-fail",
+  };
+}
+
+/**
+ * Read/repair package.json on disk for intentional-fail demos.
+ * @param {string} root
+ * @param {{ readFile?: typeof fs.readFile, writeFile?: typeof fs.writeFile }} [io]
+ */
+export async function ensureIntentionalFailPackageJson(root, io = {}) {
+  const readFile = io.readFile || fs.readFile.bind(fs);
+  const writeFile = io.writeFile || fs.writeFile.bind(fs);
+  const pkgPath = path.join(root, "package.json");
+  let raw = "{}";
+  try {
+    raw = await readFile(pkgPath, "utf8");
+  } catch {
+    raw = "{}";
+  }
+  let parsed = {};
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    parsed = {};
+  }
+  const { pkg, changed, message } = enforceIntentionalFailScripts(parsed);
+  if (changed) {
+    await writeFile(pkgPath, `${JSON.stringify(pkg, null, 2)}\n`, "utf8");
+  }
+  return { changed, message, pkg };
+}

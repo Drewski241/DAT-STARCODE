@@ -5,6 +5,8 @@ import {
   codingWorkspaceWorthVerify,
   verifyObservationOk,
   isIntentionalVerifyFail,
+  enforceIntentionalFailScripts,
+  INTENTIONAL_FAIL_TEST_SCRIPT,
 } from "./coding-verify.mjs";
 
 assert.deepEqual(
@@ -36,6 +38,21 @@ assert.equal(
   true,
 );
 assert.equal(isIntentionalVerifyFail("Fix the failing unit tests"), false);
+
+{
+  // Live zip f4fc292f: model put exit(1) on scripts.dev
+  const fixed = enforceIntentionalFailScripts({
+    name: "my-project",
+    scripts: { dev: 'node -e "process.exit(1)"' },
+  });
+  assert.equal(fixed.changed, true);
+  assert.equal(fixed.pkg.scripts.test, INTENTIONAL_FAIL_TEST_SCRIPT);
+  assert.equal(fixed.pkg.scripts.dev, "http-server");
+  assert.deepEqual(
+    pickVerifyCommands(fixed.pkg),
+    ["npm test"],
+  );
+}
 
 assert.equal(
   codingWorkspaceWorthVerify([{ path: "package.json" }, { path: "index.html" }]),

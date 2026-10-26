@@ -66,6 +66,7 @@ import {
   codingWorkspaceWorthVerify,
   verifyObservationOk,
   isIntentionalVerifyFail,
+  ensureIntentionalFailPackageJson,
 } from "./coding-verify.mjs";
 import { formatToolSpecsForPrompt, CODING_TOOL_SPECS } from "./tool-specs.mjs";
 import {
@@ -1621,6 +1622,15 @@ export async function runAgentJob({
           observation = planGateMessage({ planPresent, planComplete });
         } else {
         observation = await toolWrite(root, args.path, args.content);
+        if (
+          intentionalVerifyFail &&
+          /(^|\/)package\.json$/i.test(String(args.path || ""))
+        ) {
+          const fixed = await ensureIntentionalFailPackageJson(root);
+          if (fixed.changed) {
+            observation += `\n\nAUTO: ${fixed.message}`;
+          }
+        }
         // Nudge + precompute hash as soon as a .clsp lands (don't burn steps).
         if (hasCdv && /\.clsp$/i.test(String(args.path || ""))) {
           const result = await puzzleHashWithCdv(root, String(args.path || ""), {});
@@ -1652,6 +1662,15 @@ export async function runAgentJob({
           observation = planGateMessage({ planPresent, planComplete });
         } else {
           observation = await toolStrReplace(root, args.path, args);
+          if (
+            intentionalVerifyFail &&
+            /(^|\/)package\.json$/i.test(String(args.path || ""))
+          ) {
+            const fixed = await ensureIntentionalFailPackageJson(root);
+            if (fixed.changed) {
+              observation += `\n\nAUTO: ${fixed.message}`;
+            }
+          }
           if (/(^|\/)PLAN\.md$/i.test(String(args.path || ""))) {
             try {
               const planText = await fs.readFile(path.join(root, "PLAN.md"), "utf8");
@@ -1843,6 +1862,22 @@ export async function runAgentJob({
         if (!filesTouched.includes(p)) filesTouched.push(p);
       }
       progress = updateProgressState(tool, observation, progress);
+      if (
+        intentionalVerifyFail &&
+        intentionalFailFilesReady(job.prompt || "", filesTouched)
+      ) {
+        try {
+          const fixed = await ensureIntentionalFailPackageJson(root);
+          if (fixed.changed) {
+            observation += `\n\nAUTO: ${fixed.message}`;
+            if (!filesTouched.includes("package.json")) {
+              filesTouched.push("package.json");
+            }
+          }
+        } catch {
+          /* non-fatal */
+        }
+      }
       const early =
         !isGeneral && !resultOnly
           ? shouldEarlyExit(progress, {
