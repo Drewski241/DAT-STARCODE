@@ -31,6 +31,9 @@ const ALIASES = {
   fetch: "fetch_url",
   search_web: "web_search",
   google: "web_search",
+  search_flight: "search_flights",
+  flights: "search_flights",
+  flight_search: "search_flights",
 };
 
 /**
@@ -152,6 +155,12 @@ export function recoverActionFromText(text) {
       if (queryM) args.query = queryM[1];
       const urlM = raw.match(/"url"\s*:\s*"([^"\\]+)"/);
       if (urlM) args.url = urlM[1];
+      const originM = raw.match(/"origin"\s*:\s*"([A-Za-z]{3})"/);
+      if (originM) args.origin = originM[1].toUpperCase();
+      const destM = raw.match(/"destination"\s*:\s*"([A-Za-z]{3})"/);
+      if (destM) args.destination = destM[1].toUpperCase();
+      const departM = raw.match(/"departDate"\s*:\s*"(\d{4}-\d{2}-\d{2})"/);
+      if (departM) args.departDate = departM[1];
       // Best-effort content recovery (may be truncated mid-string)
       const contentM = raw.match(/"content"\s*:\s*"((?:\\.|[^"\\])*)"?/);
       if (contentM) {
@@ -287,7 +296,7 @@ export function normalizeAgentAction(action, assistantText = "", opts = {}) {
   }
 
   if (opts.general) {
-    const allowed = new Set(["web_search", "fetch_url"]);
+    const allowed = new Set(["web_search", "fetch_url", "search_flights"]);
     if (!allowed.has(tool)) {
       return {
         ok: false,
@@ -322,7 +331,7 @@ export function toolRepairMessage(state = {}) {
   const names = CODING_TOOL_SPECS.map((s) => s.name).join("|");
   if (state.reason === "general_tool_blocked") {
     return (
-      'POLICY: general Q&A may only use web_search / fetch_url, then {"done":true,"message":"..."}.'
+      'POLICY: general Q&A may only use web_search / fetch_url / search_flights, then {"done":true,"message":"..."}.'
     );
   }
   return (

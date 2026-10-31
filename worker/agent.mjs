@@ -70,6 +70,7 @@ import {
   ensureIntentionalFailDeliverables,
 } from "./coding-verify.mjs";
 import { formatToolSpecsForPrompt, CODING_TOOL_SPECS } from "./tool-specs.mjs";
+import { searchFlights } from "./flights.mjs";
 import {
   toOllamaTools,
   mergeToolCalls,
@@ -157,6 +158,8 @@ function toolHeadline(tool, args = {}) {
       return `Searching “${String(a.query || "").slice(0, 72)}”`;
     case "fetch_url":
       return `Fetching ${String(a.url || "").slice(0, 80)}`;
+    case "search_flights":
+      return `Looking up flights ${String(a.origin || "").toUpperCase()} → ${String(a.destination || "").toUpperCase()}`;
     case "puzzle_hash":
       return `Computing puzzle hash for ${a.path || "puzzle"}`;
     case "clvm_verify":
@@ -204,6 +207,17 @@ This turn is everyday Q&A / local how-to — NOT a coding job.
 
 const SHOPPING_HINT =
   /\b(best|cheap|cheapest|affordable|lowest|compare|comparison|which|vs\b|versus|quote|quotes|buy|purchase|insurance|broker|price|cost)\b/i;
+
+const FLIGHT_HINT = /\b(flights?|airfares?|airlines?|itinerar(?:y|ies))\b/i;
+
+const FLIGHT_QNA_RULES = `
+This request needs live flight inventory.
+- You MUST call search_flights before {"done":true}. web_search snippets are not bookable itineraries.
+- search_flights args: origin and destination are 3-letter IATA codes, departDate is YYYY-MM-DD, optional returnDate, adults, currency (default CAD).
+- Do not fetch airline websites. They are JavaScript apps and will not return bookable offers.
+- Do not invent flight numbers, times, or fares. If the observation says no inventory API is configured, say that plainly.
+- Quote only offers that appear in the search_flights observation, including booking links when present.
+`.trim();
 
 const QUALITY_RULES = `
 Quality rules:
@@ -527,17 +541,19 @@ function agentSystem(job, github, githubClone, extras = {}) {
           ...chunks.map((c) => `### ${c.title}\n${c.text}`),
         ].join("\n\n");
 
+  const flightTurn = FLIGHT_HINT.test(job.prompt || "");
   if (isGeneral) {
     return [
       "You are DAT STARCODER, a careful research assistant for everyday and local questions.",
       UNBIASED_QNA,
-      GENERAL_QNA_RULES,
+      flightTurn ? FLIGHT_QNA_RULES : GENERAL_QNA_RULES,
       githubMode,
       "On every turn respond with ONLY one JSON object (optionally in a ```json fence):",
       "",
-      '1) Call a tool: {"thought":"...","tool":"web_search"|"fetch_url","args":{...}}',
+      '1) Call a tool: {"thought":"...","tool":"web_search"|"fetch_url"|"search_flights","args":{...}}',
       '   - web_search args: {"query":"..."}',
       '   - fetch_url args: {"url":"https://..."}',
+      '   - search_flights args: {"origin":"YVR","destination":"NRT","departDate":"YYYY-MM-DD","returnDate":"optional","adults":1,"currency":"CAD"}',
       "",
       '2) Finish: {"done":true,"message":"markdown answer for the user"}',
       "",
@@ -569,7 +585,8 @@ function agentSystem(job, github, githubClone, extras = {}) {
       : "",
     "On every turn respond with ONLY one JSON object (optionally in a ```json fence):",
     "",
-    '1) Call a tool: {"thought":"...","tool":"list_files"|"search_files"|"read_file"|"write_file"|"str_replace"|"run"|"npm_install"|"start_server"|"stop_server"|"server_logs"|"check_url"|"screenshot_url"|"web_search"|"fetch_url"|"clvm_verify"|"spend_check"|"puzzle_hash","args":{...}}',
+    flightTurn ? FLIGHT_QNA_RULES : "",
+    '1) Call a tool: {"thought":"...","tool":"list_files"|"search_files"|"read_file"|"write_file"|"str_replace"|"run"|"npm_install"|"start_server"|"stop_server"|"server_logs"|"check_url"|"screenshot_url"|"web_search"|"fetch_url"|"search_flights"|"clvm_verify"|"spend_check"|"puzzle_hash","args":{...}}',
     '   - list_files args: {}',
     '   - search_files args: {"query":"symbol or error text","glob":"optional/*.ts"}',
     '   - read_file args: {"path":"relative/path"}',
@@ -584,6 +601,7 @@ function agentSystem(job, github, githubClone, extras = {}) {
     '   - screenshot_url args: {"url":"http://127.0.0.1:3000/","name":"preview"}',
     '   - web_search args: {"query":"..."}',
     '   - fetch_url args: {"url":"https://..."}',
+    '   - search_flights args: {"origin":"YVR","destination":"NRT","departDate":"YYYY-MM-DD","returnDate":"optional","adults":1,"currency":"CAD"}',
     '   - clvm_verify args: {"program":"...","solution":"()","mode":"brun"|"run","expect":"optional"}',
     '   - spend_check args: {"program":"...","samples":[{"name":"deposit","solution":"(…)","mode":"brun"}]}',
     '   - puzzle_hash args: {"path":"puzzles/foo.clsp","curryArgs":["optional","cdv","-a","values"]}',
@@ -597,6 +615,7 @@ function agentSystem(job, github, githubClone, extras = {}) {
     "- Prefer small, working changes. Write complete files when creating them.",
     "- Use npm_install / run / start_server to install/build/test/serve when helpful.",
     "- Use web_search when facts may be stale (OS menus, docs, current APIs).",
+    "- For live flight prices or schedules, call search_flights. Do not invent itineraries or open airline sites.",
     "- Never use sudo, su, passwd, or other interactive/privileged commands.",
     "- Prefer static HTML/JS games/apps that need no system packages when possible.",
     "- For games/apps, make something runnable (often index.html).",
@@ -944,6 +963,7 @@ export async function runAgentJob({
     const isGeneral =
       goal.id === "general" && !checkpointQuestionEarly;
     const isShopping = isGeneral && SHOPPING_HINT.test(job.prompt || "");
+    const isFlight = FLIGHT_HINT.test(job.prompt || "");
     const resultOnly = RESULT_ONLY_HINT.test(job.prompt || "");
     const overwriteFromTemplates =
       !resultOnly &&
@@ -972,7 +992,7 @@ export async function runAgentJob({
             ? OVERWRITE_SEED_STEPS
             : hardTask
               ? HARD_TASK_STEPS
-              : isShopping
+              : isShopping || isFlight
                 ? Math.max(MAX_STEPS, 10)
                 : MAX_STEPS;
 
@@ -1127,6 +1147,7 @@ export async function runAgentJob({
     let researchSteps = 0;
     let searchSteps = 0;
     let fetchSteps = 0;
+    let flightSteps = 0;
     /** @type {{ writes: number, runs: number, idleSteps: number, lastWritePath?: string, screenshotOk?: boolean }} */
     let progress = { writes: 0, runs: 0, idleSteps: 0, screenshotOk: false };
     const screenshotThenDone = screenshotThenDoneEarly;
@@ -1259,6 +1280,8 @@ export async function runAgentJob({
 
     const researchReady = () => {
       if (!isGeneral) return true;
+      // Flight offers come from search_flights. Airline pages are not inventory.
+      if (isFlight) return flightSteps >= 1;
       if (isShopping) {
         // One solid search + one official fetch is enough to write the answer.
         return searchSteps >= 1 && fetchSteps >= 1;
@@ -1314,12 +1337,20 @@ export async function runAgentJob({
     };
 
     const finishNudge = () =>
-      [
-        "STOP calling tools.",
-        'Reply NOW with only: {"done":true,"message":"..."}',
-        "Use the OBSERVATION research already gathered.",
-        "Include ranked purchase paths, caveats (no invented premiums), ## Sources with real https URLs from observations, and ## Next steps.",
-      ].join(" ");
+      isFlight
+        ? [
+            "STOP calling tools.",
+            'Reply NOW with only: {"done":true,"message":"..."}',
+            flightSteps < 1
+              ? "search_flights has not returned inventory. Say that plainly. Do not invent flight numbers, times, or fares."
+              : "Quote only offers from the search_flights observation, including flight numbers, times, prices, and booking links when present. Do not invent itineraries.",
+          ].join(" ")
+        : [
+            "STOP calling tools.",
+            'Reply NOW with only: {"done":true,"message":"..."}',
+            "Use the OBSERVATION research already gathered.",
+            "Include ranked purchase paths, caveats (no invented premiums), ## Sources with real https URLs from observations, and ## Next steps.",
+          ].join(" ");
 
     let nativeToolsEnabled = NATIVE_TOOLS && !isGeneral;
     let ollamaTools = nativeToolsEnabled
@@ -1516,7 +1547,9 @@ export async function runAgentJob({
           content:
             (normalized.reason === "unparsed" || !rawAction
               ? isGeneral
-                ? 'Could not parse JSON. Reply with only one JSON object, e.g. {"tool":"web_search","args":{"query":"..."}} or {"done":true,"message":"..."}'
+                ? isFlight
+                  ? 'Could not parse JSON. Reply with only one JSON object, e.g. {"tool":"search_flights","args":{"origin":"YVR","destination":"NRT","departDate":"2026-12-15"}} or {"done":true,"message":"..."}'
+                  : 'Could not parse JSON. Reply with only one JSON object, e.g. {"tool":"web_search","args":{"query":"..."}} or {"done":true,"message":"..."}'
                 : 'Could not parse JSON. Reply with only one JSON object, e.g. {"tool":"list_files","args":{}} or {"done":true,"message":"..."}'
               : toolRepairMessage({ reason: normalized.reason })) +
             (checkpointQuestion
@@ -1624,9 +1657,11 @@ export async function runAgentJob({
         if (mustKeepResearching) {
           messages.push({
             role: "user",
-            content: isShopping
-              ? 'Not done yet. Call web_search (if needed) and fetch_url one official page from results (prefer icbc.com), then {"done":true,...} with ranked paths. Do not invent prices or URLs.'
-              : 'You must research before finishing. Call web_search now, then synthesize a concrete answer. Do not tell the user to Google it themselves.',
+            content: isFlight
+              ? 'Not done yet. Call search_flights with origin, destination, and departDate (YYYY-MM-DD). Do not invent flight numbers, times, or fares, and do not fetch airline websites. Then {"done":true,"message":"..."} using only the offers in the observation.'
+              : isShopping
+                ? 'Not done yet. Call web_search (if needed) and fetch_url one official page from results (prefer icbc.com), then {"done":true,...} with ranked paths. Do not invent prices or URLs.'
+                : 'You must research before finishing. Call web_search now, then synthesize a concrete answer. Do not tell the user to Google it themselves.',
           });
           continue;
         }
@@ -1877,6 +1912,11 @@ export async function runAgentJob({
         fetchSteps += 1;
         rememberUrls(String(args.url || ""));
         rememberUrls(observation);
+      } else if (tool === "search_flights") {
+        observation = await searchFlights(args);
+        researchSteps += 1;
+        flightSteps += 1;
+        rememberUrls(observation);
       } else if (
         isGeneral &&
         (tool === "write_file" ||
@@ -1890,7 +1930,7 @@ export async function runAgentJob({
           tool === "screenshot_url")
       ) {
         observation =
-          "ERROR: this is a general Q&A turn — do not create code or run shell. Use web_search / fetch_url, then {" +
+          "ERROR: this is a general Q&A turn — do not create code or run shell. Use web_search / fetch_url / search_flights, then {" +
           '"done":true,"message":"..."} with a concrete answer.';
       } else if (tool === "clvm_verify") {
         const verified = await clvmVerify(args);
@@ -2094,7 +2134,8 @@ export async function runAgentJob({
     }
 
     // Last-chance synthesis so shopping Q&A never dies on "step limit" alone.
-    if (!finalMessage && isGeneral && researchSteps > 0) {
+    // Flight answers wait for search_flights; web snippets are not inventory.
+    if (!finalMessage && isGeneral && researchSteps > 0 && !(isFlight && flightSteps < 1)) {
       try {
         await emit("status", "Synthesizing answer from research…");
         messages.push({ role: "user", content: finishNudge() });
@@ -2119,7 +2160,15 @@ export async function runAgentJob({
     }
 
     if (!finalMessage) {
-      finalMessage = isGeneral
+      finalMessage =
+        isFlight && flightSteps < 1
+          ? [
+              "# No live flight inventory",
+              "",
+              "search_flights did not return offers, so this answer does not include flight numbers, times, or fares.",
+              "Ask again after KIWI_API_KEY, or AMADEUS_CLIENT_ID and AMADEUS_CLIENT_SECRET, is set on the worker.",
+            ].join("\n")
+          : isGeneral
         ? polishDraft(
             [
               "# Partial research",
@@ -2146,7 +2195,16 @@ export async function runAgentJob({
           ].join("\n");
     }
 
-    if (isGeneral) {
+    if (isGeneral && isFlight) {
+      if (!/## Next steps/i.test(finalMessage)) {
+        finalMessage += [
+          "",
+          "## Next steps",
+          "1. Book only a flight number and fare that appeared in the search_flights result.",
+          "2. If the result said no inventory API is configured, add Kiwi or Amadeus keys on the worker and ask again.",
+        ].join("\n");
+      }
+    } else if (isGeneral) {
       if (!/## Next steps/i.test(finalMessage)) {
         finalMessage += [
           "",

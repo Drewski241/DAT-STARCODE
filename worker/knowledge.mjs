@@ -355,6 +355,21 @@ export const KNOWLEDGE_CHUNKS = [
     text: `British Columbia: basic Autoplan motorcycle insurance is through ICBC (sold via Autoplan brokers / agents). Optional coverages (collision, comprehensive, roadside) may be ICBC and/or other insurers — verify on icbc.com and broker sites via fetch_url. Sport bikes and lower experience often raise optional premiums. "Cheapest honest" path: (1) confirm licence class for the 300cc sport bike, (2) get an ICBC basic quote with VIN/details, (3) get 2 same-day optional quotes (e.g. BCAA + independent Autoplan broker in Victoria), (4) compare total price + deductibles + storage/commute discounts. Never invent $ amounts.`,
   },
   {
+    id: "ev-flights",
+    pack: "everyday",
+    title: "Live flight inventory",
+    keywords: [
+      "flight",
+      "flights",
+      "airfare",
+      "airline",
+      "itinerary",
+      "fare",
+      "airport",
+    ],
+    text: `Live flights: call search_flights with 3-letter IATA origin and destination and departDate YYYY-MM-DD (optional returnDate, adults, currency; default CAD). That tool uses Amadeus or Kiwi. Do not fetch airline websites and do not invent flight numbers, times, or fares. If the observation says no inventory API is configured, say that plainly. Quote only offers that appear in the search_flights observation.`,
+  },
+  {
     id: "pb-deploy",
     pack: "playbook",
     title: "Deploy Amplify / customer-workspaces",

@@ -11,7 +11,13 @@ const tools = toOllamaTools();
 assert.ok(tools.some((t) => t.function.name === "str_replace"));
 assert.ok(tools.some((t) => t.function.name === "check_url"));
 const general = toOllamaTools(undefined, { general: true });
-assert.equal(general.every((t) => ["web_search", "fetch_url"].includes(t.function.name)), true);
+assert.equal(
+  general.every((t) =>
+    ["web_search", "fetch_url", "search_flights"].includes(t.function.name),
+  ),
+  true,
+);
+assert.ok(general.some((t) => t.function.name === "search_flights"));
 
 assert.deepEqual(normalizeToolArgs('{"path":"a.ts"}'), { path: "a.ts" });
 assert.deepEqual(normalizeToolArgs({ path: "b" }), { path: "b" });

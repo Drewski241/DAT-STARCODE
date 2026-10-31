@@ -90,6 +90,19 @@ export const CODING_TOOL_SPECS = [
     args: { url: "string" },
   },
   {
+    name: "search_flights",
+    description:
+      "Look up live bookable flight offers via Amadeus or Kiwi. Use IATA codes and YYYY-MM-DD. Do not open airline websites.",
+    args: {
+      origin: "string",
+      destination: "string",
+      departDate: "string",
+      returnDate: "string?",
+      adults: "number?",
+      currency: "string?",
+    },
+  },
+  {
     name: "clvm_verify",
     description: "Compile/run ChiaLisp or evaluate CLVM",
     args: {

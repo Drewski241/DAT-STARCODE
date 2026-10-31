@@ -99,4 +99,34 @@ assert.equal(recovered?.args?.query, "Hello Continuity");
   assert.match(String(fromProse?.args?.content || ""), /process\.exit\(1\)/);
 }
 
+{
+  assert.equal(normalizeToolName("flights"), "search_flights");
+  assert.equal(normalizeToolName("searchFlight"), "search_flights");
+  const allowed = normalizeAgentAction(
+    {
+      tool: "search_flights",
+      args: { origin: "yvr", destination: "nrt", departDate: "2026-12-15" },
+    },
+    "",
+    { general: true },
+  );
+  assert.equal(allowed.ok, true);
+  assert.equal(allowed.action.tool, "search_flights");
+  const blocked = normalizeAgentAction(
+    { tool: "write_file", args: { path: "a.ts" } },
+    "",
+    { general: true },
+  );
+  assert.equal(blocked.ok, false);
+  assert.equal(blocked.reason, "general_tool_blocked");
+  const truncated = recoverActionFromText(
+    '{"name":"search_flights","arguments":{"origin":"yvr","destination":"lax","departDate":"2026-12-20"',
+  );
+  assert.equal(truncated?.tool, "search_flights");
+  assert.equal(truncated?.args?.origin, "YVR");
+  assert.equal(truncated?.args?.destination, "LAX");
+  assert.equal(truncated?.args?.departDate, "2026-12-20");
+  assert.match(toolRepairMessage({ reason: "general_tool_blocked" }), /search_flights/);
+}
+
 console.log("action-normalize.test.mjs ok");

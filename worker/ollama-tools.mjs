@@ -28,7 +28,12 @@ function argSchema(t) {
  */
 export function toOllamaTools(specs = CODING_TOOL_SPECS, opts = {}) {
   const list = opts.general
-    ? specs.filter((s) => s.name === "web_search" || s.name === "fetch_url")
+    ? specs.filter(
+        (s) =>
+          s.name === "web_search" ||
+          s.name === "fetch_url" ||
+          s.name === "search_flights",
+      )
     : specs;
   return list.map((spec) => {
     /** @type {Record<string, object>} */

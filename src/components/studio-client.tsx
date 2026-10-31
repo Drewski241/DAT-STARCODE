@@ -1717,7 +1717,7 @@ function latestPlayByPlay(events?: JobEvent[] | null) {
 function formatEventMessage(ev: JobEvent) {
   const raw = String(ev.message || "").trim();
   const legacy = raw.match(
-    /^(list_files|read_file|write_file|run|web_search|fetch_url|puzzle_hash|clvm_verify|spend_check)\s*:\s*(ok|error|fail(?:ed)?)\b/i,
+    /^(list_files|read_file|write_file|run|web_search|fetch_url|search_flights|puzzle_hash|clvm_verify|spend_check)\s*:\s*(ok|error|fail(?:ed)?)\b/i,
   );
   if (legacy) {
     const tool = legacy[1];
