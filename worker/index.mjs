@@ -12,8 +12,10 @@
  *   AGENT_MAX_STEPS          default 12
  *   AGENT_HARD_TASK_STEPS    default 40 (ChiaLisp / .clsp prompts)
  *   REQUIRE_CHIALISP_TOOLING default 1 — hard .clsp jobs need cdv + clvm_tools
+ *   WORKER_IP_FAMILY         4 or 6 if claim dies with ECONNRESET on a bad route
  */
 
+import { apiFetch, isTransientFetchError, networkErrorCode } from "./api-fetch.mjs";
 import { runAgentJob } from "./agent.mjs";
 import { probeChialispTooling, toolingFailureLines } from "./tooling.mjs";
 
@@ -59,7 +61,7 @@ async function assertOllamaModel(model) {
 }
 
 async function claim() {
-  const res = await fetch(`${API_BASE}/api/worker/claim`, {
+  const res = await apiFetch(`${API_BASE}/api/worker/claim`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -89,20 +91,24 @@ async function claim() {
 }
 
 async function workspacePost(job, action, files, deletePaths = []) {
-  const res = await fetch(`${API_BASE}/api/worker/workspace`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "x-worker-key": WORKER_KEY,
+  const res = await apiFetch(
+    `${API_BASE}/api/worker/workspace`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-worker-key": WORKER_KEY,
+      },
+      body: JSON.stringify({
+        jobId: job.id,
+        workerId: WORKER_ID,
+        action,
+        files,
+        deletePaths,
+      }),
     },
-    body: JSON.stringify({
-      jobId: job.id,
-      workerId: WORKER_ID,
-      action,
-      files,
-      deletePaths,
-    }),
-  });
+    { timeoutMs: 60_000 },
+  );
   if (!res.ok) {
     const text = await res.text();
     throw new Error(`workspace ${action} ${res.status}: ${text}`);
@@ -180,7 +186,7 @@ async function workspaceAction(job, action, files, deletePaths) {
 
 async function progress(jobId, { type, message, data }) {
   try {
-    await fetch(`${API_BASE}/api/worker/progress`, {
+    await apiFetch(`${API_BASE}/api/worker/progress`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -195,7 +201,11 @@ async function progress(jobId, { type, message, data }) {
       }),
     });
   } catch (err) {
-    console.warn("[dat-starcoder-worker] progress failed", err);
+    const code = networkErrorCode(err);
+    const detail = err instanceof Error ? err.message : String(err);
+    console.warn(
+      `[dat-starcoder-worker] progress failed${code ? ` (${code})` : ""}: ${detail}`,
+    );
   }
 }
 
@@ -215,18 +225,27 @@ async function complete(job, { result, error, githubBranch, githubPrUrl, stepsUs
   };
   let lastErr;
   for (let attempt = 0; attempt < 4; attempt++) {
-    const res = await fetch(`${API_BASE}/api/worker/complete`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-worker-key": WORKER_KEY,
-      },
-      body: JSON.stringify(payload),
-    });
-    if (res.ok) return res.json();
-    const text = await res.text();
-    lastErr = new Error(`complete ${res.status}: ${text}`);
-    if (res.status === 401) throw lastErr;
+    try {
+      const res = await apiFetch(
+        `${API_BASE}/api/worker/complete`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "x-worker-key": WORKER_KEY,
+          },
+          body: JSON.stringify(payload),
+        },
+        { attempts: 1, timeoutMs: 30_000 },
+      );
+      if (res.ok) return res.json();
+      const text = await res.text();
+      lastErr = new Error(`complete ${res.status}: ${text}`);
+      if (res.status === 401) throw lastErr;
+    } catch (err) {
+      if (!isTransientFetchError(err)) throw err;
+      lastErr = err;
+    }
     await sleep(500 * (attempt + 1));
   }
   throw lastErr;
@@ -359,7 +378,14 @@ async function loop() {
           (githubPrUrl ? ` pr=${githubPrUrl}` : ""),
       );
     } catch (err) {
-      console.error("[dat-starcoder-worker]", err);
+      if (isTransientFetchError(err)) {
+        const code = networkErrorCode(err) || "network";
+        console.warn(
+          `[dat-starcoder-worker] API unreachable (${code}); will retry`,
+        );
+      } else {
+        console.error("[dat-starcoder-worker]", err);
+      }
       await sleep(POLL_MS);
     }
   }
