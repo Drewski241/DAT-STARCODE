@@ -85,6 +85,13 @@ ollama pull qwen2.5-coder:32b
 
 The worker **preflights** the selected Ollama tag before running (`ollama list`). If Studio picks `qwen2.5-coder:32b` and it is not pulled, the job fails immediately with pull instructions instead of burning agent steps. On a 24GB GPU the worker uses an 8k context for 32B unless `OLLAMA_NUM_CTX` is set.
 
+**Between people:** when a job ends, the worker unloads 14B and 32B from Ollama (`OLLAMA_UNLOAD_HEAVY` defaults on). 7B and 8B stay loaded. The next 32B turn spends a bit of time loading again, and the operator does not run `ollama stop` between requests. One-time on the P720, so swap stays a last resort after reboot:
+
+```bash
+echo 'vm.swappiness=10' | sudo tee /etc/sysctl.d/99-starcoder-swappiness.conf
+sudo sysctl --system
+```
+
 **Credits (sticker price at enqueue):**
 
 | Signal | Effect |

@@ -8,6 +8,7 @@
  *   WORKER_ID                unique name for this box (default: forge-1)
  *   OLLAMA_URL               http://127.0.0.1:11434
  *   OLLAMA_MODEL             fallback if a job has no modelResolved
+ *   OLLAMA_UNLOAD_HEAVY      default 1 — unload 14B/32B/70B after each job
  *   POLL_MS                  default 4000
  *   AGENT_MAX_STEPS          default 12
  *   AGENT_HARD_TASK_STEPS    default 40 (ChiaLisp / .clsp prompts)
@@ -17,6 +18,7 @@
 
 import { apiFetch, isTransientFetchError, networkErrorCode } from "./api-fetch.mjs";
 import { runAgentJob } from "./agent.mjs";
+import { releaseLoadedHeavyModels, unloadHeavyAfterJob } from "./ollama-memory.mjs";
 import { probeChialispTooling, toolingFailureLines } from "./tooling.mjs";
 
 const API_BASE = (
@@ -255,8 +257,29 @@ function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
 }
 
+/** Free VRAM/RAM before the next claim. 7B and 8B stay loaded. */
+async function unloadHeavyModels(reason) {
+  try {
+    const unloaded = await releaseLoadedHeavyModels(OLLAMA_URL);
+    if (unloaded.length) {
+      console.log(
+        `[dat-starcoder-worker] unloaded ${unloaded.join(", ")} (${reason})`,
+      );
+    }
+  } catch (err) {
+    console.warn(
+      `[dat-starcoder-worker] heavy unload (${reason}):`,
+      err instanceof Error ? err.message : err,
+    );
+  }
+}
+
 async function loop() {
   console.log(`[dat-starcoder-worker] ${WORKER_ID} → ${API_BASE} (agent loop)`);
+  console.log(
+    `[dat-starcoder-worker] unload heavy models after each job: ${unloadHeavyAfterJob() ? "on" : "off"}`,
+  );
+  await unloadHeavyModels("startup");
   try {
     const tooling = await probeChialispTooling();
     console.log(
@@ -346,37 +369,41 @@ async function loop() {
         continue;
       }
 
-      const { result, files, githubBranch, githubPrUrl, stepsUsed, toolSteps } =
-        await runAgentJob({
-          job,
-          ollamaUrl: OLLAMA_URL,
-          model,
-          github,
-          githubClone,
-          pullWorkspace: (j) => workspaceAction(j, "pull"),
-          pushWorkspace: (j, f, dels) => workspaceAction(j, "push", f, dels),
-          log: console.log,
-          onEvent: (e) =>
-            progress(job.id, {
-              type: e.type,
-              message: e.message,
-              data: e.data,
-            }),
-        });
+      try {
+        const { result, files, githubBranch, githubPrUrl, stepsUsed, toolSteps } =
+          await runAgentJob({
+            job,
+            ollamaUrl: OLLAMA_URL,
+            model,
+            github,
+            githubClone,
+            pullWorkspace: (j) => workspaceAction(j, "pull"),
+            pushWorkspace: (j, f, dels) => workspaceAction(j, "push", f, dels),
+            log: console.log,
+            onEvent: (e) =>
+              progress(job.id, {
+                type: e.type,
+                message: e.message,
+                data: e.data,
+              }),
+          });
 
-      await complete(job, {
-        result,
-        githubBranch,
-        githubPrUrl,
-        stepsUsed,
-        toolSteps,
-      });
-      console.log(
-        `[dat-starcoder-worker] completed ${job.id} files=${files.length}` +
-          (typeof stepsUsed === "number" ? ` steps=${stepsUsed}` : "") +
-          (typeof toolSteps === "number" ? ` tools=${toolSteps}` : "") +
-          (githubPrUrl ? ` pr=${githubPrUrl}` : ""),
-      );
+        await complete(job, {
+          result,
+          githubBranch,
+          githubPrUrl,
+          stepsUsed,
+          toolSteps,
+        });
+        console.log(
+          `[dat-starcoder-worker] completed ${job.id} files=${files.length}` +
+            (typeof stepsUsed === "number" ? ` steps=${stepsUsed}` : "") +
+            (typeof toolSteps === "number" ? ` tools=${toolSteps}` : "") +
+            (githubPrUrl ? ` pr=${githubPrUrl}` : ""),
+        );
+      } finally {
+        await unloadHeavyModels(`after ${job.id}`);
+      }
     } catch (err) {
       if (isTransientFetchError(err)) {
         const code = networkErrorCode(err) || "network";
