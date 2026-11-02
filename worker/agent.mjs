@@ -17,6 +17,10 @@ import { puzzleHashWithCdv } from "./cdv.mjs";
 import { inferGoalForTurn } from "./goals.mjs";
 import { ensurePuzzleHashDocumented } from "./hash-doc.mjs";
 import { verifyWorkspaceFiles } from "./verify.mjs";
+import {
+  planLanguageCompile,
+  verifyLanguageDeliverables,
+} from "./lang-verify.mjs";
 import { clvmVerify } from "./clvm-verify.mjs";
 import { spendCheck } from "./spend-check.mjs";
 import { retrieveKnowledge, packsForProfile } from "./knowledge.mjs";
@@ -240,6 +244,8 @@ Quality rules:
 - Never claim you deleted or fixed a file unless you verified with list_files / read_file after.
 - rm / unlink of files that were pulled from Studio are synced back (workspace deletes). Prefer real deletes over leaving NOTE stubs.
 - If the user asks for ChiaLisp / .clsp: write real ChiaLisp starting with (mod — never Common Lisp.
+- If the user asks for Rust: write Rust in .rs files (fn / let / struct, edition 2021). Not Python def, not JavaScript function, not Go.
+- If the user asks for Rue (rue-lang, not a typo for Rust): write .rue files. fn main() -> i32, println("..."), no println!, no impl, no Rust lifetimes.
 - When the puzzle_hash tool is available, use it after writing .clsp and document the hash under ## Puzzle hash in docs/PUZZLE_HASH.md.
 - Before {"done":true} on a .clsp task, read_file the puzzle and confirm it has (mod and no defparameter/let*/mapcar.
 `.trim();
@@ -298,7 +304,7 @@ async function listTree(root, dir = root, out = []) {
   for (const e of entries) {
     const full = path.join(dir, e.name);
     if (e.isDirectory()) {
-      if (e.name === "node_modules" || e.name === ".git") continue;
+      if (e.name === "node_modules" || e.name === ".git" || e.name === "target") continue;
       await listTree(root, full, out);
     } else if (e.isFile()) {
       out.push(path.relative(root, full).replace(/\\/g, "/"));
@@ -855,10 +861,54 @@ async function ollamaChat(ollamaUrl, model, messages, onToken, opts = {}) {
 
 const SKIP_PUSH_NAME =
   /(^|\/)(package-lock\.json|yarn\.lock|pnpm-lock\.yaml|\.DS_Store)$/i;
-const SKIP_PUSH_DIR = /(^|\/)(node_modules|dist|build|\.next|coverage|\.git)\//;
+const SKIP_PUSH_DIR = /(^|\/)(node_modules|dist|build|\.next|coverage|\.git|target)\//;
 /** Never utf8-read these — Studio sync mangles binary (zip 58560f92 PNG → U+FFFD). */
 const SKIP_PUSH_BINARY =
   /\.(png|jpe?g|gif|webp|ico|pdf|zip|gz|wasm|bin|hex|clvm|sym)$/i;
+
+/**
+ * Static Rust/Rue traps always fail. cargo/rustc/rue run only when installed.
+ * @param {string} root
+ * @param {string[]} langs
+ */
+async function enforceLanguageVerify(root, langs) {
+  const wanted = (langs || []).filter((id) => id === "rust" || id === "rue");
+  if (!wanted.length) {
+    return { ok: true, failures: [], warnings: [], commands: [] };
+  }
+  const filesNow = await collectLocalFiles(root);
+  const report = verifyLanguageDeliverables(filesNow, { langs: wanted });
+  if (!report.ok) {
+    return { ...report, commands: [] };
+  }
+  const plan = await planLanguageCompile(root, {
+    langs: wanted,
+    files: filesNow,
+  });
+  const warnings = [...(report.warnings || []), ...plan.warnings];
+  const failures = [...report.failures];
+  for (const cmd of plan.commands) {
+    const obs = await runCommand(root, cmd, { timeoutMs: VERIFY_TIMEOUT_MS });
+    if (!verifyObservationOk(obs)) {
+      failures.push(
+        `\`${cmd}\` failed:\n\`\`\`\n${String(obs).slice(0, 1200)}\n\`\`\``,
+      );
+      return {
+        ok: false,
+        failures,
+        warnings,
+        commands: plan.commands,
+        command: cmd,
+      };
+    }
+  }
+  return {
+    ok: true,
+    failures,
+    warnings,
+    commands: plan.commands,
+  };
+}
 
 async function collectLocalFiles(root) {
   const paths = await listTree(root);
@@ -1008,9 +1058,15 @@ export async function runAgentJob({
       `Goal: ${goal.id}${hardTask ? " (hard)" : ""} · up to ${stepLimit} steps`,
     );
 
+    const nicheLang =
+      goal.id === "rust" ||
+      goal.id === "rue" ||
+      (goal.langs || []).includes("rust") ||
+      (goal.langs || []).includes("rue");
     if (
       !isGeneral &&
       !resultOnly &&
+      !nicheLang &&
       (hardTask || goal.id === "coding" || goal.id === "secure_treasury")
     ) {
       try {
@@ -1654,6 +1710,33 @@ export async function runAgentJob({
           } catch (err) {
             log(
               `[agent] pre-done verify: ${err instanceof Error ? err.message : String(err)}`,
+            );
+          }
+        }
+        if (
+          !isGeneral &&
+          !resultOnly &&
+          (goal.langs || []).length &&
+          stepsLeft > 1
+        ) {
+          try {
+            const langNow = await enforceLanguageVerify(root, goal.langs);
+            if (!langNow.ok) {
+              if (langNow.command) lastCommand = langNow.command;
+              codingVerifyStatus = "failed";
+              messages.push({
+                role: "user",
+                content:
+                  "Not done — Rust/Rue check failed:\n" +
+                  langNow.failures.map((f) => `- ${f}`).join("\n") +
+                  "\nFix the .rs / .rue files, then {\"done\":true}.",
+              });
+              continue;
+            }
+            if (langNow.commands.length) codingVerifyStatus = "passed";
+          } catch (err) {
+            log(
+              `[agent] pre-done language verify: ${err instanceof Error ? err.message : String(err)}`,
             );
           }
         }
@@ -2454,6 +2537,16 @@ export async function runAgentJob({
           /\bscreenshot_url\b/i.test(job.prompt || "")) ||
         (!goal.wantCdv && goal.id === "coding");
       const wantCdvVerify = goal.wantCdv && hardTask && !softCodingVerify;
+      let langReport = { ok: true, failures: [], warnings: [], commands: [] };
+      if (!resultOnly && (goal.langs || []).length) {
+        try {
+          langReport = await enforceLanguageVerify(root, goal.langs);
+        } catch (err) {
+          log(
+            `[agent] language verify: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        }
+      }
       const verification = verifyWorkspaceFiles(files, {
         // Always require a documented hash on hard tasks when tooling is mandated.
         // RESULT-only polish: keep hash/secure checks but skip tooling re-probe failures.
@@ -2482,6 +2575,22 @@ export async function runAgentJob({
                 `spend fixture: ${r.path}${r.name ? ` :: ${r.name}` : ""}${r.why ? ` — ${r.why}` : ""}${r.error ? ` (${r.error})` : ""}`,
             ),
         );
+      }
+      if (!langReport.ok) {
+        verification.ok = false;
+        verification.failures.push(...langReport.failures);
+        if (langReport.command) {
+          lastCommand = langReport.command;
+          codingVerifyStatus = "failed";
+        } else if (langReport.failures.length) {
+          codingVerifyStatus = "failed";
+        }
+      } else if (langReport.commands.length) {
+        codingVerifyStatus = "passed";
+      }
+      if (langReport.warnings?.length) {
+        verification.warnings = verification.warnings || [];
+        verification.warnings.push(...langReport.warnings);
       }
       if (!verification.ok) {
         log(`[agent] verification failed: ${verification.failures.join("; ")}`);
@@ -2519,6 +2628,35 @@ export async function runAgentJob({
           "## Verification notes",
           ...verification.warnings.map((w) => `- ${w}`),
         ].join("\n");
+      }
+      if (langReport.commands?.length && langReport.ok && verification.ok) {
+        finalMessage += [
+          "",
+          "## Language verify",
+          "",
+          `Passed: ${langReport.commands.map((c) => `\`${c}\``).join(", ")}`,
+        ].join("\n");
+        await emit("status", "Language verify passed");
+      }
+      if ((goal.langs || []).length && codingVerifyStatus) {
+        try {
+          const prevStreak = Number(checkpoint?.verifyFailStreak || 0);
+          await saveCheckpoint(root, {
+            verifyStatus: codingVerifyStatus,
+            verifyFailStreak:
+              codingVerifyStatus === "failed"
+                ? prevStreak + 1
+                : codingVerifyStatus === "passed"
+                  ? 0
+                  : prevStreak,
+            lastCommand,
+            goal: goal.id,
+          });
+        } catch (err) {
+          log(
+            `[agent] language verify checkpoint: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        }
       }
 
       // Coding / web: run package.json test/build gates when present.

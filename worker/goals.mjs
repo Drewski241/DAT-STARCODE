@@ -24,6 +24,10 @@ const PROD_DEBUG_HINT =
   /\b(production|prod\s+log|amplify\s+build|worker\s+401|credentialprovidererror|walletconnect\s+offline)\b/i;
 const MULTI_FILE_HINT =
   /\b(refactor|multi-?file|across\s+files|next\.js|react\s+app|migrate|typescript\s+project)\b/i;
+// Word boundaries so "trust" / "frustrate" are not Rust, and "true" / "rule" / "cruel" are not Rue.
+const RUST_HINT =
+  /\brust\b|\brustc\b|\bcargo\.toml\b|\.rs\b|\bcargo\s+check\b|\bcargo\s+build\b|\bcargo\s+test\b/i;
+const RUE_HINT = /\.rue\b|\brue-lang(?:uage)?\b|\brue\b/i;
 
 /** User prompt clearly wants coding/web — never let continue-context .clsp files override. */
 const PROMPT_LOCKS_CODING =
@@ -63,13 +67,30 @@ export function inferGoalForTurn(prompt, context) {
     return fromPrompt;
   }
   if (
-    fromPrompt.id === "coding" ||
+    fromPrompt.id === "rust" ||
+    fromPrompt.id === "rue" ||
     fromPrompt.id === "secure_treasury" ||
     fromPrompt.id === "mtt_pool" ||
     fromPrompt.id === "chialisp"
   ) {
     // Strong prompt match — do not let leftover .clsp context upgrade/downgrade.
-    if (fromPrompt.id !== "general") return fromPrompt;
+    return fromPrompt;
+  }
+  const snippetEarly = goalContextSnippet(context);
+  const fromCtxEarly = snippetEarly ? inferGoal(`${p}\n${snippetEarly}`) : null;
+  // "add a unit test" on a Rust/Rue task stays on that language. A web prompt does not.
+  if (
+    fromCtxEarly &&
+    (fromCtxEarly.id === "rust" || fromCtxEarly.id === "rue") &&
+    fromPrompt.id === "coding" &&
+    !WEB_APP_HINT.test(p) &&
+    !/\b(typescript|javascript|python|html|css)\b/i.test(p)
+  ) {
+    return fromCtxEarly;
+  }
+  if (fromPrompt.id === "coding") {
+    // Do not let leftover .clsp context turn a coding prompt into ChiaLisp.
+    return fromPrompt;
   }
   if (PROMPT_LOCKS_CODING.test(p)) {
     // Screenshot / package.json edits must stay coding even if prompt missed CODING_HINT.
@@ -81,19 +102,9 @@ export function inferGoalForTurn(prompt, context) {
       wantCdv: false,
     };
   }
-  const snippet = goalContextSnippet(context);
-  if (!snippet) return fromPrompt;
-  const fromCtx = inferGoal(`${p}\n${snippet}`);
-  // Context may clarify short follow-ups ("change the heading") → coding,
-  // but must not flip a coding/web prompt into ChiaLisp via seeded puzzles.
-  if (
-    fromPrompt.id === "coding" &&
-    (fromCtx.id === "chialisp" ||
-      fromCtx.id === "secure_treasury" ||
-      fromCtx.id === "mtt_pool")
-  ) {
-    return fromPrompt;
-  }
+  const snippet = snippetEarly;
+  if (!snippet || !fromCtxEarly) return fromPrompt;
+  const fromCtx = fromCtxEarly;
   if (fromPrompt.id === "general" && fromCtx.id !== "general") {
     return fromCtx;
   }
@@ -153,6 +164,23 @@ export function inferGoal(prompt) {
       hard: true,
       playbooks: ["chialisp.md"],
       wantCdv: true,
+    };
+  }
+  // Rue is its own language. Match it even when the prompt also says Rust.
+  const rue = RUE_HINT.test(text);
+  const rust = RUST_HINT.test(text);
+  if (rue || rust) {
+    const langs = [];
+    if (rust) langs.push("rust");
+    if (rue) langs.push("rue");
+    const both = langs.length === 2;
+    return {
+      id: both || rust ? "rust" : "rue",
+      label: both ? "Rust and Rue" : rust ? "Rust" : "Rue",
+      hard: true,
+      playbooks: langs.map((id) => `${id}.md`),
+      wantCdv: false,
+      langs,
     };
   }
   if (

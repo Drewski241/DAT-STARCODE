@@ -92,15 +92,17 @@ The worker **preflights** the selected Ollama tag before running (`ollama list`)
 | Base | `CREDITS_PER_JOB` (default **5**) |
 | Model `14b` | ×2 base |
 | Model `32b` / `70b` | ×3 base |
-| Hard domain (`.clsp` / ChiaLisp / `mtt_pool` / …) | +`CREDITS_HARD_DOMAIN` (default **10**) |
+| Hard domain (`.clsp` / ChiaLisp / Rust / Rue / `mtt_pool` / …) | +`CREDITS_HARD_DOMAIN` (default **10**) |
 
 Example: Coder 32B + ChiaLisp prompt → **5×3+10 = 25** credits. Studio shows the live total on **Send turn**. Worker reports `stepsUsed` on complete (for future settle/refund).
 
 **Niche domains:** prompts that mention `.clsp` / ChiaLisp load `worker/playbooks/chialisp.md` into the agent system prompt, raise the step budget (`AGENT_HARD_TASK_STEPS`, default **40**), and **verify** written `.clsp` files (must start with `(mod`, reject Common Lisp stubs). Failed verification is called out in the job result.
 
+**Rust and Rue:** prompts that name Rust (`.rs`, `cargo`, `rustc`, the word `rust`) or Rue (`.rue`, `rue-lang`, the word `rue`) load `worker/playbooks/rust.md` and/or `worker/playbooks/rue.md`. Auto sends those turns to Coder 32B and adds the hard-domain credit (32B + Rust is **5×3+10 = 25**, same sticker as 32B + ChiaLisp). A turn fails verification when the deliverable is missing or is the wrong language: Python `def`, JavaScript `function`, Go `package main`, or Rue written with `println!`, `impl`, Rust lifetimes, or `fn main` without `->`. `cargo check` runs when `Cargo.toml` and `cargo` exist; otherwise `rustc --edition 2021 --emit=metadata` when `rustc` exists. A missing Rust toolchain is a warning, so the box is useful before rustup. Rue compiles only when `rue` is on `PATH` or `RUE_BIN` points at `scripts/rue-bin` from [rue-language/rue](https://github.com/rue-language/rue). The worker does not download that compiler. Rue is Steve Klabnik’s experimental language, not a misspelling of Rust.
+
 **Workspace deletes:** when the agent `rm`s a file that was pulled from Studio, the worker sends `deletePaths` on push so S3/local storage drops it (otherwise stubs lingered forever across turns).
 
-**Goal router:** short prompts are classified (`mtt_pool` / `chialisp` / `coding` / `general`). Hard goals load playbooks under `worker/playbooks/`, require a `PLAN.md` first step, and enable **`puzzle_hash`** (`cdv`) and **`clvm_verify`**.
+**Goal router:** short prompts are classified (`mtt_pool` / `chialisp` / `rust` / `rue` / `coding` / `general`). Hard goals load playbooks under `worker/playbooks/` and require a `PLAN.md` first step. ChiaLisp goals also enable **`puzzle_hash`** (`cdv`) and **`clvm_verify`**. Rust and Rue do not.
 
 **ChiaLisp tooling (required on the worker box for hard `.clsp` jobs):**
 
@@ -115,7 +117,7 @@ Hard-domain ChiaLisp turns fail verification if `cdv` or `clvm_tools` is missing
 
 **ChiaLisp evals (offline):** `npm run test:chialisp` runs golden + adversarial fixture checks (Common Lisp traps, fake `0x` hashes, missing tooling). Full worker suite: `npm run test:worker`.
 
-**Auto** routing: niche / hard languages (e.g. ChiaLisp) and complex coding → `qwen2.5-coder:32b`; other coding → `qwen2.5-coder:7b`; shopping / local research Q&A → `qwen2.5:7b`; otherwise → `llama3.1:8b`. Pull 32B (and Qwen 7B) on the worker or those Auto jobs will fail preflight. A 7B or 14B turn that keeps failing verification escalates to 32B. Routing is re-evaluated when a job is claimed so queued jobs pick up heuristic fixes. Llama 3.1 70B does not fit this GPU.
+**Auto** routing: niche / hard languages (ChiaLisp, Rust, Rue) and complex coding → `qwen2.5-coder:32b`; other coding → `qwen2.5-coder:7b`; shopping / local research Q&A → `qwen2.5:7b`; otherwise → `llama3.1:8b`. Pull 32B (and Qwen 7B) on the worker or those Auto jobs will fail preflight. A 7B or 14B turn that keeps failing verification escalates to 32B. Routing is re-evaluated when a job is claimed so queued jobs pick up heuristic fixes. Llama 3.1 70B does not fit this GPU.
 
 Optional worker agent knobs (see `.env.example`): `AGENT_MAX_STEPS`, `AGENT_ALLOW_SHELL`, `AGENT_REPO_ROOT`, `REQUIRE_CHIALISP_TOOLING`.
 

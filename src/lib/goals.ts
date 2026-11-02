@@ -7,6 +7,8 @@ export type GoalId =
   | "mtt_pool"
   | "secure_treasury"
   | "chialisp"
+  | "rust"
+  | "rue"
   | "coding"
   | "general";
 
@@ -38,6 +40,10 @@ const PROD_DEBUG_HINT =
   /\b(production|prod\s+log|amplify\s+build|worker\s+401|credentialprovidererror|walletconnect\s+offline)\b/i;
 const MULTI_FILE_HINT =
   /\b(refactor|multi-?file|across\s+files|next\.js|react\s+app|migrate|typescript\s+project)\b/i;
+// Keep aligned with worker/goals.mjs. Word boundaries: "trust" is not Rust, "true" is not Rue.
+const RUST_HINT =
+  /\brust\b|\brustc\b|\bcargo\.toml\b|\.rs\b|\bcargo\s+check\b|\bcargo\s+build\b|\bcargo\s+test\b/i;
+const RUE_HINT = /\.rue\b|\brue-lang(?:uage)?\b|\brue\b/i;
 
 export function inferGoal(prompt: string): InferredGoal {
   const text = String(prompt || "");
@@ -78,6 +84,16 @@ export function inferGoal(prompt: string): InferredGoal {
     return {
       id: "chialisp",
       label: "ChiaLisp / CLVM puzzle",
+      hard: true,
+    };
+  }
+  const rue = RUE_HINT.test(text);
+  const rust = RUST_HINT.test(text);
+  if (rue || rust) {
+    const both = rue && rust;
+    return {
+      id: both || rust ? "rust" : "rue",
+      label: both ? "Rust and Rue" : rust ? "Rust" : "Rue",
       hard: true,
     };
   }
