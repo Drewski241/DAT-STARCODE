@@ -77,11 +77,13 @@ Pull the models you want users to select (Auto needs both a coder and a general 
 ollama pull qwen2.5-coder:7b
 ollama pull llama3.1:8b
 ollama pull qwen2.5:7b   # Auto uses this for shopping / local research Q&A
-# optional (stronger coding — recommended for ChiaLisp / hard tasks):
+# required for Auto on hard / ChiaLisp / multi-file tasks (fits the 24GB 3090):
+ollama pull qwen2.5-coder:32b
+# optional fallback if 32B is not pulled:
 # ollama pull qwen2.5-coder:14b
 ```
 
-The worker **preflights** the selected Ollama tag before running (`ollama list`). If Studio picks `qwen2.5-coder:14b` and it is not pulled, the job fails immediately with pull instructions instead of burning agent steps.
+The worker **preflights** the selected Ollama tag before running (`ollama list`). If Studio picks `qwen2.5-coder:32b` and it is not pulled, the job fails immediately with pull instructions instead of burning agent steps. On a 24GB GPU the worker uses an 8k context for 32B unless `OLLAMA_NUM_CTX` is set.
 
 **Credits (sticker price at enqueue):**
 
@@ -92,7 +94,7 @@ The worker **preflights** the selected Ollama tag before running (`ollama list`)
 | Model `32b` / `70b` | ×3 base |
 | Hard domain (`.clsp` / ChiaLisp / `mtt_pool` / …) | +`CREDITS_HARD_DOMAIN` (default **10**) |
 
-Example: Coder 14B + ChiaLisp prompt → **5×2+10 = 20** credits. Studio shows the live total on **Send turn**. Worker reports `stepsUsed` on complete (for future settle/refund).
+Example: Coder 32B + ChiaLisp prompt → **5×3+10 = 25** credits. Studio shows the live total on **Send turn**. Worker reports `stepsUsed` on complete (for future settle/refund).
 
 **Niche domains:** prompts that mention `.clsp` / ChiaLisp load `worker/playbooks/chialisp.md` into the agent system prompt, raise the step budget (`AGENT_HARD_TASK_STEPS`, default **40**), and **verify** written `.clsp` files (must start with `(mod`, reject Common Lisp stubs). Failed verification is called out in the job result.
 
@@ -113,7 +115,7 @@ Hard-domain ChiaLisp turns fail verification if `cdv` or `clvm_tools` is missing
 
 **ChiaLisp evals (offline):** `npm run test:chialisp` runs golden + adversarial fixture checks (Common Lisp traps, fake `0x` hashes, missing tooling). Full worker suite: `npm run test:worker`.
 
-**Auto** routing: niche / hard languages (e.g. ChiaLisp) → `qwen2.5-coder:14b`; other coding → `qwen2.5-coder:7b`; shopping / local research Q&A → `qwen2.5:7b`; otherwise → `llama3.1:8b`. Pull 14B (and Qwen 7B) on the worker or those Auto jobs will 404 at preflight. Routing is re-evaluated when a job is claimed so queued jobs pick up heuristic fixes.
+**Auto** routing: niche / hard languages (e.g. ChiaLisp) and complex coding → `qwen2.5-coder:32b`; other coding → `qwen2.5-coder:7b`; shopping / local research Q&A → `qwen2.5:7b`; otherwise → `llama3.1:8b`. Pull 32B (and Qwen 7B) on the worker or those Auto jobs will fail preflight. A 7B or 14B turn that keeps failing verification escalates to 32B. Routing is re-evaluated when a job is claimed so queued jobs pick up heuristic fixes. Llama 3.1 70B does not fit this GPU.
 
 Optional worker agent knobs (see `.env.example`): `AGENT_MAX_STEPS`, `AGENT_ALLOW_SHELL`, `AGENT_REPO_ROOT`, `REQUIRE_CHIALISP_TOOLING`.
 

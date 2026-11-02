@@ -22,7 +22,7 @@ export const MODEL_OPTIONS: ModelOption[] = [
     kind: "auto",
     ollamaTag: null,
     blurb:
-      "Picks from your prompt (simple coding → 7B; hard/error/multi-file/Next → 14B; shopping Q&A → Qwen 7B)",
+      "Picks from your prompt (simple coding → 7B; hard/error/multi-file/Next → 32B; shopping Q&A → Qwen 7B)",
   },
   {
     id: "qwen2.5-coder:7b",
@@ -36,7 +36,14 @@ export const MODEL_OPTIONS: ModelOption[] = [
     label: "Coder 14B",
     kind: "coding",
     ollamaTag: "qwen2.5-coder:14b",
-    blurb: "Stronger coding; needs more VRAM",
+    blurb: "Stronger coding when 32B is not pulled. Needs about 12GB.",
+  },
+  {
+    id: "qwen2.5-coder:32b",
+    label: "Coder 32B",
+    kind: "coding",
+    ollamaTag: "qwen2.5-coder:32b",
+    blurb: "Best coding model for the 24GB RTX 3090. Needs about 20GB of VRAM.",
   },
   {
     id: "qwen2.5:7b",
@@ -56,8 +63,12 @@ export const MODEL_OPTIONS: ModelOption[] = [
 
 export const DEFAULT_MODEL_ID = "auto";
 export const DEFAULT_CODING_MODEL = "qwen2.5-coder:7b";
-/** Stronger default when Auto detects ChiaLisp / MTT / other hard domains. */
-export const DEFAULT_HARD_CODING_MODEL = "qwen2.5-coder:14b";
+/**
+ * Stronger default when Auto detects ChiaLisp / MTT / other hard domains.
+ * The P720's 24GB RTX 3090 holds Q4 32B. Set AGENT_HARD_CODING_MODEL on the
+ * worker if a box should escalate to a different tag.
+ */
+export const DEFAULT_HARD_CODING_MODEL = "qwen2.5-coder:32b";
 export const DEFAULT_GENERAL_MODEL = "llama3.1:8b";
 /** Better instruction-following for shopping / local research Q&A. */
 export const DEFAULT_RESEARCH_GENERAL_MODEL = "qwen2.5:7b";

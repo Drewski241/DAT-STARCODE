@@ -12,6 +12,7 @@ assert.equal(isHardDomainPrompt("write puzzles/mtt_pool.clsp"), true);
 
 assert.equal(modelCreditMultiplier("qwen2.5-coder:7b"), 1);
 assert.equal(modelCreditMultiplier("qwen2.5-coder:14b"), 2);
+assert.equal(modelCreditMultiplier("qwen2.5-coder:32b"), 3);
 
 const cheap = priceJob({
   prompt: "Add a README section",
@@ -25,6 +26,12 @@ const fourteen = priceJob({
   modelId: "qwen2.5-coder:14b",
 });
 assert.equal(fourteen.total, CREDITS_PER_JOB_PRICED * 2);
+
+const thirtyTwo = priceJob({
+  prompt: "Add a README section",
+  modelId: "qwen2.5-coder:32b",
+});
+assert.equal(thirtyTwo.total, CREDITS_PER_JOB_PRICED * 3);
 
 const hard = priceJob({
   prompt: "Write puzzles/mtt_pool.clsp for ChiaLisp",

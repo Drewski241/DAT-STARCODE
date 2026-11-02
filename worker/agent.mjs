@@ -121,7 +121,14 @@ const INSTALL_TIMEOUT_MS = Number(process.env.AGENT_INSTALL_TIMEOUT_MS || 180000
 const VERIFY_TIMEOUT_MS = Number(process.env.AGENT_VERIFY_TIMEOUT_MS || 120000);
 const NATIVE_TOOLS =
   !/^(0|false|no|off)$/i.test(String(process.env.AGENT_NATIVE_TOOLS ?? "1"));
-const OLLAMA_NUM_CTX = Number(process.env.OLLAMA_NUM_CTX || 16384);
+const OLLAMA_NUM_CTX = Number(process.env.OLLAMA_NUM_CTX || 0);
+
+/** 32B Q4 fills a 24GB GPU. A 16k context on top of it OOMs the 3090. */
+function numCtxFor(model) {
+  if (OLLAMA_NUM_CTX > 0) return OLLAMA_NUM_CTX;
+  if (/(32b|70b|72b)/i.test(String(model || ""))) return 8192;
+  return 16384;
+}
 const MAX_FILE_BYTES = 200_000;
 const PLAYBOOK_MAX_CHARS = 8_000;
 const AGENTS_MD_MAX_CHARS = 4_000;
@@ -776,7 +783,7 @@ async function ollamaChat(ollamaUrl, model, messages, onToken, opts = {}) {
     model,
     messages: trimmed,
     stream: true,
-    options: { temperature: 0.2, num_ctx: OLLAMA_NUM_CTX },
+    options: { temperature: 0.2, num_ctx: numCtxFor(model) },
   };
   if (tools?.length) body.tools = tools;
 
@@ -891,7 +898,7 @@ export async function runAgentJob({
 
   let activeModel = model;
   const HARD_CODING_MODEL =
-    process.env.AGENT_HARD_CODING_MODEL?.trim() || "qwen2.5-coder:14b";
+    process.env.AGENT_HARD_CODING_MODEL?.trim() || "qwen2.5-coder:32b";
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "starcoder-"));
   let githubBranch = null;
   let githubPrUrl = null;
@@ -1089,7 +1096,7 @@ export async function runAgentJob({
     if (
       !isGeneral &&
       shouldEscalate &&
-      /qwen2\.5-coder:7b$/i.test(activeModel) &&
+      /qwen2\.5-coder:(7b|14b)$/i.test(activeModel) &&
       HARD_CODING_MODEL &&
       HARD_CODING_MODEL !== activeModel
     ) {

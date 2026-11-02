@@ -903,7 +903,7 @@ export async function enqueueJob(input: {
     }
     if (!account) throw new Error("Account not found");
 
-    // Single GPU worker (P720 ~16GB): cap queue so Ollama isn't thrashed.
+    // Single GPU worker (P720, 24GB RTX 3090): cap queue so Ollama isn't thrashed.
     const maxGlobal = Number(process.env.MAX_ACTIVE_JOBS_GLOBAL || 4);
     const maxPerAccount = Number(process.env.MAX_ACTIVE_JOBS_PER_ACCOUNT || 2);
     const activeGlobal = countActiveJobs(store.jobs);
@@ -920,11 +920,12 @@ export async function enqueueJob(input: {
         `You already have ${activeMine} active turn(s) (limit ${maxPerAccount}). Wait for one to finish before sending another.`,
       );
     }
-    // 14B + another heavy job on 16GB RAM is a bad day — soft-reject when busy.
-    const wants14b = /qwen2\.5-coder:14b/i.test(input.modelResolved);
-    if (wants14b && activeGlobal >= 1) {
+    // 14B/32B plus another job crowds the 24GB GPU — soft-reject when busy.
+    const heavyCoder = input.modelResolved.match(/qwen2\.5-coder:(14b|32b)/i);
+    if (heavyCoder && activeGlobal >= 1) {
+      const label = /32b/i.test(heavyCoder[1]) ? "Coder 32B" : "Coder 14B";
       throw new Error(
-        `Coder 14B needs the GPU mostly alone (queue already has ${activeGlobal} job(s)). Wait, or pick Coder 7B / Auto for a lighter turn.`,
+        `${label} needs the GPU mostly alone (queue already has ${activeGlobal} job(s)). Wait, or pick Coder 7B for a lighter turn.`,
       );
     }
 
