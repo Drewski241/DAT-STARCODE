@@ -9,6 +9,22 @@ function normalize(text) {
   return String(text || "").replace(/\s+/g, " ").trim();
 }
 
+/** How long to watch the page after Start. War deals on a 1s timer. */
+export const PLAY_SETTLE_MS = 4_000;
+
+/**
+ * First sample whose text differs from the pre-click page.
+ * @param {string} before
+ * @param {string[]} samples
+ */
+export function firstChangedText(before, samples) {
+  const base = normalize(before);
+  for (const sample of samples) {
+    if (normalize(sample) !== base) return sample;
+  }
+  return samples.length ? samples[samples.length - 1] : before;
+}
+
 /**
  * @param {{ clicked?: boolean, before?: string, after?: string, skipped?: boolean, reason?: string }} probe
  */
@@ -91,8 +107,15 @@ export async function checkPlayablePage(root) {
       return judgePlayProbe({ clicked: false, before, after: before });
     }
     await buttons.first().click({ timeout: 3_000 });
-    await page.waitForTimeout(700);
-    const after = await page.locator("body").innerText();
+    const samples = [];
+    const settleUntil = Date.now() + PLAY_SETTLE_MS;
+    while (Date.now() < settleUntil) {
+      await page.waitForTimeout(250);
+      const text = await page.locator("body").innerText();
+      samples.push(text);
+      if (normalize(text) !== normalize(before)) break;
+    }
+    const after = firstChangedText(before, samples);
     return {
       ...judgePlayProbe({ clicked: true, before, after }),
       rel,

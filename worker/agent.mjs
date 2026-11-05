@@ -1343,6 +1343,36 @@ export async function runAgentJob({
     /** @type {string|null} */
     let codingVerifyStatus = null;
     let playPassed = false;
+    let playShots = 0;
+    const wantPlay =
+      !isGeneral &&
+      !resultOnly &&
+      (goal.label === "Playable game" || isPlayableGamePrompt(job.prompt || ""));
+    if (wantPlay && !skipAgentLoopForSoftDemo) {
+      try {
+        await emit("status", "Playability check · clicking Start");
+        const probe = await checkPlayablePage(root);
+        if (probe.ok && !probe.skipped) {
+          playPassed = true;
+          finalMessage = `Played ${probe.rel || "index.html"}. ${probe.reason}. Open Play in Studio to play.`;
+          skipAgentLoopForSoftDemo = true;
+          stepsUsed = 1;
+          log(`[agent] play check already passed · ${probe.reason}`);
+          await emit("status", "Early exit · outcome met");
+        } else if (!probe.skipped && probe.ok === false) {
+          messages.push({
+            role: "user",
+            content:
+              `Playability check failed before any edits: ${probe.reason}. ` +
+              "Fix app.js so Start Game deals a card within a few seconds. Do not call screenshot_url.",
+          });
+        }
+      } catch (err) {
+        log(
+          `[agent] play check prime: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    }
     /** @type {Set<string>} */
     const knownUrls = new Set();
 
@@ -2050,6 +2080,28 @@ export async function runAgentJob({
               '\n\nNEXT: screenshot captured. Reply {"done":true,"message":"Preview screenshot saved under .datstarcoder/ — open Preview screenshot in Studio."}';
           }
         }
+        if (wantPlay && !screenshotThenDone) {
+          playShots += 1;
+          if (playShots >= 2 && !playPassed) {
+            observation +=
+              "\n\nERROR: screenshot_url is not how a game is verified. Stopping this turn.";
+          } else {
+            try {
+              const probe = await checkPlayablePage(root);
+              if (probe.ok && !probe.skipped) {
+                playPassed = true;
+                observation += `\n\nPLAY_OK: ${probe.reason}`;
+              } else if (!probe.skipped) {
+                observation +=
+                  `\n\nPlayability check failed: ${probe.reason}. Do not call screenshot_url again. Fix the Start button in app.js.`;
+              }
+            } catch (err) {
+              log(
+                `[agent] play check after screenshot: ${err instanceof Error ? err.message : String(err)}`,
+              );
+            }
+          }
+        }
       } else if (tool === "run") {
         const cmd = String(args.command || "true");
         lastCommand = cmd;
@@ -2183,7 +2235,7 @@ export async function runAgentJob({
             const probe = await checkPlayablePage(root);
             if (probe.ok && !probe.skipped) {
               playPassed = true;
-              const message = `Played ${probe.rel || "index.html"}. ${probe.reason}. Open Preview HTML in Studio to play.`;
+              const message = `Played ${probe.rel || "index.html"}. ${probe.reason}. Open Play in Studio to play.`;
               early = { exit: true, reason: probe.reason, doneMessage: message };
             }
           } catch (err) {
@@ -2191,6 +2243,35 @@ export async function runAgentJob({
               `[agent] play check: ${err instanceof Error ? err.message : String(err)}`,
             );
           }
+        }
+        if (tool === "write_file" || tool === "str_replace") playShots = 0;
+        if (!early.exit && playPassed) {
+          early = {
+            exit: true,
+            reason: "Click changed the page",
+            doneMessage:
+              "Played index.html. Click changed the page and showed a card, score, or winner. Open Play in Studio to play.",
+          };
+        } else if (
+          !early.exit &&
+          wantPlay &&
+          tool === "screenshot_url" &&
+          playShots >= 2 &&
+          !playPassed
+        ) {
+          early = {
+            exit: true,
+            reason: "The turn kept taking screenshots",
+            doneMessage: [
+              "# Paused — playability check failed",
+              "",
+              "The turn spent its steps on screenshots.",
+              "",
+              "## Playability check failed",
+              "",
+              "Click did nothing",
+            ].join("\n"),
+          };
         }
       }
       let obsMsg = `OBSERVATION:\n${observation}`;
