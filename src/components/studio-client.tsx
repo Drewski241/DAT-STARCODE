@@ -573,6 +573,14 @@ export function StudioClient() {
     setPanel("output");
   }
 
+  function reportDeadClick() {
+    setPrompt(
+      "The Start/Play click in the preview did nothing. Make the game actually playable in index.html (deal, show cards, score, winner) and do not stop until a click changes the page.",
+    );
+    setHtmlPreview(false);
+    setPanel("output");
+  }
+
   async function openFile(jobId: string, filePath: string) {
     setPreviewPath(filePath);
     setPreviewContent(null);
@@ -898,7 +906,9 @@ export function StudioClient() {
             ? "Skill pack · web-app"
             : null;
   const resolvedForPrice = resolveModel(modelId, prompt, {
-    preferCoding: Boolean(projectId && jobs.length > 0),
+    preferCoding: Boolean(projectId && lastCompletedInProject),
+    priorPrompt: lastCompletedInProject?.prompt || "",
+    priorResult: lastCompletedInProject?.result || "",
   });
   const turnPrice = priceJob({
     prompt,
@@ -1216,7 +1226,7 @@ export function StudioClient() {
             <p className="mt-4 font-mono text-[11px] text-steel-500">
               Turns in this project share one workspace. Edit a file in
               Workspace and save it, then ask a follow-up — the next turn reads
-              that change. Preview HTML runs the page here, with its CSS and JS.
+              that change. Play in Studio runs the page here, with its CSS and JS.
             </p>
 
             <p className="mt-4 font-mono text-[11px] text-steel-400">
@@ -1483,7 +1493,7 @@ export function StudioClient() {
                       }}
                       className="font-mono text-[11px] uppercase tracking-widest text-emerald-300/90 hover:text-emerald-200"
                     >
-                      Preview HTML
+                      Play in Studio
                     </button>
                   )}
                   {workspaceFiles.some(
@@ -1676,9 +1686,16 @@ export function StudioClient() {
                         <div className="min-h-[12rem] space-y-2">
                           <div className="flex flex-wrap items-center justify-between gap-2">
                             <p className="font-mono text-[11px] text-emerald-300/90">
-                              Page preview · {previewPath}
+                              Play in Studio · {previewPath}
                             </p>
                             <div className="flex flex-wrap items-center gap-3">
+                              <button
+                                type="button"
+                                className="font-mono text-[11px] text-rose-300 hover:text-rose-200"
+                                onClick={reportDeadClick}
+                              >
+                                This click did nothing
+                              </button>
                               <button
                                 type="button"
                                 className="font-mono text-[11px] text-steel-400 hover:text-copper-200"

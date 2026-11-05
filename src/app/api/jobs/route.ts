@@ -85,6 +85,7 @@ export async function POST(req: NextRequest) {
   let context: string | null = null;
   let preferCoding = false;
   let priorPrompt = "";
+  let priorResult = "";
 
   // Prefer explicit continue; otherwise last completed turn in the project.
   const continueId = body.continueFromJobId?.trim() || null;
@@ -95,6 +96,7 @@ export async function POST(req: NextRequest) {
       context = built.context;
       preferCoding = true;
       priorPrompt = built.parent.prompt;
+      priorResult = built.parent.result || "";
       if (!projectId && built.parent.projectId) {
         projectId = built.parent.projectId;
       }
@@ -109,6 +111,7 @@ export async function POST(req: NextRequest) {
         parentJobId = built.parent.id;
         context = built.context;
         priorPrompt = built.parent.prompt;
+        priorResult = built.parent.result || "";
       }
     }
   }
@@ -116,6 +119,7 @@ export async function POST(req: NextRequest) {
   const resolved = resolveModel(body.model, body.prompt, {
     preferCoding,
     priorPrompt,
+    priorResult,
   });
 
   try {

@@ -85,6 +85,13 @@ export function isPlayableGamePrompt(prompt: string): boolean {
   }
   return false;
 }
+
+/** Prior RESULT.md that means the next Auto coding turn should leave 7B. */
+export function priorTurnNeedsStrongerModel(priorResult: string): boolean {
+  return /# Reached step limit|## Verification failed|## Coding verify failed|## Playability check failed|## Language verify/i.test(
+    String(priorResult || ""),
+  );
+}
 // Keep aligned with worker/goals.mjs. Word boundaries: "trust" is not Rust, "true" is not Rue.
 const RUST_HINT =
   /\brust\b|\brustc\b|\bcargo\.toml\b|\.rs\b|\bcargo\s+check\b|\bcargo\s+build\b|\bcargo\s+test\b/i;
