@@ -40,6 +40,51 @@ const PROD_DEBUG_HINT =
   /\b(production|prod\s+log|amplify\s+build|worker\s+401|credentialprovidererror|walletconnect\s+offline)\b/i;
 const MULTI_FILE_HINT =
   /\b(refactor|multi-?file|across\s+files|next\.js|react\s+app|migrate|typescript\s+project)\b/i;
+
+/**
+ * A browser game, or a follow-up that the game still will not play.
+ * Keep aligned with worker/goals.mjs.
+ */
+export function isPlayableGamePrompt(prompt: string): boolean {
+  const text = String(prompt || "");
+  if (
+    /\b(card\s*games?|board\s*games?|playable(?:\s+games?)?|platformers?|video\s*games?)\b/i.test(
+      text,
+    )
+  ) {
+    return true;
+  }
+  if (/\b(?:start|complete)\s+games?\b/i.test(text)) return true;
+  if (/\bgames?\s+of\s+[a-z][\w'-]*/i.test(text)) return true;
+  if (
+    /\b(?:build|make|create|implement)\b[\s\S]{0,60}\b(?:card\s+)?games?\b/i.test(
+      text,
+    )
+  ) {
+    return true;
+  }
+  if (
+    /\b(?:2|two)[-\s]?players?\b[\s\S]{0,80}\b(?:war|games?|cards?)\b/i.test(
+      text,
+    )
+  ) {
+    return true;
+  }
+  if (
+    /\b(?:doesn'?t|does not|won'?t|cannot|can't)\b[\s\S]{0,48}\bplay\b/i.test(
+      text,
+    )
+  ) {
+    return true;
+  }
+  if (
+    /\bdo(?:es)?\s+nothing\b/i.test(text) &&
+    /\b(game|button|click|play|preview)\b/i.test(text)
+  ) {
+    return true;
+  }
+  return false;
+}
 // Keep aligned with worker/goals.mjs. Word boundaries: "trust" is not Rust, "true" is not Rue.
 const RUST_HINT =
   /\brust\b|\brustc\b|\bcargo\.toml\b|\.rs\b|\bcargo\s+check\b|\bcargo\s+build\b|\bcargo\s+test\b/i;
@@ -97,6 +142,9 @@ export function inferGoal(prompt: string): InferredGoal {
       hard: true,
     };
   }
+  if (isPlayableGamePrompt(text)) {
+    return { id: "coding", label: "Playable game", hard: true };
+  }
   if (
     CODING_HINT.test(text) ||
     WEB_APP_HINT.test(text) ||
@@ -109,6 +157,7 @@ export function inferGoal(prompt: string): InferredGoal {
     const deploy = DEPLOY_HINT.test(text);
     const prod = PROD_DEBUG_HINT.test(text);
     const multi = MULTI_FILE_HINT.test(text);
+    const playable = isPlayableGamePrompt(text);
     const benignOnly =
       errorFix &&
       /Gtk-Message:|atk-bridge|xdg-open|desktop browser/i.test(text) &&
@@ -125,12 +174,14 @@ export function inferGoal(prompt: string): InferredGoal {
             ? "Prod / runtime debug"
             : errorFix
               ? "Fix build / runtime error"
-              : web
-                ? "Web app / website"
-                : multi
-                  ? "Multi-file coding"
-                  : "Coding task",
-      hard: (errorFix && !benignOnly) || multi || deploy || prod,
+              : playable
+                ? "Playable game"
+                : web
+                  ? "Web app / website"
+                  : multi
+                    ? "Multi-file coding"
+                    : "Coding task",
+      hard: (errorFix && !benignOnly) || multi || deploy || prod || playable,
     };
   }
   return { id: "general", label: "General", hard: false };

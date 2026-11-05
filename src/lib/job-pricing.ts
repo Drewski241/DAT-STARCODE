@@ -61,7 +61,7 @@ export function priceJob(input: {
       : `Model ${resolved.resolved}`,
   ];
   if (hardDomain) {
-    lines.push(`Hard domain (ChiaLisp / .clsp) +${hardDomainCredits} cr`);
+    lines.push(`Hard task +${hardDomainCredits} cr`);
   }
   lines.push(`Total ${total} cr`);
 

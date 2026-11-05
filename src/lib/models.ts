@@ -3,7 +3,7 @@
  * Auto resolves to a concrete model before the job is queued.
  */
 
-import { inferGoal } from "@/lib/goals";
+import { inferGoal, isPlayableGamePrompt } from "@/lib/goals";
 
 export type ModelKind = "auto" | "coding" | "general";
 
@@ -22,7 +22,7 @@ export const MODEL_OPTIONS: ModelOption[] = [
     kind: "auto",
     ollamaTag: null,
     blurb:
-      "Picks from your prompt (simple coding → 7B; hard/error/multi-file/Next → 32B; shopping Q&A → Qwen 7B)",
+      "Picks from your prompt (simple coding → 7B; games, hard, multi-file, Next → 32B; shopping Q&A → Qwen 7B)",
   },
   {
     id: "qwen2.5-coder:7b",
@@ -93,7 +93,7 @@ const RESEARCH_HINT =
 export function resolveModel(
   modelId: string | null | undefined,
   prompt: string,
-  opts?: { preferCoding?: boolean },
+  opts?: { preferCoding?: boolean; priorPrompt?: string },
 ): { requested: string; resolved: string; reason: string } {
   const requested = modelId?.trim() || DEFAULT_MODEL_ID;
   const option = MODEL_OPTIONS.find((m) => m.id === requested);
@@ -125,13 +125,24 @@ export function resolveModel(
       prompt,
     );
 
-  if (goal.hard || (goal.id === "coding" && escalate)) {
+  // A later turn in a game project ("try again", "still doesn't play") stays on 32B.
+  const priorPlayable =
+    Boolean(opts?.preferCoding) &&
+    isPlayableGamePrompt(String(opts?.priorPrompt || "")) &&
+    (isPlayableGamePrompt(prompt) ||
+      /\b(try again|again|still|doesn'?t|does not|nothing|fix it|make it (?:work|play)|continue playing|can we play)\b/i.test(
+        prompt,
+      ));
+
+  if (goal.hard || (goal.id === "coding" && escalate) || priorPlayable) {
     return {
       requested: "auto",
       resolved: DEFAULT_HARD_CODING_MODEL,
-      reason: goal.hard
-        ? `Auto: hard domain (${goal.label}) → ${DEFAULT_HARD_CODING_MODEL}`
-        : `Auto: complex coding cues → ${DEFAULT_HARD_CODING_MODEL}`,
+      reason: priorPlayable && !goal.hard
+        ? `Auto: playable game follow-up → ${DEFAULT_HARD_CODING_MODEL}`
+        : goal.hard
+          ? `Auto: hard domain (${goal.label}) → ${DEFAULT_HARD_CODING_MODEL}`
+          : `Auto: complex coding cues → ${DEFAULT_HARD_CODING_MODEL}`,
     };
   }
 
