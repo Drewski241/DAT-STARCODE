@@ -1076,8 +1076,9 @@ export async function claimNextJob(workerId: string) {
       );
       const priorPrompt = priorMatch?.[1]?.trim() || "";
       const routed = resolveModel("auto", next.prompt, {
-        preferCoding: Boolean(priorPrompt),
+        preferCoding: Boolean(priorPrompt || next.context),
         priorPrompt,
+        priorResult: String(next.context || ""),
       });
       next.modelResolved = routed.resolved;
       next.modelReason = routed.reason;

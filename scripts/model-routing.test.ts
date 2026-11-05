@@ -55,4 +55,19 @@ assert.equal(retry.resolved, "qwen2.5-coder:32b");
 const site = resolveModel("auto", "Build a small website");
 assert.equal(site.resolved, "qwen2.5-coder:7b");
 
+const headingAfterWin = resolveModel("auto", "Change the heading to Hello", {
+  preferCoding: true,
+  priorPrompt: 'Build me a card game. 2 player "War".',
+  priorResult: "Played index.html. Click changed the page and showed a winner.",
+});
+assert.equal(headingAfterWin.resolved, "qwen2.5-coder:7b");
+
+const headingAfterLimit = resolveModel("auto", "Change the heading to Hello", {
+  preferCoding: true,
+  priorPrompt: "Build a small website",
+  priorResult: "# Reached step limit\n\nThe agent stopped before the page was done.",
+});
+assert.equal(headingAfterLimit.resolved, "qwen2.5-coder:32b");
+assert.match(headingAfterLimit.reason, /previous turn failed/);
+
 console.log("model-routing.test.ts ok");

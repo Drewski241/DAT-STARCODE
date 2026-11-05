@@ -14,7 +14,7 @@ import {
   preparePublicGithubWorkspace,
 } from "./github.mjs";
 import { puzzleHashWithCdv } from "./cdv.mjs";
-import { inferGoalForTurn } from "./goals.mjs";
+import { inferGoalForTurn, isPlayableGamePrompt } from "./goals.mjs";
 import { ensurePuzzleHashDocumented } from "./hash-doc.mjs";
 import { verifyWorkspaceFiles } from "./verify.mjs";
 import {
@@ -106,6 +106,13 @@ import {
   summarizeWorkspaceDiff,
   formatDiffForPrompt,
 } from "./diff-summary.mjs";
+import { checkPlayablePage } from "./play-check.mjs";
+import { outcomeReadyFromTool } from "./outcome-ready.mjs";
+import {
+  chatWatchLimits,
+  sampleGpuIdle,
+  watchDecision,
+} from "./ollama-watch.mjs";
 
 const MAX_STEPS = Number(process.env.AGENT_MAX_STEPS || 12);
 const HARD_TASK_STEPS = Number(process.env.AGENT_HARD_TASK_STEPS || 40);
@@ -785,78 +792,120 @@ async function fetchUrl(url) {
 async function ollamaChat(ollamaUrl, model, messages, onToken, opts = {}) {
   const trimmed = trimMessagesForContext(messages);
   const tools = opts.tools;
+  const limits = opts.limits || chatWatchLimits(model);
+  const ac = new AbortController();
+  const startedAt = Date.now();
+  let lastByteAt = startedAt;
+  let lastBeatAt = startedAt;
+  let abortReason = "";
+  const timer = setInterval(() => {
+    const now = Date.now();
+    const decision = watchDecision(startedAt, lastByteAt, lastBeatAt, now, limits);
+    if (decision.abort) {
+      abortReason = decision.abort;
+      ac.abort();
+      return;
+    }
+    if (!decision.heartbeat) return;
+    lastBeatAt = now;
+    const sec = Math.round((now - startedAt) / 1000);
+    opts.onHeartbeat?.(`Still working · ${sec}s`);
+    if (!decision.gpuCheck) return;
+    const probe = opts.gpuIdle || sampleGpuIdle;
+    Promise.resolve()
+      .then(() => probe())
+      .then((idle) => {
+        if (idle === true && Date.now() - lastByteAt >= 45_000) {
+          abortReason = "Ollama chat stalled with the GPU idle";
+          ac.abort();
+        }
+      })
+      .catch(() => {});
+  }, 1000);
+  timer.unref?.();
+
   const body = {
     model,
     messages: trimmed,
     stream: true,
+    keep_alive: "30m",
     options: { temperature: 0.2, num_ctx: numCtxFor(model) },
   };
   if (tools?.length) body.tools = tools;
 
-  const res = await fetch(`${ollamaUrl}/api/chat`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  if (!res.ok) {
-    const errBody = await res.text();
-    throw new Error(`Ollama chat ${res.status}: ${errBody.slice(0, 200)}`);
-  }
-  if (!res.body) throw new Error("Ollama returned no body");
+  try {
+    const res = await fetch(`${ollamaUrl}/api/chat`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+      signal: ac.signal,
+    });
+    if (!res.ok) {
+      const errBody = await res.text();
+      throw new Error(`Ollama chat ${res.status}: ${errBody.slice(0, 200)}`);
+    }
+    if (!res.body) throw new Error("Ollama returned no body");
 
-  const reader = res.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = "";
-  let full = "";
-  let pending = "";
-  let lastEmit = 0;
-  /** @type {any[]} */
-  let toolCalls = [];
-  let rawMessage = null;
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    let full = "";
+    let pending = "";
+    let lastEmit = 0;
+    /** @type {any[]} */
+    let toolCalls = [];
+    let rawMessage = null;
 
-  const flush = async (force = false) => {
-    if (!onToken || !pending) return;
-    const now = Date.now();
-    if (!force && now - lastEmit < 180 && pending.length < 48) return;
-    const chunk = pending;
-    pending = "";
-    lastEmit = now;
-    await onToken(chunk, full);
-  };
+    const flush = async (force = false) => {
+      if (!onToken || !pending) return;
+      const now = Date.now();
+      if (!force && now - lastEmit < 180 && pending.length < 48) return;
+      const chunk = pending;
+      pending = "";
+      lastEmit = now;
+      await onToken(chunk, full);
+    };
 
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-    const lines = buffer.split("\n");
-    buffer = lines.pop() || "";
-    for (const line of lines) {
-      const trimmedLine = line.trim();
-      if (!trimmedLine) continue;
-      let data;
-      try {
-        data = JSON.parse(trimmedLine);
-      } catch {
-        continue;
-      }
-      if (data.message) rawMessage = data.message;
-      const piece = data.message?.content || "";
-      if (piece) {
-        full += piece;
-        pending += piece;
-        await flush(false);
-      }
-      if (data.message?.tool_calls?.length) {
-        toolCalls = mergeToolCalls(toolCalls, data.message.tool_calls);
-      }
-      if (data.done) {
-        await flush(true);
-        return { content: full, toolCalls, rawMessage };
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      lastByteAt = Date.now();
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() || "";
+      for (const line of lines) {
+        const trimmedLine = line.trim();
+        if (!trimmedLine) continue;
+        let data;
+        try {
+          data = JSON.parse(trimmedLine);
+        } catch {
+          continue;
+        }
+        if (data.message) rawMessage = data.message;
+        const piece = data.message?.content || "";
+        if (piece) {
+          full += piece;
+          pending += piece;
+          await flush(false);
+        }
+        if (data.message?.tool_calls?.length) {
+          toolCalls = mergeToolCalls(toolCalls, data.message.tool_calls);
+        }
+        if (data.done) {
+          await flush(true);
+          return { content: full, toolCalls, rawMessage };
+        }
       }
     }
+    await flush(true);
+    return { content: full, toolCalls, rawMessage };
+  } catch (err) {
+    if (abortReason) throw new Error(abortReason);
+    throw err;
+  } finally {
+    clearInterval(timer);
   }
-  await flush(true);
-  return { content: full, toolCalls, rawMessage };
 }
 
 const SKIP_PUSH_NAME =
@@ -1293,6 +1342,7 @@ export async function runAgentJob({
     }
     /** @type {string|null} */
     let codingVerifyStatus = null;
+    let playPassed = false;
     /** @type {Set<string>} */
     const knownUrls = new Set();
 
@@ -1545,7 +1595,13 @@ export async function runAgentJob({
               step: step + 1,
             });
           },
-          { tools: ollamaTools },
+          {
+            tools: ollamaTools,
+            onHeartbeat: (line) => {
+              log(`[agent] ${line} job=${job.id.slice(0, 8)} step=${step + 1}`);
+              void emit("status", `${line} · step ${step + 1}/${stepLimit}`);
+            },
+          },
         );
         content = reply.content || "";
         nativeToolCalls = reply.toolCalls || [];
@@ -1737,6 +1793,36 @@ export async function runAgentJob({
           } catch (err) {
             log(
               `[agent] pre-done language verify: ${err instanceof Error ? err.message : String(err)}`,
+            );
+          }
+        }
+        if (
+          !isGeneral &&
+          !resultOnly &&
+          !playPassed &&
+          stepsLeft > 1 &&
+          (goal.label === "Playable game" || isPlayableGamePrompt(job.prompt || ""))
+        ) {
+          try {
+            await emit("status", "Playability check · clicking Start");
+            const probe = await checkPlayablePage(root);
+            if (probe.skipped) {
+              await emit("status", `Playability check skipped · ${probe.reason}`);
+            } else if (!probe.ok) {
+              messages.push({
+                role: "user",
+                content:
+                  `Not done — Playability check failed: ${probe.reason}. ` +
+                  "Wire the Start / Play button so a click deals cards and shows a score or winner, " +
+                  'then {"done":true}.',
+              });
+              continue;
+            } else {
+              playPassed = true;
+            }
+          } catch (err) {
+            log(
+              `[agent] pre-done play check: ${err instanceof Error ? err.message : String(err)}`,
             );
           }
         }
@@ -2071,7 +2157,7 @@ export async function runAgentJob({
           /* non-fatal */
         }
       }
-      const early =
+      let early =
         !isGeneral && !resultOnly
           ? shouldEarlyExit(progress, {
               screenshotThenDone,
@@ -2081,6 +2167,32 @@ export async function runAgentJob({
               ),
             })
           : { exit: false };
+      if (!early.exit && !isGeneral && !resultOnly) {
+        const ready = outcomeReadyFromTool(tool, args, String(observation));
+        if (ready.ready) {
+          early = { exit: true, reason: ready.message, doneMessage: ready.message };
+        } else if (
+          !playPassed &&
+          (goal.label === "Playable game" ||
+            isPlayableGamePrompt(job.prompt || "")) &&
+          (tool === "write_file" || tool === "str_replace") &&
+          /\.(html?|js)$/i.test(String(args.path || ""))
+        ) {
+          try {
+            await emit("status", "Playability check · clicking Start");
+            const probe = await checkPlayablePage(root);
+            if (probe.ok && !probe.skipped) {
+              playPassed = true;
+              const message = `Played ${probe.rel || "index.html"}. ${probe.reason}. Open Preview HTML in Studio to play.`;
+              early = { exit: true, reason: probe.reason, doneMessage: message };
+            }
+          } catch (err) {
+            log(
+              `[agent] play check: ${err instanceof Error ? err.message : String(err)}`,
+            );
+          }
+        }
+      }
       let obsMsg = `OBSERVATION:\n${observation}`;
       if (isGeneral && researchReady()) {
         obsMsg += `\n\n${finishNudge()}`;
@@ -2090,7 +2202,7 @@ export async function runAgentJob({
         await emit(
           "status",
           early.doneMessage
-            ? "Early exit · screenshot complete"
+            ? "Early exit · outcome met"
             : "Early exit · no productive progress",
         );
         log(`[agent] early-exit: ${early.reason}`);
@@ -2810,6 +2922,49 @@ export async function runAgentJob({
         } catch (err) {
           log(
             `[agent] coding-verify error: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        }
+      }
+
+      if (
+        !resultOnly &&
+        !playPassed &&
+        (goal.label === "Playable game" ||
+          isPlayableGamePrompt(job.prompt || ""))
+      ) {
+        try {
+          await emit("status", "Playability check · clicking Start");
+          const probe = await checkPlayablePage(root);
+          if (probe.skipped) {
+            finalMessage += [
+              "",
+              "## Playability check skipped",
+              "",
+              probe.reason,
+            ].join("\n");
+          } else if (!probe.ok) {
+            finalMessage += [
+              "",
+              "## Playability check failed",
+              "",
+              probe.reason,
+              "",
+              "A headless browser clicked Start / Play and the page did not deal a card, score, or winner.",
+            ].join("\n");
+            await emit("log", "Playability check failed");
+          } else {
+            playPassed = true;
+            finalMessage += [
+              "",
+              "## Playability check",
+              "",
+              probe.reason,
+            ].join("\n");
+            await emit("status", "Playability check passed");
+          }
+        } catch (err) {
+          log(
+            `[agent] play check: ${err instanceof Error ? err.message : String(err)}`,
           );
         }
       }

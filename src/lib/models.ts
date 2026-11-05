@@ -3,7 +3,11 @@
  * Auto resolves to a concrete model before the job is queued.
  */
 
-import { inferGoal, isPlayableGamePrompt } from "@/lib/goals";
+import {
+  inferGoal,
+  isPlayableGamePrompt,
+  priorTurnNeedsStrongerModel,
+} from "@/lib/goals";
 
 export type ModelKind = "auto" | "coding" | "general";
 
@@ -93,7 +97,7 @@ const RESEARCH_HINT =
 export function resolveModel(
   modelId: string | null | undefined,
   prompt: string,
-  opts?: { preferCoding?: boolean; priorPrompt?: string },
+  opts?: { preferCoding?: boolean; priorPrompt?: string; priorResult?: string },
 ): { requested: string; resolved: string; reason: string } {
   const requested = modelId?.trim() || DEFAULT_MODEL_ID;
   const option = MODEL_OPTIONS.find((m) => m.id === requested);
@@ -134,15 +138,21 @@ export function resolveModel(
         prompt,
       ));
 
-  if (goal.hard || (goal.id === "coding" && escalate) || priorPlayable) {
+  const priorFailed =
+    Boolean(opts?.preferCoding) &&
+    priorTurnNeedsStrongerModel(String(opts?.priorResult || ""));
+
+  if (goal.hard || (goal.id === "coding" && escalate) || priorPlayable || priorFailed) {
     return {
       requested: "auto",
       resolved: DEFAULT_HARD_CODING_MODEL,
       reason: priorPlayable && !goal.hard
         ? `Auto: playable game follow-up → ${DEFAULT_HARD_CODING_MODEL}`
-        : goal.hard
-          ? `Auto: hard domain (${goal.label}) → ${DEFAULT_HARD_CODING_MODEL}`
-          : `Auto: complex coding cues → ${DEFAULT_HARD_CODING_MODEL}`,
+        : priorFailed && !goal.hard
+          ? `Auto: previous turn failed → ${DEFAULT_HARD_CODING_MODEL}`
+          : goal.hard
+            ? `Auto: hard domain (${goal.label}) → ${DEFAULT_HARD_CODING_MODEL}`
+            : `Auto: complex coding cues → ${DEFAULT_HARD_CODING_MODEL}`,
     };
   }
 
