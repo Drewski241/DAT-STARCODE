@@ -65,7 +65,11 @@ export async function buildContinueContext(
     try {
       const parsed = JSON.parse(checkpoint) as {
         filesTouched?: string[];
-        projectGoal?: { summary?: string; doneWhen?: string };
+        projectGoal?: {
+          summary?: string;
+          doneWhen?: string;
+          checks?: { text?: string; status?: string; detail?: string; file?: string }[];
+        };
       };
       if (Array.isArray(parsed.filesTouched)) {
         filesTouched = parsed.filesTouched.map(String);
@@ -77,6 +81,16 @@ export async function buildContinueContext(
           parsed.projectGoal.doneWhen
             ? `- Done when: ${parsed.projectGoal.doneWhen}`
             : "",
+          ...(Array.isArray(parsed.projectGoal.checks)
+            ? parsed.projectGoal.checks.slice(0, 6).map((check) => {
+                const mark = check.status === "passed" ? "x" : " ";
+                const detail =
+                  check.status === "failed" && check.detail
+                    ? ` — ${check.detail}`
+                    : "";
+                return `- [${mark}] ${check.text || ""}${detail}`;
+              })
+            : []),
           "",
         );
       }

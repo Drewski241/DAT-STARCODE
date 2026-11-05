@@ -88,7 +88,7 @@ export function isPlayableGamePrompt(prompt: string): boolean {
 
 /** Prior RESULT.md that means the next Auto coding turn should leave 7B. */
 export function priorTurnNeedsStrongerModel(priorResult: string): boolean {
-  return /# Reached step limit|## Verification failed|## Coding verify failed|## Playability check failed|## Language verify/i.test(
+  return /# Reached step limit|## Verification failed|## Coding verify failed|## Playability check failed|## Checklist failed|## Language verify/i.test(
     String(priorResult || ""),
   );
 }

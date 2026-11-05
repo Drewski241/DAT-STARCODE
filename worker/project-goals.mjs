@@ -1,39 +1,8 @@
 /**
  * Durable multi-turn project goals stored in checkpoint.json.
+ * The checklist itself lives in checklist.mjs so follow-ups keep the summary.
  */
-
-/**
- * @param {string} prompt
- * @param {Record<string, unknown>|null|undefined} prev
- */
-export function deriveProjectGoal(prompt, prev = null) {
-  const text = String(prompt || "").trim();
-  const prevGoal =
-    prev && typeof prev === "object" && prev.projectGoal
-      ? /** @type {Record<string, unknown>} */ (prev.projectGoal)
-      : null;
-
-  const summary =
-    text.length > 0
-      ? text.replace(/\s+/g, " ").slice(0, 240)
-      : String(prevGoal?.summary || "Continue project");
-
-  /** @type {string[]} */
-  const openQuestions = Array.isArray(prevGoal?.openQuestions)
-    ? /** @type {string[]} */ (prevGoal.openQuestions).slice(0, 8)
-    : [];
-
-  return {
-    summary,
-    doneWhen: String(
-      prevGoal?.doneWhen ||
-        "Runnable deliverable verified (build/test or preview URL) and summarized for the user",
-    ),
-    status: "active",
-    openQuestions,
-    updatedFromPrompt: text.slice(0, 120),
-  };
-}
+export { deriveProjectGoal } from "./checklist.mjs";
 
 /**
  * @param {Record<string, unknown>|null|undefined} cp
@@ -46,6 +15,13 @@ export function formatProjectGoalForPrompt(cp) {
   if (goal.summary) lines.push(`- Summary: ${goal.summary}`);
   if (goal.doneWhen) lines.push(`- Done when: ${goal.doneWhen}`);
   if (goal.status) lines.push(`- Status: ${goal.status}`);
+  if (Array.isArray(goal.checks) && goal.checks.length) {
+    lines.push("- Checklist:");
+    for (const check of goal.checks.slice(0, 6)) {
+      const mark = check.status === "passed" ? "x" : " ";
+      lines.push(`  - [${mark}] ${check.text}`);
+    }
+  }
   if (Array.isArray(goal.openQuestions) && goal.openQuestions.length) {
     lines.push(
       `- Open questions: ${goal.openQuestions.slice(0, 5).join(" · ")}`,

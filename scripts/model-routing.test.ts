@@ -70,4 +70,11 @@ const headingAfterLimit = resolveModel("auto", "Change the heading to Hello", {
 assert.equal(headingAfterLimit.resolved, "qwen2.5-coder:32b");
 assert.match(headingAfterLimit.reason, /previous turn failed/);
 
+const afterChecklist = resolveModel("auto", "Change the heading to Hello", {
+  preferCoding: true,
+  priorPrompt: "Build a small website",
+  priorResult: "## Checklist failed\n\n“Hello” is not in the project files",
+});
+assert.equal(afterChecklist.resolved, "qwen2.5-coder:32b");
+
 console.log("model-routing.test.ts ok");
