@@ -140,10 +140,9 @@ export async function initWorkspace(job: CodingJob): Promise<void> {
     `${job.modelRequested} → ${job.modelResolved}`,
     job.modelReason ? `\n${job.modelReason}` : "",
     ``,
-    `This folder is your project workspace. Later prompts in the same project`,
-    `edit these files in place. A new project starts empty (templates may seed`,
-    `the same starter names — check the project id above). Download the zip`,
-    `from Studio anytime.`,
+    `This folder is your project workspace. Edit these files in Studio and`,
+    `save them, or ask a later prompt in the same project to change them.`,
+    `Download the zip from Studio when you want a local copy.`,
     ``,
   ]
     .filter((line) => line !== undefined)

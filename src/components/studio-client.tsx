@@ -87,6 +87,11 @@ export function StudioClient() {
   const [workspaceFiles, setWorkspaceFiles] = useState<WorkspaceFile[]>([]);
   const [previewPath, setPreviewPath] = useState<string | null>(null);
   const [previewContent, setPreviewContent] = useState<string | null>(null);
+  const [fileSaved, setFileSaved] = useState<string | null>(null);
+  const [fileLoading, setFileLoading] = useState(false);
+  const [savingFile, setSavingFile] = useState(false);
+  const [saveNote, setSaveNote] = useState<string | null>(null);
+  const [pagePreview, setPagePreview] = useState<string | null>(null);
   const [htmlPreview, setHtmlPreview] = useState(false);
   const [shotPreview, setShotPreview] = useState<{
     url: string;
@@ -548,6 +553,10 @@ export function StudioClient() {
       setWorkspaceFiles([]);
       setPreviewPath(null);
       setPreviewContent(null);
+      setFileSaved(null);
+      setFileLoading(false);
+      setSaveNote(null);
+      setPagePreview(null);
       setShotPreview(null);
       setDiffPreview(null);
       setHtmlPreview(false);
@@ -566,7 +575,11 @@ export function StudioClient() {
 
   async function openFile(jobId: string, filePath: string) {
     setPreviewPath(filePath);
-    setPreviewContent("Loading…");
+    setPreviewContent(null);
+    setFileSaved(null);
+    setFileLoading(true);
+    setSaveNote(null);
+    setPagePreview(null);
     setShotPreview(null);
     setDiffPreview(null);
     setHtmlPreview(false);
@@ -576,11 +589,78 @@ export function StudioClient() {
       { credentials: "same-origin" },
     );
     const data = await res.json();
+    setFileLoading(false);
     if (!res.ok) {
       setPreviewContent(data.error ?? "Could not read file");
+      setFileSaved(null);
       return;
     }
-    setPreviewContent(data.content);
+    const text = typeof data.content === "string" ? data.content : "";
+    setPreviewContent(text);
+    setFileSaved(text);
+  }
+
+  async function saveOpenFile(jobId: string, filePath: string, content: string) {
+    setSavingFile(true);
+    setSaveNote(null);
+    try {
+      const res = await fetch(`/api/jobs/${jobId}/workspace/file`, {
+        method: "PUT",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ path: filePath, content }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setSaveNote(
+          typeof data.error === "string" ? data.error : "Could not save",
+        );
+        return false;
+      }
+      setFileSaved(content);
+      setPreviewPath(filePath);
+      setSaveNote("Saved. The next turn reads this file.");
+      return true;
+    } catch (err) {
+      setSaveNote(err instanceof Error ? err.message : "Could not save");
+      return false;
+    } finally {
+      setSavingFile(false);
+    }
+  }
+
+  async function openPagePreview(jobId: string, htmlPath: string) {
+    setPanel("workspace");
+    setShotPreview(null);
+    setDiffPreview(null);
+    setHtmlPreview(true);
+    setPagePreview(null);
+    if (
+      previewPath === htmlPath &&
+      previewContent != null &&
+      fileSaved != null &&
+      previewContent !== fileSaved
+    ) {
+      const ok = await saveOpenFile(jobId, htmlPath, previewContent);
+      if (!ok) {
+        setHtmlPreview(false);
+        return;
+      }
+    }
+    const res = await fetch(
+      `/api/jobs/${jobId}/workspace/preview?path=${encodeURIComponent(htmlPath)}`,
+      { credentials: "same-origin" },
+    );
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || typeof data.html !== "string") {
+      setHtmlPreview(false);
+      setSaveNote(
+        typeof data.error === "string" ? data.error : "Could not open preview",
+      );
+      return;
+    }
+    setPreviewPath(htmlPath);
+    setPagePreview(data.html);
   }
 
   async function openScreenshotPreview(jobId: string) {
@@ -791,6 +871,16 @@ export function StudioClient() {
   }
 
   const selected = jobs.find((j) => j.id === selectedId) ?? jobs[0] ?? null;
+  const workspaceLocked = jobs.some(
+    (job) =>
+      job.status === "queued" ||
+      job.status === "claimed" ||
+      job.status === "running",
+  );
+  const fileDirty =
+    previewContent != null &&
+    fileSaved != null &&
+    previewContent !== fileSaved;
   const selectedModel = MODEL_OPTIONS.find((m) => m.id === modelId);
   const lastCompletedInProject = [...jobs]
     .reverse()
@@ -1124,8 +1214,9 @@ export function StudioClient() {
             />
 
             <p className="mt-4 font-mono text-[11px] text-steel-500">
-              Turns in this project share one workspace. Ask follow-ups like
-              “how do I play?” or “add a score” without starting over.
+              Turns in this project share one workspace. Edit a file in
+              Workspace and save it, then ask a follow-up — the next turn reads
+              that change. Preview HTML runs the page here, with its CSS and JS.
             </p>
 
             <p className="mt-4 font-mono text-[11px] text-steel-400">
@@ -1383,15 +1474,12 @@ export function StudioClient() {
                   {workspaceFiles.some((f) => /(^|\/)index\.html$/i.test(f.path)) && (
                     <button
                       type="button"
-                      onClick={async () => {
+                      onClick={() => {
                         const htmlPath =
                           workspaceFiles.find((f) =>
                             /(^|\/)index\.html$/i.test(f.path),
                           )?.path || "index.html";
-                        await openFile(selected.id, htmlPath);
-                        setHtmlPreview(true);
-                        setShotPreview(null);
-                        setPanel("workspace");
+                        void openPagePreview(selected.id, htmlPath);
                       }}
                       className="font-mono text-[11px] uppercase tracking-widest text-emerald-300/90 hover:text-emerald-200"
                     >
@@ -1584,35 +1672,128 @@ export function StudioClient() {
                             className="max-h-[28rem] w-full border border-copper-800/60 bg-ink-950 object-contain object-top"
                           />
                         </div>
-                      ) : htmlPreview &&
-                        previewPath &&
-                        /\.html?$/i.test(previewPath) &&
-                        previewContent ? (
+                      ) : htmlPreview && previewPath && /\.html?$/i.test(previewPath) ? (
                         <div className="min-h-[12rem] space-y-2">
-                          <div className="flex items-center justify-between gap-2">
+                          <div className="flex flex-wrap items-center justify-between gap-2">
                             <p className="font-mono text-[11px] text-emerald-300/90">
-                              Live HTML preview · {previewPath}
+                              Page preview · {previewPath}
                             </p>
-                            <button
-                              type="button"
-                              className="font-mono text-[11px] text-steel-400 hover:text-copper-200"
-                              onClick={() => setHtmlPreview(false)}
-                            >
-                              Show source
-                            </button>
+                            <div className="flex flex-wrap items-center gap-3">
+                              <button
+                                type="button"
+                                className="font-mono text-[11px] text-steel-400 hover:text-copper-200"
+                                onClick={() =>
+                                  void openPagePreview(selected.id, previewPath)
+                                }
+                              >
+                                Reload
+                              </button>
+                              <button
+                                type="button"
+                                className="font-mono text-[11px] text-steel-400 hover:text-copper-200"
+                                onClick={() => {
+                                  setHtmlPreview(false);
+                                  void openFile(selected.id, previewPath);
+                                }}
+                              >
+                                Edit source
+                              </button>
+                            </div>
                           </div>
-                          <iframe
-                            title="HTML preview"
-                            className="h-[28rem] w-full border border-copper-800/60 bg-white"
-                            sandbox="allow-scripts allow-same-origin"
-                            srcDoc={previewContent}
-                          />
+                          {pagePreview ? (
+                            <iframe
+                              title="HTML preview"
+                              className="h-[28rem] w-full border border-copper-800/60 bg-white"
+                              sandbox="allow-scripts"
+                              srcDoc={pagePreview}
+                            />
+                          ) : (
+                            <p className="font-mono text-xs text-steel-500">
+                              Loading page…
+                            </p>
+                          )}
                         </div>
                       ) : (
-                        <pre className="min-h-[12rem] whitespace-pre-wrap break-words font-mono text-xs leading-relaxed text-steel-200">
-                          {previewContent ??
-                            "Select a file to preview. Download the zip to use the full project locally."}
-                        </pre>
+                        <div className="min-h-[12rem] space-y-2">
+                          {previewPath &&
+                          previewContent != null &&
+                          fileSaved != null &&
+                          !fileLoading ? (
+                            <>
+                              <div className="flex flex-wrap items-center justify-between gap-2">
+                                <p className="truncate font-mono text-[11px] text-copper-200">
+                                  {previewPath}
+                                  {fileDirty ? " · unsaved" : ""}
+                                </p>
+                                <div className="flex flex-wrap items-center gap-3">
+                                  {/\.html?$/i.test(previewPath) && (
+                                    <button
+                                      type="button"
+                                      className="font-mono text-[11px] uppercase tracking-widest text-emerald-300/90 hover:text-emerald-200"
+                                      onClick={() =>
+                                        void openPagePreview(
+                                          selected.id,
+                                          previewPath,
+                                        )
+                                      }
+                                    >
+                                      Preview page
+                                    </button>
+                                  )}
+                                  <button
+                                    type="button"
+                                    disabled={
+                                      !fileDirty || savingFile || workspaceLocked
+                                    }
+                                    className="font-mono text-[11px] uppercase tracking-widest text-copper-300 hover:text-copper-100 disabled:text-steel-600"
+                                    onClick={() =>
+                                      void saveOpenFile(
+                                        selected.id,
+                                        previewPath,
+                                        previewContent,
+                                      )
+                                    }
+                                  >
+                                    {savingFile ? "Saving…" : "Save"}
+                                  </button>
+                                </div>
+                              </div>
+                              {workspaceLocked ? (
+                                <p className="font-mono text-[11px] text-steel-500">
+                                  A turn is running. You can read the file now
+                                  and save after it finishes.
+                                </p>
+                              ) : (
+                                <p className="font-mono text-[11px] text-steel-500">
+                                  Saves into this project. The next prompt sees
+                                  the saved file.
+                                </p>
+                              )}
+                              {saveNote ? (
+                                <p className="font-mono text-[11px] text-copper-300">
+                                  {saveNote}
+                                </p>
+                              ) : null}
+                              <Textarea
+                                value={previewContent}
+                                readOnly={workspaceLocked || savingFile}
+                                onChange={(e) => {
+                                  setPreviewContent(e.target.value);
+                                  setSaveNote(null);
+                                }}
+                                spellCheck={false}
+                                className="h-[26rem] resize-y rounded-none border-copper-800/50 bg-ink-950/80 font-mono text-xs leading-relaxed text-steel-100"
+                              />
+                            </>
+                          ) : (
+                            <p className="font-mono text-xs text-steel-500">
+                              {fileLoading
+                                ? "Loading file…"
+                                : previewContent ??
+                                  "Select a file to edit it here. Preview HTML runs index.html with its CSS and JS. Download the zip when you want a copy on this computer."}
+                            </p>
+                          )}
+                        </div>
                       )}
                     </div>
                   )}
