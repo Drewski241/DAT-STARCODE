@@ -54,6 +54,15 @@ export function formatCheckpointForPrompt(cp) {
     if (g.summary) lines.push(`- Project summary: ${g.summary}`);
     if (g.doneWhen) lines.push(`- Done when: ${g.doneWhen}`);
     if (g.status) lines.push(`- Project status: ${g.status}`);
+    if (Array.isArray(g.checks) && g.checks.length) {
+      lines.push("- Checklist:");
+      for (const check of g.checks.slice(0, 6)) {
+        const mark = check?.status === "passed" ? "x" : " ";
+        const detail =
+          check?.status === "failed" && check?.detail ? ` — ${check.detail}` : "";
+        lines.push(`  - [${mark}] ${check.text}${detail}`);
+      }
+    }
   }
   if (cp.lastCommand) lines.push(`- Last command: \`${cp.lastCommand}\``);
   if (cp.lastErrorKind) lines.push(`- Last error class: ${cp.lastErrorKind}`);

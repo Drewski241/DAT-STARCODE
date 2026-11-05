@@ -66,6 +66,28 @@ type GithubRepo = {
 
 type WorkspaceFile = { path: string; size: number };
 
+type ProjectCheck = {
+  id: string;
+  text: string;
+  status: string;
+  file?: string;
+  detail?: string;
+};
+
+function checklistPrompt(check: ProjectCheck) {
+  return [
+    "The project checklist is still open. Continue the same project.",
+    "",
+    `First check: ${check.text}`,
+    `File: ${check.file || "the project files"}`,
+    check.detail ? `Last result: ${check.detail}` : "",
+    "",
+    "Open that file and make this check pass. Do not rebuild the project from scratch, and do not add a server.",
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
 export function StudioClient() {
   const router = useRouter();
   const [account, setAccount] = useState<Account | null>(null);
@@ -85,6 +107,11 @@ export function StudioClient() {
   const authedRef = useRef<boolean | null>(null);
   const [sessionWarning, setSessionWarning] = useState<string | null>(null);
   const [workspaceFiles, setWorkspaceFiles] = useState<WorkspaceFile[]>([]);
+  const [checklist, setChecklist] = useState<{
+    summary: string;
+    checks: ProjectCheck[];
+  }>({ summary: "", checks: [] });
+  const checklistFilled = useRef<string | null>(null);
   const [previewPath, setPreviewPath] = useState<string | null>(null);
   const [previewContent, setPreviewContent] = useState<string | null>(null);
   const [fileSaved, setFileSaved] = useState<string | null>(null);
@@ -545,12 +572,41 @@ export function StudioClient() {
       return;
     }
     const data = await res.json();
-    setWorkspaceFiles(data.files ?? []);
+    const files = (data.files ?? []) as WorkspaceFile[];
+    setWorkspaceFiles(files);
+    if (!files.some((file) => file.path === ".datstarcoder/checkpoint.json")) {
+      setChecklist({ summary: "", checks: [] });
+      return;
+    }
+    const cpRes = await fetch(
+      `/api/jobs/${jobId}/workspace/file?path=${encodeURIComponent(".datstarcoder/checkpoint.json")}`,
+      { credentials: "same-origin" },
+    );
+    const cpData = await cpRes.json().catch(() => ({}));
+    if (!cpRes.ok || typeof cpData.content !== "string") {
+      setChecklist({ summary: "", checks: [] });
+      return;
+    }
+    try {
+      const parsed = JSON.parse(cpData.content) as {
+        projectGoal?: { summary?: string; checks?: ProjectCheck[] };
+      };
+      const checks = Array.isArray(parsed.projectGoal?.checks)
+        ? parsed.projectGoal.checks.filter((check) => check && check.text)
+        : [];
+      setChecklist({
+        summary: String(parsed.projectGoal?.summary || ""),
+        checks,
+      });
+    } catch {
+      setChecklist({ summary: "", checks: [] });
+    }
   }, []);
 
   useEffect(() => {
     if (!selectedId) {
       setWorkspaceFiles([]);
+      setChecklist({ summary: "", checks: [] });
       setPreviewPath(null);
       setPreviewContent(null);
       setFileSaved(null);
@@ -879,6 +935,19 @@ export function StudioClient() {
   }
 
   const selected = jobs.find((j) => j.id === selectedId) ?? jobs[0] ?? null;
+  const openCheck =
+    checklist.checks.find((check) => check.status === "failed") ||
+    checklist.checks.find((check) => check.status !== "passed") ||
+    null;
+
+  useEffect(() => {
+    if (!selected || selected.status !== "completed" || !openCheck) return;
+    const key = `${selected.id}:${selected.completedAt || "done"}`;
+    if (checklistFilled.current === key) return;
+    if (prompt.trim()) return;
+    checklistFilled.current = key;
+    setPrompt(checklistPrompt(openCheck));
+  }, [selected, openCheck, prompt]);
   const workspaceLocked = jobs.some(
     (job) =>
       job.status === "queued" ||
@@ -1227,7 +1296,53 @@ export function StudioClient() {
               Turns in this project share one workspace. Edit a file in
               Workspace and save it, then ask a follow-up — the next turn reads
               that change. Play in Studio runs the page here, with its CSS and JS.
+              The checklist stays with the project.
             </p>
+            {checklist.checks.length > 0 && (
+              <div className="mt-4 border border-copper-900/70 px-3 py-2">
+                <p className="font-mono text-[11px] uppercase tracking-widest text-steel-400">
+                  Project checklist
+                </p>
+                {checklist.summary ? (
+                  <p className="mt-2 font-mono text-[11px] text-steel-300">
+                    {checklist.summary}
+                  </p>
+                ) : null}
+                <ul className="mt-2 space-y-1">
+                  {checklist.checks.map((check) => (
+                    <li
+                      key={check.id || check.text}
+                      className="font-mono text-[11px] text-steel-200"
+                    >
+                      <span
+                        className={
+                          check.status === "passed"
+                            ? "text-emerald-300"
+                            : check.status === "failed"
+                              ? "text-rose-300"
+                              : "text-steel-500"
+                        }
+                      >
+                        {check.status === "passed" ? "[x]" : "[ ]"}
+                      </span>{" "}
+                      {check.text}
+                      {check.status !== "passed" ? (
+                        <button
+                          type="button"
+                          className="ml-2 text-copper-300 hover:text-copper-100"
+                          onClick={() => {
+                            setPrompt(checklistPrompt(check));
+                            setPanel("output");
+                          }}
+                        >
+                          Use as next prompt
+                        </button>
+                      ) : null}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
 
             <p className="mt-4 font-mono text-[11px] text-steel-400">
               This turn:{" "}
@@ -1551,6 +1666,31 @@ export function StudioClient() {
                       )}
                     </>
                   ) : (
+                    <div className="space-y-3">
+                      {checklist.checks.length > 0 && (
+                        <ul className="space-y-1 border border-copper-900/70 px-3 py-2">
+                          {checklist.checks.map((check) => (
+                            <li
+                              key={`ws-${check.id || check.text}`}
+                              className="font-mono text-[11px] text-steel-200"
+                            >
+                              <span
+                                className={
+                                  check.status === "passed"
+                                    ? "text-emerald-300"
+                                    : "text-rose-300"
+                                }
+                              >
+                                {check.status === "passed" ? "[x]" : "[ ]"}
+                              </span>{" "}
+                              {check.text}
+                              {check.detail && check.status === "failed"
+                                ? ` — ${check.detail}`
+                                : ""}
+                            </li>
+                          ))}
+                        </ul>
+                      )}
                     <div className="grid gap-4 md:grid-cols-[11rem_1fr]">
                       <ul className="space-y-1 border-r border-copper-900/60 pr-3">
                         {workspaceFiles.length === 0 && (
@@ -1812,6 +1952,7 @@ export function StudioClient() {
                           )}
                         </div>
                       )}
+                    </div>
                     </div>
                   )}
                 </div>

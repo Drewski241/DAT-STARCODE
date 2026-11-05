@@ -107,6 +107,16 @@ import {
   formatDiffForPrompt,
 } from "./diff-summary.mjs";
 import { checkPlayablePage } from "./play-check.mjs";
+import {
+  checklistFollowup,
+  commandIsStaticServer,
+  evaluateChecklist,
+  packageDevIsStaticServer,
+  firstOpenCheck,
+  formatChecklistMarkdown,
+  promptWantsDevServer,
+  withCheckResults,
+} from "./checklist.mjs";
 import { outcomeReadyFromTool } from "./outcome-ready.mjs";
 import {
   chatWatchLimits,
@@ -1219,7 +1229,7 @@ export async function runAgentJob({
       log(`[agent] loaded project checkpoint`);
       await emit("status", "Resumed project checkpoint");
     }
-    const projectGoal = isGeneral
+    let projectGoal = isGeneral
       ? null
       : deriveProjectGoal(job.prompt || "", checkpoint);
     const projectGoalMd = formatProjectGoalForPrompt({ projectGoal });
@@ -1344,32 +1354,38 @@ export async function runAgentJob({
     let codingVerifyStatus = null;
     let playPassed = false;
     let playShots = 0;
+    let checklistFresh = false;
     const wantPlay =
       !isGeneral &&
       !resultOnly &&
       (goal.label === "Playable game" || isPlayableGamePrompt(job.prompt || ""));
-    if (wantPlay && !skipAgentLoopForSoftDemo) {
+    if (
+      !isGeneral &&
+      !resultOnly &&
+      !skipAgentLoopForSoftDemo &&
+      Array.isArray(projectGoal?.checks) &&
+      projectGoal.checks.length
+    ) {
       try {
-        await emit("status", "Playability check · clicking Start");
-        const probe = await checkPlayablePage(root);
-        if (probe.ok && !probe.skipped) {
-          playPassed = true;
-          finalMessage = `Played ${probe.rel || "index.html"}. ${probe.reason}. Open Play in Studio to play.`;
+        await emit("status", "Checklist · checking the project");
+        const next = await evaluateChecklist(root, projectGoal.checks);
+        projectGoal = withCheckResults(projectGoal, next);
+        const open = firstOpenCheck(next);
+        checklistFresh = !open;
+        if (!open) {
+          playPassed = next.some((c) => c.kind === "play");
+          finalMessage = `Checklist complete.\n\n${formatChecklistMarkdown(next)}\n\nOpen Play in Studio to use the project.`;
           skipAgentLoopForSoftDemo = true;
           stepsUsed = 1;
-          log(`[agent] play check already passed · ${probe.reason}`);
+          log("[agent] checklist already passed");
           await emit("status", "Early exit · outcome met");
-        } else if (!probe.skipped && probe.ok === false) {
-          messages.push({
-            role: "user",
-            content:
-              `Playability check failed before any edits: ${probe.reason}. ` +
-              "Fix app.js so Start Game deals a card within a few seconds. Do not call screenshot_url.",
-          });
+        } else if (open.status === "failed") {
+          messages.push({ role: "user", content: checklistFollowup(open) });
+          log(`[agent] checklist open · ${open.text}`);
         }
       } catch (err) {
         log(
-          `[agent] play check prime: ${err instanceof Error ? err.message : String(err)}`,
+          `[agent] checklist prime: ${err instanceof Error ? err.message : String(err)}`,
         );
       }
     }
@@ -1900,7 +1916,28 @@ export async function runAgentJob({
         step: toolSteps,
       });
       let observation = "";
-      if (tool === "list_files") {
+      const serverCommand = String(
+        args.command || args.script || args.packages || "",
+      );
+      let staticServerBlocked =
+        !isGeneral &&
+        (tool === "run" || tool === "start_server" || tool === "npm_install") &&
+        commandIsStaticServer(serverCommand) &&
+        !promptWantsDevServer(job.prompt || "");
+      if (
+        !staticServerBlocked &&
+        !isGeneral &&
+        (tool === "run" || tool === "start_server") &&
+        /\bnpm\s+run\s+dev\b/i.test(serverCommand) &&
+        !promptWantsDevServer(job.prompt || "") &&
+        (await packageDevIsStaticServer(root))
+      ) {
+        staticServerBlocked = true;
+      }
+      if (staticServerBlocked) {
+        observation =
+          "POLICY: Keep this project as files Play in Studio can open (index.html, styles.css, app.js). Do not start http-server unless the user asked for a server.";
+      } else if (tool === "list_files") {
         observation = await toolList(root);
       } else if (tool === "search_files") {
         const result = await searchWorkspace(root, String(args.query || ""), {
@@ -2225,6 +2262,31 @@ export async function runAgentJob({
           early = { exit: true, reason: ready.message, doneMessage: ready.message };
         } else if (
           !playPassed &&
+          Array.isArray(projectGoal?.checks) &&
+          projectGoal.checks.length &&
+          (tool === "write_file" || tool === "str_replace") &&
+          /\.(html?|js|css|rs)$/i.test(String(args.path || ""))
+        ) {
+          try {
+            await emit("status", "Checklist · checking the project");
+            const next = await evaluateChecklist(root, projectGoal.checks);
+            projectGoal = withCheckResults(projectGoal, next);
+            checklistFresh = !firstOpenCheck(next);
+            if (!firstOpenCheck(next)) {
+              playPassed = next.some((c) => c.kind === "play");
+              early = {
+                exit: true,
+                reason: "Checklist passed",
+                doneMessage: `Checklist complete.\n\n${formatChecklistMarkdown(next)}`,
+              };
+            }
+          } catch (err) {
+            log(
+              `[agent] checklist: ${err instanceof Error ? err.message : String(err)}`,
+            );
+          }
+        } else if (
+          !playPassed &&
           (goal.label === "Playable game" ||
             isPlayableGamePrompt(job.prompt || "")) &&
           (tool === "write_file" || tool === "str_replace") &&
@@ -2359,6 +2421,33 @@ export async function runAgentJob({
     // Persist checkpoint for coding / hard workspace turns.
     if (!isGeneral) {
       try {
+        if (
+          projectGoal &&
+          Array.isArray(projectGoal.checks) &&
+          projectGoal.checks.length &&
+          !checklistFresh
+        ) {
+          try {
+            await emit("status", "Checklist · checking the project");
+            const next = await evaluateChecklist(root, projectGoal.checks);
+            projectGoal = withCheckResults(projectGoal, next);
+            checklistFresh = true;
+          } catch (err) {
+            log(
+              `[agent] checklist: ${err instanceof Error ? err.message : String(err)}`,
+            );
+          }
+        }
+        if (
+          projectGoal &&
+          Array.isArray(projectGoal.checks) &&
+          projectGoal.checks.length
+        ) {
+          const section = formatChecklistMarkdown(projectGoal.checks);
+          if (section && !String(finalMessage || "").includes("## Checklist")) {
+            finalMessage = finalMessage ? `${finalMessage}\n\n${section}` : section;
+          }
+        }
         const previewPath = filesTouched.find((p) =>
           /(^|\/)index\.html$/i.test(p),
         )

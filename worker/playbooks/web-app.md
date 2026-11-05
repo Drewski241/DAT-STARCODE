@@ -45,6 +45,10 @@ A card, board, or browser game is done only when someone can start it and play a
 - Keep it static: `index.html`, `styles.css`, and `app.js`. Do not add `http-server` unless they asked for a server.
 - The button id in the HTML must match the listener in `app.js`, and `app.js` must parse (no extra `}`).
 
+## Checklist
+
+The worker keeps a checklist on the project. The first prompt locks the summary. Later prompts add checks. They do not replace the project. Finish when every check passes. The usual checks are: the page exists, quoted words from the prompt are in the files, and a game survives a click on Start.
+
 ## Done when
 
 - Verify command (`npm test` / `npm run build`) exits 0 when those scripts exist, **or**
