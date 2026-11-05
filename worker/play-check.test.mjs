@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { promises as fs } from "fs";
 import os from "os";
 import path from "path";
-import { checkPlayablePage, judgePlayProbe } from "./play-check.mjs";
+import { checkPlayablePage, firstChangedText, judgePlayProbe } from "./play-check.mjs";
 import { loadPlaywright } from "./screenshot.mjs";
 
 assert.deepEqual(
@@ -28,6 +28,14 @@ assert.match(
 assert.equal(
   judgePlayProbe({ skipped: true, reason: "Playwright not installed" }).ok,
   true,
+);
+assert.match(
+  firstChangedText("Player 1: 0 Player 2: 0", [
+    "Player 1: 0 Player 2: 0",
+    "Player 1: 0 Player 2: 0",
+    "Player 1: 2 of Hearts Player 2: 9 of Clubs",
+  ]),
+  /Hearts/,
 );
 
 const pw = await loadPlaywright();
