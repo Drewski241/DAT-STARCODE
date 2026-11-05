@@ -29,4 +29,30 @@ assert.equal(trust.resolved, "qwen2.5-coder:7b");
 const explicit = resolveModel("qwen2.5-coder:14b", "Write a ChiaLisp puzzle");
 assert.equal(explicit.resolved, "qwen2.5-coder:14b");
 
+const war = resolveModel(
+  "auto",
+  'Build me a card game. 2 player "War". That if anyone downloads the zip can play in a web browser.',
+);
+assert.equal(war.resolved, "qwen2.5-coder:32b");
+assert.match(war.reason, /Playable game/);
+
+const still = resolveModel(
+  "auto",
+  "Hey It seems the start game still doesn't do anything when i click it in the preview html. I would like to play a complete game of war.",
+  {
+    preferCoding: true,
+    priorPrompt: 'Build me a card game. 2 player "War".',
+  },
+);
+assert.equal(still.resolved, "qwen2.5-coder:32b");
+
+const retry = resolveModel("auto", "try again", {
+  preferCoding: true,
+  priorPrompt: 'Build me a card game. 2 player "War".',
+});
+assert.equal(retry.resolved, "qwen2.5-coder:32b");
+
+const site = resolveModel("auto", "Build a small website");
+assert.equal(site.resolved, "qwen2.5-coder:7b");
+
 console.log("model-routing.test.ts ok");

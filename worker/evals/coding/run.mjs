@@ -76,7 +76,22 @@ function check(id, cond, detail = "") {
   check("goal-multi-hard", multi.id === "coding" && multi.hard === true);
 
   const heading = inferGoal("Change the heading to Hello Continuity");
-  check("goal-heading-followup", heading.id === "coding");
+  check("goal-heading-followup", heading.id === "coding" && heading.hard === false);
+
+  const war = inferGoal(
+    'Build me a card game. 2 player "War". That if anyone downloads the zip can play in a web browser.',
+  );
+  check(
+    "goal-playable-war",
+    war.id === "coding" &&
+      war.hard === true &&
+      war.label === "Playable game" &&
+      war.playbooks.includes("web-app.md"),
+  );
+  const stuck = inferGoal(
+    "hey start game still seems to do nothing. How about you look up the rules of the game WAR",
+  );
+  check("goal-playable-stuck", stuck.hard === true && stuck.id === "coding");
 
   const memory = inferGoal(
     "What did we learn last turn? Summarize open bugs from the checkpoint.",

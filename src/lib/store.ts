@@ -1071,7 +1071,14 @@ export async function claimNextJob(workerId: string) {
     // improved coding-hint heuristics (e.g. "build a … game").
     const requested = (next.modelRequested || "auto").trim() || "auto";
     if (requested === "auto") {
-      const routed = resolveModel("auto", next.prompt);
+      const priorMatch = String(next.context || "").match(
+        /### Prior user request\n([\s\S]*?)(?=\n### |\n## |$)/,
+      );
+      const priorPrompt = priorMatch?.[1]?.trim() || "";
+      const routed = resolveModel("auto", next.prompt, {
+        preferCoding: Boolean(priorPrompt),
+        priorPrompt,
+      });
       next.modelResolved = routed.resolved;
       next.modelReason = routed.reason;
     }

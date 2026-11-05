@@ -24,6 +24,52 @@ const PROD_DEBUG_HINT =
   /\b(production|prod\s+log|amplify\s+build|worker\s+401|credentialprovidererror|walletconnect\s+offline)\b/i;
 const MULTI_FILE_HINT =
   /\b(refactor|multi-?file|across\s+files|next\.js|react\s+app|migrate|typescript\s+project)\b/i;
+
+/**
+ * A browser game, or a follow-up that the game still will not play.
+ * Keep aligned with src/lib/goals.ts.
+ * @param {string} prompt
+ */
+export function isPlayableGamePrompt(prompt) {
+  const text = String(prompt || "");
+  if (
+    /\b(card\s*games?|board\s*games?|playable(?:\s+games?)?|platformers?|video\s*games?)\b/i.test(
+      text,
+    )
+  ) {
+    return true;
+  }
+  if (/\b(?:start|complete)\s+games?\b/i.test(text)) return true;
+  if (/\bgames?\s+of\s+[a-z][\w'-]*/i.test(text)) return true;
+  if (
+    /\b(?:build|make|create|implement)\b[\s\S]{0,60}\b(?:card\s+)?games?\b/i.test(
+      text,
+    )
+  ) {
+    return true;
+  }
+  if (
+    /\b(?:2|two)[-\s]?players?\b[\s\S]{0,80}\b(?:war|games?|cards?)\b/i.test(
+      text,
+    )
+  ) {
+    return true;
+  }
+  if (
+    /\b(?:doesn'?t|does not|won'?t|cannot|can't)\b[\s\S]{0,48}\bplay\b/i.test(
+      text,
+    )
+  ) {
+    return true;
+  }
+  if (
+    /\bdo(?:es)?\s+nothing\b/i.test(text) &&
+    /\b(game|button|click|play|preview)\b/i.test(text)
+  ) {
+    return true;
+  }
+  return false;
+}
 // Word boundaries so "trust" / "frustrate" are not Rust, and "true" / "rule" / "cruel" are not Rue.
 const RUST_HINT =
   /\brust\b|\brustc\b|\bcargo\.toml\b|\.rs\b|\bcargo\s+check\b|\bcargo\s+build\b|\bcargo\s+test\b/i;
@@ -183,6 +229,15 @@ export function inferGoal(prompt) {
       langs,
     };
   }
+  if (isPlayableGamePrompt(text)) {
+    return {
+      id: "coding",
+      label: "Playable game",
+      hard: true,
+      playbooks: ["web-app.md"],
+      wantCdv: false,
+    };
+  }
   if (
     CODING_HINT.test(text) ||
     WEB_APP_HINT.test(text) ||
@@ -195,6 +250,7 @@ export function inferGoal(prompt) {
     const deploy = DEPLOY_HINT.test(text);
     const prod = PROD_DEBUG_HINT.test(text);
     const multi = MULTI_FILE_HINT.test(text);
+    const playable = isPlayableGamePrompt(text);
     // Studio "Fix this" of Gtk/xdg-open noise is not a real build failure.
     const benignOnly =
       errorFix &&
@@ -204,7 +260,7 @@ export function inferGoal(prompt) {
       );
     const playbooks = [];
     if (errorFix && !benignOnly) playbooks.push("error-fix.md");
-    if (web || errorFix) playbooks.push("web-app.md");
+    if (web || errorFix || playable) playbooks.push("web-app.md");
     if (deploy) playbooks.push("deploy-amplify.md");
     if (prod || (errorFix && /amplify|worker|walletconnect/i.test(text))) {
       playbooks.push("prod-debug.md");
@@ -219,13 +275,15 @@ export function inferGoal(prompt) {
             ? "Prod / runtime debug"
             : errorFix
               ? "Fix build / runtime error"
-              : web
-                ? "Web app / website"
-                : multi
-                  ? "Multi-file coding"
-                  : "Coding task",
-      // Error dumps / multi-file / deploy need more steps + stronger model.
-      hard: (errorFix && !benignOnly) || multi || deploy || prod,
+              : playable
+                ? "Playable game"
+                : web
+                  ? "Web app / website"
+                  : multi
+                    ? "Multi-file coding"
+                    : "Coding task",
+      // Error dumps / multi-file / deploy / playable games need more steps + 32B.
+      hard: (errorFix && !benignOnly) || multi || deploy || prod || playable,
       playbooks,
       wantCdv: false,
     };

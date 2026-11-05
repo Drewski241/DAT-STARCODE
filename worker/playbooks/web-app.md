@@ -35,6 +35,14 @@ User is building or debugging an app/site (HTML, React, Next.js, Node API, CSS).
 | Hydration mismatch | remove browser-only values from SSR first paint |
 | Missing env | copy from `.env.example`, never invent secrets |
 
+## Playable games
+
+A card, board, or browser game is done only when someone can start it and play a turn in `index.html`.
+
+- The Start / Play button must deal cards, show them, and update the score. An empty click handler is not done.
+- Keep it static: `index.html`, `styles.css`, and `app.js`. Do not add `http-server` unless they asked for a server.
+- The button id in the HTML must match the listener in `app.js`, and `app.js` must parse (no extra `}`).
+
 ## Done when
 
 - Verify command (`npm test` / `npm run build`) exits 0 when those scripts exist, **or**
