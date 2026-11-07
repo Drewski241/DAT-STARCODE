@@ -2,7 +2,7 @@
 
 You are writing **Rust** (edition 2021) — not Python, not JavaScript, not Go, not Rue.
 
-Rue is a different language (`.rue`, `println("...")`, no `println!`). If the user asked for Rue, follow `rue.md` for those files.
+Rue is the Chia puzzle language (`.rue`, `fn main() -> String`, `rue build`). If the user asked for Rue, follow `rue.md` for those files.
 
 ## Forbidden (instant fail)
 

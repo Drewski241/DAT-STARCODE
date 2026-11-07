@@ -1,7 +1,7 @@
 /**
- * Rust and Rue deliverable checks.
+ * Rust and Chia Rue deliverable checks.
  * Static traps always fail the turn. Compilers run only when already installed.
- * Rue is not vendored: https://github.com/rue-language/rue (Buck2, scripts/rue-bin).
+ * Rue is the Chia puzzle language: https://rue-lang.com (`cargo install rue-cli`).
  */
 import { spawn } from "child_process";
 import { promises as fs } from "fs";
@@ -13,8 +13,12 @@ const JS_FUNCTION = /(^|\n)\s*function\s+[A-Za-z_]/;
 const GO_PACKAGE_MAIN = /(^|\n)\s*package\s+main\b/;
 const HAS_FN = /\bfn\b/;
 const RUE_PRINTLN_MACRO = /\bprintln!\s*\(/;
+const RUE_PRINTLN = /\bprintln\s*\(/;
+const RUE_AT_FORM = /(^|[^A-Za-z0-9_])@[A-Za-z_]/;
 const RUE_IMPL = /(^|[^A-Za-z0-9_])impl\s+[A-Za-z_]/;
 const RUE_LIFETIME = /<'[A-Za-z]/;
+const RUE_LET_MUT = /\blet\s+mut\b/;
+const RUE_I32 = /\bi32\b/;
 
 /**
  * @param {string} rel
@@ -72,26 +76,78 @@ export function rueFileFailures(file) {
   }
   if (RUE_PRINTLN_MACRO.test(body)) {
     failures.push(
-      `${file.path}: \`println!\` is Rust — Rue calls \`println("...")\``,
+      `${file.path}: \`println!\` is Rust. Chia Rue has no print macro — use \`debug "..."\``,
+    );
+  }
+  if (RUE_PRINTLN.test(body)) {
+    failures.push(
+      `${file.path}: \`println\` is not Chia Rue. Use \`debug "..."\` (omitted unless \`rue build --debug\`)`,
+    );
+  }
+  if (RUE_AT_FORM.test(body)) {
+    failures.push(
+      `${file.path}: \`@dbg\` / \`@import\` are not Chia Rue (https://rue-lang.com)`,
     );
   }
   if (RUE_IMPL.test(body)) {
     failures.push(
-      `${file.path}: Rue has no impl blocks — methods live on the struct`,
+      `${file.path}: \`impl\` is Rust. Chia Rue uses \`struct\` and field access`,
     );
   }
   if (RUE_LIFETIME.test(body)) {
-    failures.push(`${file.path}: Rust lifetimes (\`'a\`) are not Rue`);
+    failures.push(`${file.path}: Rust lifetimes (\`'a\`) are not Chia Rue`);
+  }
+  if (RUE_LET_MUT.test(body)) {
+    failures.push(
+      `${file.path}: \`let mut\` is not Chia Rue. Bindings are \`let\` and are not mutable`,
+    );
+  }
+  if (RUE_I32.test(body)) {
+    failures.push(`${file.path}: \`i32\` is not a Chia Rue type. Use \`Int\``);
   }
   if (PY_DEF.test(body)) {
     failures.push(`${file.path}: Python \`def\` is not Rue`);
   }
   if (rueMainMissingReturn(body)) {
     failures.push(
-      `${file.path}: \`fn main\` must return a status (\`fn main() -> i32\`)`,
+      `${file.path}: \`fn main\` must declare a return type (\`fn main() -> String\`)`,
     );
   }
   return failures;
+}
+
+/**
+ * Where `rue build` / `rue test` should run.
+ * A root Rue.toml (or hasRueToml) compiles the project.
+ * Otherwise a nested Rue.toml, otherwise each loose `.rue` file.
+ * @param {string} root
+ * @param {{ path: string }[]} files
+ * @param {{ hasRueToml?: boolean }} [opts]
+ * @returns {Promise<string[]>} empty string = project at cwd, else a relative path
+ */
+export async function rueBuildTargets(root, files, opts = {}) {
+  const list = Array.isArray(files) ? files : [];
+  const toml = list.filter((f) => /(^|\/)Rue\.toml$/i.test(String(f.path || "")));
+  if (opts.hasRueToml === true) return [""];
+  const rootNamed = toml.some((f) => /^(?:\.\/)?Rue\.toml$/i.test(f.path));
+  let rootManifest = rootNamed;
+  if (!rootManifest && opts.hasRueToml == null) {
+    try {
+      await fs.access(path.join(root, "Rue.toml"));
+      rootManifest = true;
+    } catch {
+      rootManifest = false;
+    }
+  }
+  if (rootManifest) return [""];
+  const dirs = [];
+  for (const f of toml) {
+    const dir = path.posix.dirname(String(f.path).replace(/\\/g, "/"));
+    const rel = dir === "." ? "" : dir;
+    if (!dirs.includes(rel)) dirs.push(rel);
+  }
+  if (dirs.length) return dirs;
+  return list.filter((f) => /\.rue$/i.test(f.path)).map((f) => f.path);
 }
 
 /**
@@ -170,7 +226,7 @@ export function pickRustcTargets(files) {
  *   env?: NodeJS.ProcessEnv,
  *   hasCargoToml?: boolean,
  *   rustcOutDir?: string,
- *   rueOutPath?: string,
+ *   hasRueToml?: boolean,
  * }} [opts]
  * @returns {Promise<{ commands: string[], warnings: string[] }>}
  */
@@ -241,15 +297,17 @@ export async function planLanguageCompile(root, opts = {}) {
       rueBin = await lookPath("rue");
     }
     if (rueBin && rueFiles.length) {
-      const out =
-        opts.rueOutPath ||
-        path.join(os.tmpdir(), `datstarcoder-rue-${process.pid}`);
-      commands.push(
-        `${shQuote(rueBin)} ${rueFiles.map((f) => shQuote(f.path)).join(" ")} -o ${shQuote(out)}`,
-      );
+      const targets = await rueBuildTargets(root, files, {
+        hasRueToml: opts.hasRueToml,
+      });
+      for (const target of targets) {
+        const arg = target ? ` ${shQuote(target)}` : "";
+        commands.push(`${shQuote(rueBin)} build${arg}`);
+        commands.push(`${shQuote(rueBin)} test${arg}`);
+      }
     } else if (!rueBin) {
       warnings.push(
-        "Rue compiler not found (PATH `rue` or RUE_BIN). Static checks ran. The compiler is scripts/rue-bin in github.com/rue-language/rue (Buck2). It is not downloaded by the worker.",
+        "Rue compiler not found (PATH `rue` or RUE_BIN). Static checks ran. Install it on the worker with `cargo install rue-cli` (https://rue-lang.com). It is not downloaded by the worker.",
       );
     }
   }

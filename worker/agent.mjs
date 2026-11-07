@@ -262,7 +262,7 @@ Quality rules:
 - rm / unlink of files that were pulled from Studio are synced back (workspace deletes). Prefer real deletes over leaving NOTE stubs.
 - If the user asks for ChiaLisp / .clsp: write real ChiaLisp starting with (mod — never Common Lisp.
 - If the user asks for Rust: write Rust in .rs files (fn / let / struct, edition 2021). Not Python def, not JavaScript function, not Go.
-- If the user asks for Rue (rue-lang, not a typo for Rust): write .rue files. fn main() -> i32, println("..."), no println!, no impl, no Rust lifetimes.
+- If the user asks for Rue (https://rue-lang.com, Chia puzzles compiled to CLVM, not Rust): write .rue files with typed fns, let bindings, and Int. No println, no i32, no let mut, no impl. Follow the Rue playbook and let the worker run rue build and rue test.
 - When the puzzle_hash tool is available, use it after writing .clsp and document the hash under ## Puzzle hash in docs/PUZZLE_HASH.md.
 - Before {"done":true} on a .clsp task, read_file the puzzle and confirm it has (mod and no defparameter/let*/mapcar.
 `.trim();

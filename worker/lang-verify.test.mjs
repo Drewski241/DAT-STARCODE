@@ -133,12 +133,38 @@ const bareMain = verifyLanguageDeliverables(
 assert.equal(bareMain.ok, false);
 assert.match(bareMain.failures.join("\n"), /fn main/);
 
-const goodRue = verifyLanguageDeliverables(
+const klabnik = verifyLanguageDeliverables(
   [
     {
       path: "hello.rue",
       content:
         "fn main() -> i32 {\n    println(\"hello\");\n    @dbg(1);\n    0\n}\n",
+    },
+  ],
+  { langs: ["rue"] },
+);
+assert.equal(klabnik.ok, false);
+assert.match(klabnik.failures.join("\n"), /println/);
+assert.match(klabnik.failures.join("\n"), /i32/);
+
+const mutable = verifyLanguageDeliverables(
+  [
+    {
+      path: "hello.rue",
+      content: "fn main() -> Int {\n    let mut n = 1;\n    n\n}\n",
+    },
+  ],
+  { langs: ["rue"] },
+);
+assert.equal(mutable.ok, false);
+assert.match(mutable.failures.join("\n"), /let mut/);
+
+const goodRue = verifyLanguageDeliverables(
+  [
+    {
+      path: "puzzles/main.rue",
+      content:
+        "fn main() -> String {\n    \"Hello, world!\"\n}\n\ntest fn hello() {\n    assert main() == \"Hello, world!\";\n}\n",
     },
   ],
   { langs: ["rue"] },
@@ -180,21 +206,64 @@ assert.match(noToolchain.warnings.join("\n"), /rustup/);
 
 const ruePlan = await planLanguageCompile("/tmp", {
   langs: ["rue"],
+  hasRueToml: false,
   lookPath: async (bin) => (bin === "rue" ? "/opt/rue" : ""),
-  files: [{ path: "hello.rue", content: "fn main() -> i32 { 0 }\n" }],
-  rueOutPath: "/tmp/datstarcoder-rue-test",
+  files: [
+    {
+      path: "hello.rue",
+      content: "fn main() -> String {\n    \"Hello, world!\"\n}\n",
+    },
+  ],
 });
-assert.equal(ruePlan.commands.length, 1);
-assert.match(ruePlan.commands[0], /\/opt\/rue/);
-assert.match(ruePlan.commands[0], /-o /);
+assert.deepEqual(ruePlan.commands, [
+  "'/opt/rue' build 'hello.rue'",
+  "'/opt/rue' test 'hello.rue'",
+]);
+
+const rueProject = await planLanguageCompile("/tmp", {
+  langs: ["rue"],
+  hasRueToml: true,
+  lookPath: async (bin) => (bin === "rue" ? "/opt/rue" : ""),
+  files: [
+    {
+      path: "puzzles/main.rue",
+      content: "fn main() -> String {\n    \"Hello, world!\"\n}\n",
+    },
+  ],
+});
+assert.deepEqual(rueProject.commands, ["'/opt/rue' build", "'/opt/rue' test"]);
+
+const rueNested = await planLanguageCompile("/tmp", {
+  langs: ["rue"],
+  hasRueToml: false,
+  lookPath: async (bin) => (bin === "rue" ? "/opt/rue" : ""),
+  files: [
+    { path: "puzzle/Rue.toml", content: "" },
+    {
+      path: "puzzle/puzzles/main.rue",
+      content: "fn main() -> String {\n    \"Hello, world!\"\n}\n",
+    },
+  ],
+});
+assert.deepEqual(rueNested.commands, [
+  "'/opt/rue' build 'puzzle'",
+  "'/opt/rue' test 'puzzle'",
+]);
 
 const noRue = await planLanguageCompile("/tmp", {
   langs: ["rue"],
+  hasRueToml: false,
   lookPath: none,
   env: {},
-  files: [{ path: "hello.rue", content: "fn main() -> i32 { 0 }\n" }],
+  files: [
+    {
+      path: "hello.rue",
+      content: "fn main() -> String {\n    \"Hello, world!\"\n}\n",
+    },
+  ],
 });
 assert.deepEqual(noRue.commands, []);
+assert.match(noRue.warnings.join("\n"), /rue-cli/);
 assert.match(noRue.warnings.join("\n"), /not downloaded/);
 
 console.log("lang-verify.test.mjs ok");
