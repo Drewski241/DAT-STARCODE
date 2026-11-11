@@ -93,6 +93,7 @@ export function priorTurnNeedsStrongerModel(priorResult: string): boolean {
   );
 }
 // Keep aligned with worker/goals.mjs. Word boundaries: "trust" is not Rust, "true" is not Rue.
+// Rue here is the Chia language at https://rue-lang.com (rue-cli), not rue-lang.dev.
 const RUST_HINT =
   /\brust\b|\brustc\b|\bcargo\.toml\b|\.rs\b|\bcargo\s+check\b|\bcargo\s+build\b|\bcargo\s+test\b/i;
 const RUE_HINT = /\.rue\b|\brue-lang(?:uage)?\b|\brue\b/i;

@@ -105,7 +105,7 @@ Example: Coder 32B + ChiaLisp prompt → **5×3+10 = 25** credits. Studio shows 
 
 **Niche domains:** prompts that mention `.clsp` / ChiaLisp load `worker/playbooks/chialisp.md` into the agent system prompt, raise the step budget (`AGENT_HARD_TASK_STEPS`, default **40**), and **verify** written `.clsp` files (must start with `(mod`, reject Common Lisp stubs). Failed verification is called out in the job result.
 
-**Rust and Rue:** prompts that name Rust (`.rs`, `cargo`, `rustc`, the word `rust`) or Rue (`.rue`, `rue-lang`, the word `rue`) load `worker/playbooks/rust.md` and/or `worker/playbooks/rue.md`. Auto sends those turns to Coder 32B and adds the hard-domain credit (32B + Rust is **5×3+10 = 25**, same sticker as 32B + ChiaLisp). A turn fails verification when the deliverable is missing or is the wrong language: Python `def`, JavaScript `function`, Go `package main`, or Rue written with `println!`, `impl`, Rust lifetimes, or `fn main` without `->`. `cargo check` runs when `Cargo.toml` and `cargo` exist; otherwise `rustc --edition 2021 --emit=metadata` when `rustc` exists. A missing Rust toolchain is a warning, so the box is useful before rustup. Rue compiles only when `rue` is on `PATH` or `RUE_BIN` points at `scripts/rue-bin` from [rue-language/rue](https://github.com/rue-language/rue). The worker does not download that compiler. Rue is Steve Klabnik’s experimental language, not a misspelling of Rust.
+**Rust and Rue:** prompts that name Rust (`.rs`, `cargo`, `rustc`, the word `rust`) or Rue (`.rue`, `rue-lang`, the word `rue`) load `worker/playbooks/rust.md` and/or `worker/playbooks/rue.md`. Auto sends those turns to Coder 32B and adds the hard-domain credit (32B + Rust is **5×3+10 = 25**, same sticker as 32B + ChiaLisp). A turn fails verification when the deliverable is missing or is the wrong language: Python `def`, JavaScript `function`, Go `package main`, or Rue written as Rust or as the unrelated systems language (`println`, `println!`, `impl`, `let mut`, `i32`, `@dbg`, Rust lifetimes, or `fn main` without `->`). `cargo check` runs when `Cargo.toml` and `cargo` exist; otherwise `rustc --edition 2021 --emit=metadata` when `rustc` exists. A missing Rust toolchain is a warning, so the box is useful before rustup. Rue means the Chia puzzle language at [rue-lang.com](https://rue-lang.com) (`xch-dev/rue`). When `rue` is on `PATH` or `RUE_BIN` is set, the worker runs `rue build` and `rue test` (project root when `Rue.toml` is present, otherwise each `.rue` file). A missing compiler is a warning. The worker does not download it.
 
 **Workspace deletes:** when the agent `rm`s a file that was pulled from Studio, the worker sends `deletePaths` on push so S3/local storage drops it (otherwise stubs lingered forever across turns).
 
@@ -121,6 +121,19 @@ cdv --help
 ```
 
 Hard-domain ChiaLisp turns fail verification if `cdv` or `clvm_tools` is missing, or if a bare 64-char puzzle hash is not documented. Waive only for demos with `REQUIRE_CHIALISP_TOOLING=0`.
+
+**Rue tooling (Chia puzzles, [rue-lang.com](https://rue-lang.com)):**
+
+```bash
+cargo install rue-cli          # rue init | build | test | fmt | debug
+# optional, for the editor — not used by the worker:
+# cargo install rue-lsp
+# cargo install clvm_tools_rs
+rue --help
+# restart npm run worker
+```
+
+The worker does not install the compiler. Editor highlighting is the Rue extension (VS Code marketplace, or Open VSX in Cursor) plus `rue-lsp`. Puzzle tree hashes come from `rue build --hash`, not from `cdv`.
 
 **ChiaLisp evals (offline):** `npm run test:chialisp` runs golden + adversarial fixture checks (Common Lisp traps, fake `0x` hashes, missing tooling). Full worker suite: `npm run test:worker`.
 

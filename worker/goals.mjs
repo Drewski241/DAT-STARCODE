@@ -71,6 +71,7 @@ export function isPlayableGamePrompt(prompt) {
   return false;
 }
 // Word boundaries so "trust" / "frustrate" are not Rust, and "true" / "rule" / "cruel" are not Rue.
+// Rue here is the Chia language at https://rue-lang.com (rue-cli), not rue-lang.dev.
 const RUST_HINT =
   /\brust\b|\brustc\b|\bcargo\.toml\b|\.rs\b|\bcargo\s+check\b|\bcargo\s+build\b|\bcargo\s+test\b/i;
 const RUE_HINT = /\.rue\b|\brue-lang(?:uage)?\b|\brue\b/i;
