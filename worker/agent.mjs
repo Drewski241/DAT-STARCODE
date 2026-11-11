@@ -81,6 +81,7 @@ import {
   firstToolCallAction,
   trimMessagesForContext,
 } from "./ollama-tools.mjs";
+import { grokChat, isGrokModel } from "./grok-chat.mjs";
 import {
   normalizeAgentAction,
   toolRepairMessage,
@@ -800,6 +801,9 @@ async function fetchUrl(url) {
  * @returns {Promise<{ content: string, toolCalls: any[], rawMessage?: any }>}
  */
 async function ollamaChat(ollamaUrl, model, messages, onToken, opts = {}) {
+  if (isGrokModel(model)) {
+    return grokChat(model, trimMessagesForContext(messages), onToken, opts);
+  }
   const trimmed = trimMessagesForContext(messages);
   const tools = opts.tools;
   const limits = opts.limits || chatWatchLimits(model);

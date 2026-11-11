@@ -9,7 +9,25 @@ const complex = resolveModel(
   "auto",
   "Refactor the Next.js auth flow across multiple files",
 );
-assert.equal(complex.resolved, "qwen2.5-coder:32b");
+assert.equal(complex.resolved, "grok-4.7");
+assert.match(complex.reason, /multi-file change/);
+
+const stack = resolveModel(
+  "auto",
+  "TypeError: Cannot read properties of undefined\n    at completeJob (/src/lib/store.ts:40:12)",
+);
+assert.equal(stack.resolved, "grok-4.7");
+
+const explicitGrok = resolveModel("grok", "Rename the button label to Ship.");
+assert.equal(explicitGrok.resolved, "grok-4.7");
+assert.equal(explicitGrok.reason, "User selected Grok");
+
+const keepLocal = resolveModel(
+  "auto",
+  "Keep it local. Fix this bug. Traceback (most recent call last):\nZeroDivisionError",
+);
+assert.equal(keepLocal.resolved, "qwen2.5-coder:32b");
+assert.doesNotMatch(keepLocal.reason, /Grok/);
 
 const light = resolveModel("auto", "Fix the login button label in the component");
 assert.equal(light.resolved, "qwen2.5-coder:7b");

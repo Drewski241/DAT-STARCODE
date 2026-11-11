@@ -16,6 +16,7 @@ assert.equal(isHardDomainPrompt("I trust this code"), false);
 assert.equal(modelCreditMultiplier("qwen2.5-coder:7b"), 1);
 assert.equal(modelCreditMultiplier("qwen2.5-coder:14b"), 2);
 assert.equal(modelCreditMultiplier("qwen2.5-coder:32b"), 3);
+assert.equal(modelCreditMultiplier("grok-4.7"), 3);
 
 const cheap = priceJob({
   prompt: "Add a README section",

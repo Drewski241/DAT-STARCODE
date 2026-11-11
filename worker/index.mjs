@@ -10,6 +10,9 @@
  *   OLLAMA_MODEL             fallback if a job has no modelResolved
  *   OLLAMA_UNLOAD_HEAVY      default 1 — unload 14B/32B/70B after each job
  *   POLL_MS                  default 4000
+ *   XAI_API_KEY              xAI key for jobs routed to Grok (worker only)
+ *   XAI_MODEL                optional override (default grok-4.7)
+ *   XAI_BASE_URL             default https://api.x.ai/v1
  *   AGENT_MAX_STEPS          default 12
  *   AGENT_HARD_TASK_STEPS    default 40 (ChiaLisp / .clsp prompts)
  *   REQUIRE_CHIALISP_TOOLING default 1 — hard .clsp jobs need cdv + clvm_tools
@@ -18,6 +21,7 @@
 
 import { apiFetch, isTransientFetchError, networkErrorCode } from "./api-fetch.mjs";
 import { runAgentJob } from "./agent.mjs";
+import { isGrokModel } from "./grok-chat.mjs";
 import { releaseLoadedHeavyModels, unloadHeavyAfterJob } from "./ollama-memory.mjs";
 import { probeChialispTooling, toolingFailureLines } from "./tooling.mjs";
 
@@ -276,6 +280,11 @@ async function unloadHeavyModels(reason) {
 
 async function loop() {
   console.log(`[dat-starcoder-worker] ${WORKER_ID} → ${API_BASE} (agent loop)`);
+  if (!process.env.XAI_API_KEY) {
+    console.log(
+      "[dat-starcoder-worker] XAI_API_KEY unset — hard coding tasks routed to Grok will fail until it is set",
+    );
+  }
   console.log(
     `[dat-starcoder-worker] unload heavy models after each job: ${unloadHeavyAfterJob() ? "on" : "off"}`,
   );
@@ -343,11 +352,13 @@ async function loop() {
 
       await progress(job.id, {
         type: "status",
-        message: `Starting · checking model ${model}`,
+        message: isGrokModel(model)
+          ? `Starting · Grok ${model}`
+          : `Starting · checking model ${model}`,
       });
 
       try {
-        await assertOllamaModel(model);
+        if (!isGrokModel(model)) await assertOllamaModel(model);
       } catch (preflightErr) {
         const msg =
           preflightErr instanceof Error

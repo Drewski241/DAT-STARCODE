@@ -19,6 +19,9 @@ export type ModelOption = {
   blurb: string;
 };
 
+/** Model id sent to the xAI API when Auto routes a hard coding task to Grok. */
+export const GROK_MODEL_ID = "grok-4.7";
+
 export const MODEL_OPTIONS: ModelOption[] = [
   {
     id: "auto",
@@ -26,7 +29,14 @@ export const MODEL_OPTIONS: ModelOption[] = [
     kind: "auto",
     ollamaTag: null,
     blurb:
-      "Picks from your prompt (simple coding → 7B; games, hard, multi-file, Next → 32B; shopping Q&A → Qwen 7B)",
+      "Everyday coding stays on 7B. Hard coding goes to Grok. Games, ChiaLisp, Rust, and Rue stay on 32B.",
+  },
+  {
+    id: "grok",
+    label: "Grok",
+    kind: "coding",
+    ollamaTag: null,
+    blurb: "Always send this job to the Grok API.",
   },
   {
     id: "qwen2.5-coder:7b",
@@ -91,8 +101,145 @@ const MEMORY_FOLLOWUP_HINT =
 const RESEARCH_HINT =
   /\b(best|cheap|cheapest|affordable|lowest|compare|comparison|which|vs\b|versus|quote|quotes|buy|purchase|insurance|broker|price|cost|victoria|vancouver|icbc|how (do|should) i|where (do|can|should) i)\b/i;
 
+const LOCAL_OVERRIDE =
+  /\b(local only|ollama only|keep (it |this )?local|don'?t use grok|do not use grok)\b/i;
+
+const GROK_OVERRIDE = /\b(use grok|send (this |it )?to grok|grok api)\b/i;
+
+/** Score at which Auto sends a coding task to Grok instead of a local model. */
+const HARD_TASK_THRESHOLD = 4;
+
 /**
- * Resolve Auto (or an explicit id) to an Ollama model tag.
+ * True when the worker should call the Grok API for this model id.
+ * `grok` is the Studio choice; `grok-*` is a concrete xAI model id.
+ */
+export function isGrokTarget(model: string | null | undefined): boolean {
+  if (!model) return false;
+  const id = model.trim().toLowerCase();
+  return id === "grok" || id.startsWith("grok-");
+}
+
+type TaskHit = { label: string; points: number; technical: boolean };
+
+/**
+ * Hard coding signals (stack traces, races, security, multi-file work).
+ * Niche languages and playable games stay on the local 32B path.
+ */
+export function assessHardCoding(prompt: string): {
+  hard: boolean;
+  labels: string[];
+  force: "local" | "grok" | null;
+} {
+  if (LOCAL_OVERRIDE.test(prompt)) {
+    return { hard: false, labels: ["keep local"], force: "local" };
+  }
+  if (GROK_OVERRIDE.test(prompt)) {
+    return { hard: true, labels: ["asked for Grok"], force: "grok" };
+  }
+
+  const hits: TaskHit[] = [];
+  const add = (
+    label: string,
+    points: number,
+    when: boolean,
+    technical = true,
+  ) => {
+    if (when && points > 0) hits.push({ label, points, technical });
+  };
+
+  add(
+    "stack trace or compiler failure",
+    4,
+    /traceback|stack trace|exception in thread|\bat [\w$.<>]+\s*\(.*:\d+:\d+\)|error TS\d{3,}|panic:|segfault|segmentation fault|FATAL ERROR/i.test(
+      prompt,
+    ),
+  );
+  add(
+    "concurrency or memory bug",
+    4,
+    /race condition|data race|deadlock|memory leak|use-after-free|thread[- ]safety|heisenbug|undefined behavior/i.test(
+      prompt,
+    ),
+  );
+  add(
+    "security review",
+    4,
+    /security audit|vulnerabilit|privilege escalation|\b(sql|command|prompt) injection\b|\bexploit\b|cryptographic|side[- ]channel/i.test(
+      prompt,
+    ),
+  );
+  add(
+    "multi-file change",
+    4,
+    /across (the |multiple |several )?(files|modules|packages|services)|multi-file|multiple files|whole (codebase|repo|repository)|entire (codebase|repo|module)/i.test(
+      prompt,
+    ),
+  );
+  add(
+    "migration",
+    3,
+    /\bmigrat(e|ion|ing)\b/i.test(prompt) &&
+      /\b(schema|database|auth|codebase|service|architecture|storage)\b/i.test(
+        prompt,
+      ),
+  );
+  add(
+    "system rewrite",
+    3,
+    /\brewrite\b/i.test(prompt) &&
+      /\b(codebase|architecture|service|system|module)\b/i.test(prompt),
+  );
+  add(
+    "hard-to-reproduce bug",
+    3,
+    /root cause|intermittent|flaky|can'?t reproduce|cannot reproduce|works locally but/i.test(
+      prompt,
+    ),
+  );
+  add(
+    "performance work",
+    2,
+    /time complexity|space complexity|big-o|o\(n|hot path|profil(e|ing) this/i.test(
+      prompt,
+    ),
+  );
+  add(
+    "stuck on a hard bug",
+    2,
+    /\b(i('| a)?m stuck|tried everything|hours on this|this is (really |too )?hard)\b/i.test(
+      prompt,
+    ),
+  );
+
+  const fencePairs = Math.floor((prompt.match(/```/g)?.length ?? 0) / 2);
+  add("multiple code samples", 3, fencePairs >= 2, false);
+  add(
+    "several requirements",
+    2,
+    (prompt.match(/^\s*\d+[.)]\s+\S/gm)?.length ?? 0) >= 4,
+    false,
+  );
+  add("large paste", 2, prompt.split("\n").length >= 100, false);
+  add("long prompt", 2, prompt.length >= 3500, false);
+  add("very long prompt", 2, prompt.length >= 8000, false);
+
+  let score = hits.reduce((sum, hit) => sum + hit.points, 0);
+  const technical = hits.some((hit) => hit.technical);
+  const codeLike =
+    CODING_HINT.test(prompt) ||
+    prompt.includes("```") ||
+    prompt.split("\n").length >= 100;
+  if (technical && codeLike) score += 1;
+
+  return {
+    hard: score >= HARD_TASK_THRESHOLD && (technical || codeLike),
+    labels: hits.map((hit) => hit.label),
+    force: null,
+  };
+}
+
+/**
+ * Resolve Auto (or an explicit id) to an Ollama tag or a Grok model id.
  */
 export function resolveModel(
   modelId: string | null | undefined,
@@ -110,12 +257,35 @@ export function resolveModel(
     };
   }
 
+  if ((option && option.id === "grok") || isGrokTarget(requested)) {
+    const resolved = requested.toLowerCase().startsWith("grok-")
+      ? requested
+      : GROK_MODEL_ID;
+    return {
+      requested: option?.id || requested,
+      resolved,
+      reason: option ? `User selected ${option.label}` : `User selected ${resolved}`,
+    };
+  }
+
   // Unknown id that looks like an ollama tag — pass through.
   if (requested !== "auto" && requested.includes(":")) {
     return {
       requested,
       resolved: requested,
       reason: "Custom Ollama tag",
+    };
+  }
+
+  const assessment = assessHardCoding(prompt);
+  if (assessment.force === "grok" || assessment.hard) {
+    const detail = assessment.labels.slice(0, 3).join(", ");
+    return {
+      requested: "auto",
+      resolved: GROK_MODEL_ID,
+      reason: detail
+        ? `Auto: hard coding task (${detail}) → Grok`
+        : "Auto: hard coding task → Grok",
     };
   }
 
