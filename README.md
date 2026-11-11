@@ -97,15 +97,16 @@ sudo sysctl --system
 | Signal | Effect |
 | --- | --- |
 | Base | `CREDITS_PER_JOB` (default **5**) |
-| Model `14b` | ×2 base |
-| Model `32b` / `70b` | ×3 base |
-| Hard domain (`.clsp` / ChiaLisp / Rust / Rue / `mtt_pool` / …) | +`CREDITS_HARD_DOMAIN` (default **10**) |
+| Model `14b` | ×2 base (**10** credits) |
+| Model `32b` / `70b` / `72b` | ×5 base (**25** credits). 32B needs the 24GB GPU mostly alone. |
+| Model `grok` / `grok-*` | ×8 base (**40** credits). Each step is a paid xAI call. |
+| Hard goal (ChiaLisp, Rust, Rue, playable game, build/runtime error, multi-file refactor, deploy, prod debug) | +`CREDITS_HARD_DOMAIN` (default **10**) |
 
-Example: Coder 32B + ChiaLisp prompt → **5×3+10 = 25** credits. Studio shows the live total on **Send turn**. Worker reports `stepsUsed` on complete (for future settle/refund).
+Example: Coder 32B + ChiaLisp prompt → **5×5+10 = 35** credits. A plain Grok turn is **40** credits. A Grok turn that is also a hard goal (stack trace, multi-file refactor, ChiaLisp) is **50**. Studio shows the live total on **Send turn**. Worker reports `stepsUsed` on complete (for future settle/refund). New accounts start with 20 credits, enough for 7B and 14B turns. 32B and Grok need a credit pack.
 
 **Niche domains:** prompts that mention `.clsp` / ChiaLisp load `worker/playbooks/chialisp.md` into the agent system prompt, raise the step budget (`AGENT_HARD_TASK_STEPS`, default **40**), and **verify** written `.clsp` files (must start with `(mod`, reject Common Lisp stubs). Failed verification is called out in the job result.
 
-**Rust and Rue:** prompts that name Rust (`.rs`, `cargo`, `rustc`, the word `rust`) or Rue (`.rue`, `rue-lang`, the word `rue`) load `worker/playbooks/rust.md` and/or `worker/playbooks/rue.md`. Auto sends those turns to Coder 32B and adds the hard-domain credit (32B + Rust is **5×3+10 = 25**, same sticker as 32B + ChiaLisp). A turn fails verification when the deliverable is missing or is the wrong language: Python `def`, JavaScript `function`, Go `package main`, or Rue written as Rust or as the unrelated systems language (`println`, `println!`, `impl`, `let mut`, `i32`, `@dbg`, Rust lifetimes, or `fn main` without `->`). `cargo check` runs when `Cargo.toml` and `cargo` exist; otherwise `rustc --edition 2021 --emit=metadata` when `rustc` exists. A missing Rust toolchain is a warning, so the box is useful before rustup. Rue means the Chia puzzle language at [rue-lang.com](https://rue-lang.com) (`xch-dev/rue`). When `rue` is on `PATH` or `RUE_BIN` is set, the worker runs `rue build` and `rue test` (project root when `Rue.toml` is present, otherwise each `.rue` file). A missing compiler is a warning. The worker does not download it.
+**Rust and Rue:** prompts that name Rust (`.rs`, `cargo`, `rustc`, the word `rust`) or Rue (`.rue`, `rue-lang`, the word `rue`) load `worker/playbooks/rust.md` and/or `worker/playbooks/rue.md`. Auto sends those turns to Coder 32B and adds the hard-domain credit (32B + Rust is **5×5+10 = 35**, same sticker as 32B + ChiaLisp). A turn fails verification when the deliverable is missing or is the wrong language: Python `def`, JavaScript `function`, Go `package main`, or Rue written as Rust or as the unrelated systems language (`println`, `println!`, `impl`, `let mut`, `i32`, `@dbg`, Rust lifetimes, or `fn main` without `->`). `cargo check` runs when `Cargo.toml` and `cargo` exist; otherwise `rustc --edition 2021 --emit=metadata` when `rustc` exists. A missing Rust toolchain is a warning, so the box is useful before rustup. Rue means the Chia puzzle language at [rue-lang.com](https://rue-lang.com) (`xch-dev/rue`). When `rue` is on `PATH` or `RUE_BIN` is set, the worker runs `rue build` and `rue test` (project root when `Rue.toml` is present, otherwise each `.rue` file). A missing compiler is a warning. The worker does not download it.
 
 **Workspace deletes:** when the agent `rm`s a file that was pulled from Studio, the worker sends `deletePaths` on push so S3/local storage drops it (otherwise stubs lingered forever across turns).
 
