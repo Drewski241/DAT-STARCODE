@@ -137,7 +137,9 @@ The worker does not install the compiler. Editor highlighting is the Rue extensi
 
 **ChiaLisp evals (offline):** `npm run test:chialisp` runs golden + adversarial fixture checks (Common Lisp traps, fake `0x` hashes, missing tooling). Full worker suite: `npm run test:worker`.
 
-**Auto** routing: niche / hard languages (ChiaLisp, Rust, Rue) and complex coding → `qwen2.5-coder:32b`; other coding → `qwen2.5-coder:7b`; shopping / local research Q&A → `qwen2.5:7b`; otherwise → `llama3.1:8b`. Pull 32B (and Qwen 7B) on the worker or those Auto jobs will fail preflight. A 7B or 14B turn that keeps failing verification escalates to 32B. Routing is re-evaluated when a job is claimed so queued jobs pick up heuristic fixes. Llama 3.1 70B does not fit this GPU.
+**Auto** routing: hard coding tasks (stack traces, races, security reviews, multi-file refactors) → Grok (`grok-4.7`); niche languages (ChiaLisp, Rust, Rue) and playable games → `qwen2.5-coder:32b`; other coding → `qwen2.5-coder:7b`; shopping / local research Q&A → `qwen2.5:7b`; otherwise → `llama3.1:8b`. Choosing **Grok** always calls the API. Choosing a local model keeps the job on that model. A prompt can also say "use grok" or "keep it local".
+
+Set `XAI_API_KEY` on the worker (https://console.x.ai). The browser never sees the key. xAI bills that key separately from DAT credits. Grok turns are priced like Coder 32B. Amplify decides the route when the job is queued and again when it is claimed, so the live site has to be deployed from this branch. The worker then calls the API, so restart `npm run worker` after pulling. Pull 32B (and Qwen 7B) on the worker or those local Auto jobs will fail preflight. A 7B or 14B turn that keeps failing verification escalates to 32B. Llama 3.1 70B does not fit this GPU.
 
 Optional worker agent knobs (see `.env.example`): `AGENT_MAX_STEPS`, `AGENT_ALLOW_SHELL`, `AGENT_REPO_ROOT`, `REQUIRE_CHIALISP_TOOLING`.
 

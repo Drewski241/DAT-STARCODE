@@ -23,6 +23,7 @@ export const CREDITS_HARD_DOMAIN = Number(
 /** Larger / slower coding models cost a multiple of the base job price. */
 export function modelCreditMultiplier(resolvedOllamaTag: string): number {
   const tag = String(resolvedOllamaTag || "").toLowerCase();
+  if (tag === "grok" || tag.startsWith("grok-")) return 3;
   if (/\b(32b|70b|72b)\b/.test(tag)) return 3;
   if (/\b14b\b/.test(tag)) return 2;
   return 1;
